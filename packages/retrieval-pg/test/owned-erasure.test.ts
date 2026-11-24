@@ -156,3 +156,18 @@ console.log('shutdown-unconfirmed-lease-retained'); process.exit(0);`);
     expect(existsSync(join(f.ctx.data_dir, "store"))).toBe(false);
   } finally { f.cleanup(); }
 }, 60_000);
+
+test("a generation that recorded a capacity refusal in engine.json can still be erased cleanly", async () => {
+  const f = temporaryPortContext();
+  const port = await openEmbeddedRetrievalPort(f.ctx, { max_text_bytes: 1024 * 1024 });
+  try {
+    const huge = { ...SYNTHETIC_DOCS[0]!, doc_id: "page:huge", text: "x".repeat(1024 * 1024 + 64) };
+    await expect(port.upsert([huge])).rejects.toMatchObject({ code: "budget_exhausted" });
+    expect(JSON.parse(readFileSync(join(f.ctx.data_dir, "engine.json"), "utf8")).refusal).toBeDefined();
+    await port.eraseOwnedGeneration();
+    expect(existsSync(join(f.ctx.data_dir, "store"))).toBe(false);
+  } finally {
+    await port.close().catch(() => {});
+    f.cleanup();
+  }
+});

@@ -9,7 +9,7 @@ export type HelpTopic = Pick<Command, "name" | "usage" | "summary" | "schema">;
 
 const GROUPS: readonly { title: string; names: readonly string[] }[] = [
   { title: "Start", names: ["app", "init", "import", "doctor"] },
-  { title: "Recall", names: ["query", "context", "world"] },
+  { title: "Recall", names: ["query", "context", "world", "memt"] },
   { title: "Sources", names: ["connect", "backfill", "sync"] },
   { title: "Correct", names: ["tell", "undo", "audit"] },
   { title: "Run", names: ["serve", "models", "agent"] },
@@ -36,6 +36,14 @@ const EXAMPLES: Readonly<Record<string, readonly string[]>> = {
   world: [
     `${INVOCATION} world --operation situation --ref TOKEN`,
     `${INVOCATION} world --operation concept --ref TOKEN --json`,
+  ],
+  memt: [
+    `${INVOCATION} memt status`,
+    `${INVOCATION} memt recall "recovery hold" --domain ops`,
+    `${INVOCATION} memt experience add --domain ops --condition "when X" --recommendation "do Y"`,
+    `${INVOCATION} memt sync --dry-run`,
+    `${INVOCATION} memt snapshot list`,
+    `${INVOCATION} memt deploy-check`,
   ],
   doctor: [`${INVOCATION} doctor`, `${INVOCATION} doctor --json`],
   connect: [

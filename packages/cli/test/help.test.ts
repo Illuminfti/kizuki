@@ -933,7 +933,13 @@ describe("help", () => {
       };
       expect(body.data.name).toBe("recover");
       expect(body.data.options).toEqual([]);
-      expect(body.data.flags).toEqual(["--json"]);
+      expect(body.data.flags).toEqual([
+        "--json",
+        "--resolve-stale-hold",
+        "--abort-unapplied-hold",
+        "--dry-run",
+        "--apply",
+      ]);
       expect(body.data.irreversible).toBe(false);
     }
     expect(runCli(env, "recover", "--help").stdout).toContain("--json");

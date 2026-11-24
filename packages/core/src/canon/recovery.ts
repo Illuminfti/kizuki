@@ -12,18 +12,28 @@ import { requireCanonFiles, snapshotCanonIo, withCanonMutationSync } from "./io"
 import { openWorldErasureReceiptStream, openOrdinaryRecoveryReceiptStream, type WorldErasureReceiptStream, type OrdinaryRecoveryReceiptStream } from "./receipt-stream";
 import { commitMachineByteIntent, recordMachineBodyImages } from "../ledger/event-origin";
 import { enqueueClaimRetrieval, getClaim, markClaimReverted, minTimestamp, reinstateClaim, resupersedeClaim, supersessionsForReceipt } from "../claims/store";
-import { tableExists } from "../ledger/schema";
-import { getCanonReceipt, type CanonReceipt } from "./receipts";
+import { oneShotGet, tableExists } from "../ledger/schema";
+import { getCanonReceipt, RECEIPTS_PATH, type CanonReceipt } from "./receipts";
 import { insertReceiptRow, deletePageIndex, markReceiptReverted, upsertPageIndex, type CanonIo } from "./store";
 import { canonStageRelPath } from "../vault/write";
 import { publishOrdinaryCanonIntent } from "./apply";
 import {
   advanceCanonReadGeneration, assertCanonAdmission, assertIndependentSurvivorAdmission, captureCanonAdmission, decodeCanonImage,
   inspectCanonRecovery, persistCanonWriteIntent, readCanonWriteIntent, recoveryFailure, CanonRecoveryError,
-  type CanonCompletion, type CanonWriteIntent, type WorldCanonErasureIntent, type WorldCanonErasure,
+  type CanonCompletion, type CanonRecoveryReason, type CanonWriteIntent, type WorldCanonErasureIntent, type WorldCanonErasure,
 } from "./write-intent";
 import { enqueueCanonProjection, refreshCanonProjectionFloor } from "./projection-obligations";
-import { clearCanonRecoveryHold, eraseCanonStageTraces, reconcileCanonStages, recordCanonRecoveryHold, type CanonStageRecoveryRecord } from "./stage-recovery";
+import {
+  clearCanonRecoveryHold,
+  eraseCanonStageTraces,
+  inspectCanonStages,
+  reconcileCanonStages,
+  recordCanonRecoveryHold,
+  recordCanonRecoveryResolution,
+  type CanonRecoveryResolutionRecord,
+  type CanonStageInspection,
+  type CanonStageRecoveryRecord,
+} from "./stage-recovery";
 import { asCanonRecoveryError } from "./recovery-failure";
 import { MAX_CANON_IMAGE_BYTES } from "../ledger/canon-recovery-schema";
 import { CanonWriteError } from "./errors";
@@ -313,6 +323,346 @@ export function recoverCanonWrites(input: CanonIo): CanonRecoveryReport {
   try { return withCanonMutationSync(io, (scope, owned) => recoverCanonWritesOwned(scope, owned)); }
   catch (error) {
     if (error instanceof VaultMutationError && error.code === "writer_busy") throw asCanonRecoveryError(error, inspectCanonRecovery(io.db).receipt_id)!;
+    throw error;
+  }
+}
+
+export interface ResolveStaleCanonHoldOptions {
+  /** Defaults to true so every mutating resolution previews safely unless explicitly applied. */
+  readonly dryRun?: boolean;
+}
+
+export interface StaleCanonHoldResolution {
+  readonly status: "none" | "resolvable" | "resolved" | "refused";
+  readonly dry_run: boolean;
+  readonly receipt_id: string | null;
+  readonly page_path: string | null;
+  readonly hold_reason: CanonRecoveryReason | null;
+  readonly refusal_reason: string | null;
+  readonly before_verified: boolean;
+  readonly claim_ids: string[];
+  readonly stages: CanonStageInspection[];
+  readonly stage_recoveries: CanonStageRecoveryRecord[];
+  readonly audit_record: CanonRecoveryResolutionRecord | null;
+}
+
+function inspectAdmissionHoldReason(io: CanonIo, intent: CanonWriteIntent): CanonRecoveryReason | "admissible" | "other_failure" {
+  try {
+    assertCanonAdmission(io.db, intent);
+    return "admissible";
+  } catch (error) {
+    if (error instanceof CanonRecoveryError) return error.reason;
+    return "other_failure";
+  }
+}
+
+function receiptTailMatchesUnappliedIntent(
+  files: ReturnType<typeof requireCanonFiles>,
+  intent: CanonWriteIntent,
+): boolean {
+  let snapshot;
+  try {
+    snapshot = files.readPrivate(RECEIPTS_PATH);
+  } catch {
+    return false;
+  }
+  if (snapshot === null) {
+    return intent.checkpoint.byte_length === 0;
+  }
+  try {
+    const bytes = Buffer.from(snapshot.bytes);
+    if (bytes.length < intent.checkpoint.byte_length) return false;
+    const prefix = bytes.subarray(0, intent.checkpoint.byte_length);
+    if (hashBytes(prefix) !== intent.checkpoint.prefix_sha256) return false;
+    const tail = bytes.subarray(intent.checkpoint.byte_length);
+    const expectedLine = Buffer.from(`${JSON.stringify(intent.receipt)}\n`);
+    return tail.length <= expectedLine.length && tail.equals(expectedLine.subarray(0, tail.length));
+  } finally {
+    snapshot.close();
+  }
+}
+
+/**
+ * Safely aborts an unapplied ordinary canon write intent deadlocked in
+ * `authority_changed` or `predecessor_changed`. Refuses whenever the live file
+ * on disk has already been published (`after` bytes) or altered (`page_changed`),
+ * when an archive was published, when the intent is a revert or purge, or when
+ * normal recovery can still complete the write. Defaults to `dryRun: true`.
+ */
+export function resolveStaleCanonHoldOwned(
+  scope: VaultMutationScope,
+  io: CanonIo,
+  options: ResolveStaleCanonHoldOptions = {},
+): StaleCanonHoldResolution {
+  const dryRun = options.dryRun !== false;
+  ensureTopLevel(io);
+  const files = requireCanonFiles(scope, io);
+
+  let intent: CanonWriteIntent | null;
+  try {
+    intent = readCanonWriteIntent(io.db);
+  } catch (error) {
+    const typed = asCanonRecoveryError(error, inspectCanonRecovery(io.db).receipt_id);
+    return {
+      status: "refused",
+      dry_run: dryRun,
+      receipt_id: typed?.receipt_id ?? inspectCanonRecovery(io.db).receipt_id,
+      page_path: inspectCanonRecovery(io.db).page_path,
+      hold_reason: typed?.reason ?? "intent_invalid",
+      refusal_reason: typed?.reason ?? "intent_invalid",
+      before_verified: false,
+      claim_ids: [],
+      stages: [],
+      stage_recoveries: [],
+      audit_record: null,
+    };
+  }
+
+  if (intent === null) {
+    if (!dryRun) clearCanonRecoveryHold(files);
+    return {
+      status: "none",
+      dry_run: dryRun,
+      receipt_id: null,
+      page_path: null,
+      hold_reason: null,
+      refusal_reason: null,
+      before_verified: false,
+      claim_ids: [],
+      stages: [],
+      stage_recoveries: [],
+      audit_record: null,
+    };
+  }
+
+  const receiptId = intent.receipt.receipt_id;
+  const pagePath = intent.receipt.page_path;
+  const claimIds = [...intent.receipt.claim_ids];
+  let stages: CanonStageInspection[] = [];
+  try {
+    stages = inspectCanonStages(files, intent);
+  } catch (error) {
+    const typed = asCanonRecoveryError(error, receiptId);
+    return {
+      status: "refused",
+      dry_run: dryRun,
+      receipt_id: receiptId,
+      page_path: pagePath,
+      hold_reason: typed?.reason ?? "inspection_unavailable",
+      refusal_reason: typed?.reason ?? "inspection_unavailable",
+      before_verified: false,
+      claim_ids: claimIds,
+      stages: [],
+      stage_recoveries: [],
+      audit_record: null,
+    };
+  }
+
+  const refuse = (
+    refusalReason: string,
+    holdReason: CanonRecoveryReason | null,
+    beforeVerified = false,
+  ): StaleCanonHoldResolution => ({
+    status: "refused",
+    dry_run: dryRun,
+    receipt_id: receiptId,
+    page_path: pagePath,
+    hold_reason: holdReason,
+    refusal_reason: refusalReason,
+    before_verified: beforeVerified,
+    claim_ids: claimIds,
+    stages,
+    stage_recoveries: [],
+    audit_record: null,
+  });
+
+  if (intent.version === 3 || intent.receipt.kind !== "write" || intent.completion.mode !== "write") {
+    return refuse("not_ordinary_write", null);
+  }
+  if (getCanonReceipt(io.db, receiptId) !== null) {
+    return refuse("receipt_already_committed", "receipt_changed");
+  }
+
+  const admissionState = inspectAdmissionHoldReason(io, intent);
+  if (admissionState === "admissible") {
+    return refuse("not_stale_hold", null);
+  }
+  if (admissionState !== "authority_changed" && admissionState !== "predecessor_changed") {
+    return refuse(
+      admissionState === "other_failure" ? "admission_check_failed" : admissionState,
+      admissionState === "other_failure" ? null : admissionState,
+    );
+  }
+  const holdReason: CanonRecoveryReason = admissionState;
+
+  if (stages.some(stage => stage.classification === "unsafe" || stage.action_on_next_start === "hold")) {
+    return refuse("stage_custody_unknown", "stage_custody_unknown");
+  }
+
+  let actualLive: Buffer | null;
+  let actualArchive: Buffer | null = null;
+  try {
+    actualLive = imageAt(scope, io, pagePath);
+    if (intent.receipt.archive_path !== null) {
+      actualArchive = imageAt(scope, io, intent.receipt.archive_path);
+    }
+  } catch (error) {
+    const typed = asCanonRecoveryError(error, receiptId);
+    return refuse(typed?.reason ?? "write_refused", holdReason);
+  }
+
+  const before = decodeCanonImage(intent.before_base64);
+  const after = decodeCanonImage(intent.after_base64);
+  if (!matches(actualLive, before)) {
+    if (matches(actualLive, after)) {
+      return refuse("already_published", holdReason, false);
+    }
+    return refuse("page_changed", "page_changed", false);
+  }
+  if (actualArchive !== null) {
+    return refuse("archive_changed", "archive_changed", false);
+  }
+
+  const stream = openOrdinaryRecoveryReceiptStream(scope, io);
+  try {
+    try {
+      stream.assertCheckpointCustody(intent.checkpoint, true);
+    } catch (error) {
+      const typed = asCanonRecoveryError(error, receiptId);
+      return refuse(typed?.reason ?? "receipt_stream_changed", typed?.reason ?? holdReason, true);
+    }
+    if (!receiptTailMatchesUnappliedIntent(files, intent)) {
+      return refuse("receipt_stream_refused", "receipt_stream_refused", true);
+    }
+
+    if (dryRun) {
+      return {
+        status: "resolvable",
+        dry_run: true,
+        receipt_id: receiptId,
+        page_path: pagePath,
+        hold_reason: holdReason,
+        refusal_reason: null,
+        before_verified: true,
+        claim_ids: claimIds,
+        stages,
+        stage_recoveries: [],
+        audit_record: null,
+      };
+    }
+
+    const binding = io.db
+      .query<{ digest: string }, [string]>(
+        "SELECT digest FROM canon_write_intents WHERE singleton=1 AND receipt_id=?",
+      )
+      .get(receiptId);
+    if (binding === null) return refuse("intent_invalid", "intent_invalid", true);
+
+    const at = io.now?.() ?? new Date().toISOString();
+    let stageRecoveries: CanonStageRecoveryRecord[] = [];
+    let auditRecord: CanonRecoveryResolutionRecord | null = null;
+
+    io.db.transaction(() => {
+      const currentDigest = io.db
+        .query<{ digest: string }, [string]>(
+          "SELECT digest FROM canon_write_intents WHERE singleton=1 AND receipt_id=?",
+        )
+        .get(receiptId)?.digest;
+      if (currentDigest !== binding.digest || getCanonReceipt(io.db, receiptId) !== null) {
+        recoveryFailure("intent_invalid", receiptId);
+      }
+      const rechecked = inspectAdmissionHoldReason(io, intent);
+      if (rechecked !== "authority_changed" && rechecked !== "predecessor_changed") {
+        recoveryFailure("authority_changed", receiptId);
+      }
+      const liveNow = imageAt(scope, io, pagePath);
+      if (!matches(liveNow, before)) {
+        recoveryFailure("page_changed", receiptId);
+      }
+      if (intent.receipt.archive_path !== null && imageAt(scope, io, intent.receipt.archive_path) !== null) {
+        recoveryFailure("archive_changed", receiptId);
+      }
+      stream.assertCheckpointCustody(intent.checkpoint, true);
+      stageRecoveries = reconcileCanonStages(files, intent, { at, erase: false });
+      stream.withdrawExact(intent.checkpoint, Buffer.from(`${JSON.stringify(intent.receipt)}\n`));
+      stream.verifyBinding();
+      auditRecord = recordCanonRecoveryResolution(files, {
+        receipt_id: receiptId,
+        hold_reason: rechecked,
+        action: "aborted_unapplied_write",
+        before_present: before !== null,
+        claim_count: claimIds.length,
+        stage_recoveries: stageRecoveries.length,
+        at,
+      });
+      const removed = oneShotGet<{ receipt_id: string }>(
+        io.db,
+        "DELETE FROM canon_write_intents WHERE singleton=1 AND receipt_id=? AND digest=? RETURNING receipt_id",
+        receiptId,
+        binding.digest,
+      );
+      if (removed?.receipt_id !== receiptId) recoveryFailure("intent_invalid", receiptId);
+      if (tableExists(io.db, "canon_machine_byte_intents")) {
+        io.db.query("DELETE FROM canon_machine_byte_intents WHERE receipt_id=?").run(receiptId);
+      }
+      if (tableExists(io.db, "canon_machine_body_images")) {
+        io.db.query("DELETE FROM canon_machine_body_images WHERE receipt_id=?").run(receiptId);
+      }
+      if (tableExists(io.db, "canon_write_reservations")) {
+        io.db.query("DELETE FROM canon_write_reservations WHERE receipt_id=?").run(receiptId);
+      }
+      advanceCanonReadGeneration(io.db);
+    }).immediate();
+
+    clearCanonRecoveryHold(files);
+    return {
+      status: "resolved",
+      dry_run: false,
+      receipt_id: receiptId,
+      page_path: pagePath,
+      hold_reason: holdReason,
+      refusal_reason: null,
+      before_verified: true,
+      claim_ids: claimIds,
+      stages,
+      stage_recoveries: stageRecoveries,
+      audit_record: auditRecord,
+    };
+  } catch (error) {
+    const typed = asCanonRecoveryError(error, receiptId);
+    if (typed !== null) {
+      return refuse(typed.reason, typed.reason, false);
+    }
+    throw error;
+  } finally {
+    stream.close();
+  }
+}
+
+export function resolveStaleCanonHold(
+  input: CanonIo,
+  options: ResolveStaleCanonHoldOptions = {},
+): StaleCanonHoldResolution {
+  const io = snapshotCanonIo(input);
+  try {
+    return withCanonMutationSync(io, (scope, owned) => resolveStaleCanonHoldOwned(scope, owned, options));
+  } catch (error) {
+    if (error instanceof VaultMutationError && error.code === "writer_busy") {
+      const summary = inspectCanonRecovery(io.db);
+      return {
+        status: "refused",
+        dry_run: options.dryRun !== false,
+        receipt_id: summary.receipt_id,
+        page_path: summary.page_path,
+        hold_reason: "writer_busy",
+        refusal_reason: "writer_busy",
+        before_verified: false,
+        claim_ids: [],
+        stages: [],
+        stage_recoveries: [],
+        audit_record: null,
+      };
+    }
     throw error;
   }
 }

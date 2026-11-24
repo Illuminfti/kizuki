@@ -505,6 +505,15 @@ describe("the engine's memory bound", () => {
     const health = await port.health();
     expect(health.status === "ready" && Number(health.detail["text_bytes"])).toBeLessThanOrEqual(2 * MIB);
   });
+
+  test("raising max_text_bytes scales secondary payload and chunk capacity limits proportionally", async () => {
+    const embedding = new RecordingEmbedding();
+    const { port } = await open(embedding, { max_text_bytes: 8 * MIB, chunk_tokens: 1, chunk_overlap: 0 });
+    await port.upsert([doc("page:scaled", words(10_500))]);
+    const health = await port.health();
+    expect(health.status === "ready" && health.detail["documents"]).toBe(1);
+    await expect(port.upsert([doc("page:over-scaled", words(20_001))])).rejects.toMatchObject({ code: "budget_exhausted" });
+  });
 });
 
 describe("who closes the embedding port", () => {

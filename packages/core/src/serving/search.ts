@@ -31,7 +31,8 @@ import {
 import { canonChunk, eligible, excerptOf, loadCanon, pageDecision, pageScope } from "./canon";
 import type { CanonIndex } from "./canon";
 import { CanonAccessPhase } from "./canon-access";
-import { eventsCitedByPages } from "./dedupe";
+import { CanonicalQuoteCollector, eventsCitedByPages } from "./dedupe";
+import type { QuotedSource } from "./ledger";
 import { claimsEpoch } from "./epoch";
 import { auditArguments, gateAsync } from "./gate";
 import type { Served } from "./gate";
@@ -74,6 +75,7 @@ export interface SearchArgs {
 interface Classification {
   canon: CanonChunk[];
   quoted: QuotedChunk[];
+  quotedEntries?: { source: QuotedSource; chunk: QuotedChunk }[];
   withheld: AuditDenial[];
 }
 
@@ -97,7 +99,7 @@ function classify(
   index = { ...index, sourceContext: {
     ...index.sourceContext, redactor: createRedactor(index.sourceContext.principal, index.sourceContext.servingSecrets),
   } };
-  const result: Classification = { canon: [], quoted: [], withheld: [] };
+  const result: Classification = { canon: [], quoted: [], quotedEntries: [], withheld: [] };
   const pageSeen = new Set<string>();
 
   for (const hit of hits) {
@@ -144,6 +146,7 @@ function classify(
     if (matches !== undefined && !currentSemanticNomination(index.sourceContext, index, semantic, hit.doc_id) && !matches("", searchableText(quoted.text, fullText ? undefined : LEDGER_EXCERPT, index.sourceContext.servingSecrets))) continue;
     seen.add(hit.doc_id);
     result.quoted.push(chunk);
+    result.quotedEntries!.push({ source: quoted, chunk });
   }
 
   return result;
@@ -153,14 +156,23 @@ function authorizedCount(result: Classification): number {
   return result.canon.length + result.quoted.length;
 }
 
-function absorbClassification(into: Classification, from: Classification): void {
+function absorbClassification(
+  into: Classification,
+  from: Classification,
+  collector: CanonicalQuoteCollector<QuotedChunk>,
+): void {
   for (const chunk of from.canon) {
     if (authorizedCount(into) >= MAX_RETRIEVAL_LIMIT) break;
     into.canon.push(chunk);
   }
-  for (const chunk of from.quoted) {
-    if (authorizedCount(into) >= MAX_RETRIEVAL_LIMIT) break;
-    into.quoted.push(chunk);
+  const entries = from.quotedEntries ?? [];
+  for (const entry of entries) {
+    collector.admit(
+      entry.source,
+      entry.chunk,
+      into.quoted,
+      Math.max(0, MAX_RETRIEVAL_LIMIT - into.canon.length),
+    );
   }
   const room = SEARCH_WITHHELD_CAP - into.withheld.length;
   if (room > 0) into.withheld.push(...from.withheld.slice(0, room));
@@ -267,6 +279,7 @@ export async function serveSearch<C extends ResponseContract = typeof ENVELOPE_S
       const narrowed = { ...grant, ...(types === undefined ? {} : { types }), ...(subjects === undefined ? {} : { subjects }), ...(window.since === undefined ? {} : { since: window.since }), ...(window.until === undefined ? {} : { until: window.until }) };
       const access = new CanonAccessPhase(index, narrowed);
       const classified: Classification = { canon: [], quoted: [], withheld: [] };
+      const quoteCollector = new CanonicalQuoteCollector<QuotedChunk>();
       const rankedOpts = {
         canonIds: index.pages.filter(page => eligible(page) && access.decision(page).allow).map(page => `page:${page.id}`),
         canonPaths: index.pages.filter(page => authorize(narrowed, pageScope(ctx, page, narrowed)).allow).map(page => page.relPath),
@@ -301,6 +314,7 @@ export async function serveSearch<C extends ResponseContract = typeof ENVELOPE_S
         absorbClassification(
           classified,
           classify(ctx.db, index, narrowed, ranked.candidates, seen, fullText, matcher?.matches),
+          quoteCollector,
         );
         if (
           authorizedCount(classified) >= MAX_RETRIEVAL_LIMIT ||
@@ -327,6 +341,7 @@ export async function serveSearch<C extends ResponseContract = typeof ENVELOPE_S
           matcher?.matches,
           nominated.semantic,
         ),
+        quoteCollector,
       );
       // Preserve nomination deduplication, including denied nominations. Ranked
       // pages retain only admitted identities; an arbitrary denied prefix must

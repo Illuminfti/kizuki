@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 import type { Database } from "bun:sqlite";
 import type { CaptureEventInput } from "../src/contracts/event";
 import { openLedger } from "../src/ledger/db";
-import { accept, count, readSince, replay } from "../src/ledger/ledger";
-import { computeContentHash } from "../src/util/hash";
+import { accept, count, countSince, laterVersionSql, latestLedgerCursor, readLiveEvent, readSince, replay, replayLive } from "../src/ledger/ledger";
+import { computeOriginBinding } from "../src/ledger/event-origin-binding";
+import { computeContentHash, sha256Hex } from "../src/util/hash";
 import { validEvent } from "./fixtures";
 
 const ULID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
@@ -272,6 +273,111 @@ describe("replay", () => {
     expect([...replay(db, { since: "2026-01-01T00:00:00.123456789Z" })].map(
       ({ source_record_id }) => source_record_id,
     )).toEqual(["middle", "after"]);
+    expect([...replay(db, {
+      since: "2026-01-01T00:00:00.123456789Z",
+      until: "2026-01-01T00:00:00.123456790Z",
+    })].map(({ source_record_id }) => source_record_id)).toEqual(["middle"]);
+    db.close();
+  });
+});
+
+function insertWithAcceptedAt(
+  db: Database,
+  eventId: string,
+  input: CaptureEventInput,
+  acceptedAt: string,
+): void {
+  const contentHash = computeContentHash(input);
+  const textHash = sha256Hex(input.text);
+  const binding = computeOriginBinding(
+    { event_id: eventId, content_hash_version: 2, content_hash: contentHash, text_hash: textHash, origin: "external" },
+    acceptedAt,
+    "capture",
+    null,
+  );
+  db.query(
+    `INSERT INTO events (
+      event_id, connector_id, source_record_id, kind, occurred_at, observed_at,
+      text, subjects, sensitivity_hint, deleted, attachments, metadata,
+      content_hash, accepted_at, content_hash_version, text_hash,
+      origin, origin_binding_version, origin_binding_kind, origin_binding
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,2,?,'external',1,'capture',?)`,
+  ).run(
+    eventId,
+    input.connector_id,
+    input.source_record_id,
+    input.kind,
+    input.occurred_at,
+    input.observed_at,
+    input.text,
+    JSON.stringify(input.subjects),
+    input.sensitivity_hint ?? null,
+    input.deleted ? 1 : 0,
+    JSON.stringify(input.attachments),
+    JSON.stringify(input.metadata),
+    contentHash,
+    acceptedAt,
+    textHash,
+    binding,
+  );
+}
+
+describe("instant-based accepted_at ordering (#1072)", () => {
+  test("readSince, countSince, replay, and latestLedgerCursor order mixed offsets and submillisecond fractions by instant", () => {
+    const db = openLedger(":memory:");
+    insertWithAcceptedAt(db, "01ARZ3NDEKTSV4RRFFQ69G5FA1", event("r1"), "2026-06-01T12:00:00Z");
+    insertWithAcceptedAt(db, "01ARZ3NDEKTSV4RRFFQ69G5FA2", event("r2"), "2026-06-01T14:00:00+02:00");
+    insertWithAcceptedAt(db, "01ARZ3NDEKTSV4RRFFQ69G5FA3", event("r3"), "2026-06-01T12:00:00.050000000Z");
+    insertWithAcceptedAt(db, "01ARZ3NDEKTSV4RRFFQ69G5FA4", event("r4"), "2026-06-01T12:00:00.5Z");
+    insertWithAcceptedAt(db, "01ARZ3NDEKTSV4RRFFQ69G5FA5", event("r5"), "2026-06-01T11:30:00-02:00");
+
+    const expected = ["r1", "r2", "r3", "r4", "r5"];
+    expect([...replay(db, {})].map(e => e.source_record_id)).toEqual(expected);
+
+    const seen: string[] = [];
+    let cursor = null;
+    let remaining = 5;
+    while (true) {
+      expect(countSince(db, cursor)).toBe(remaining);
+      const page = readSince(db, cursor, 2);
+      seen.push(...page.events.map(e => e.source_record_id));
+      remaining -= page.events.length;
+      cursor = page.cursor;
+      if (page.exhausted) break;
+    }
+    expect(seen).toEqual(expected);
+    expect(countSince(db, cursor)).toBe(0);
+    expect(latestLedgerCursor(db)).toEqual({
+      accepted_at: "2026-06-01T11:30:00-02:00",
+      event_id: "01ARZ3NDEKTSV4RRFFQ69G5FA5",
+    });
+    db.close();
+  });
+
+  test("LIVE_PREDICATE and laterVersionSql compare tombstones and edits by instant, not lexical string", () => {
+    const db = openLedger(":memory:");
+    const liveId = "01ARZ3NDEKTSV4RRFFQ69G5FB1";
+    const tombId = "01ARZ3NDEKTSV4RRFFQ69G5FB2";
+    insertWithAcceptedAt(db, liveId, event("same-rec", { text: "v1" }), "2026-06-01T12:00:00Z");
+    insertWithAcceptedAt(db, tombId, event("same-rec", { deleted: true, text: "" }), "2026-06-01T12:00:00.500Z");
+
+    expect(readLiveEvent(db, liveId)).toBeNull();
+    expect([...replayLive(db, {})]).toEqual([]);
+
+    const v1Id = "01ARZ3NDEKTSV4RRFFQ69G5FC1";
+    const v2Id = "01ARZ3NDEKTSV4RRFFQ69G5FC2";
+    insertWithAcceptedAt(db, v1Id, event("edited-rec", { text: "first draft" }), "2026-06-01T12:00:00+02:00");
+    insertWithAcceptedAt(db, v2Id, event("edited-rec", { text: "second draft" }), "2026-06-01T06:00:00-05:00");
+
+    const currentRows = db
+      .query<{ event_id: string }, []>(
+        `SELECT e.event_id FROM events AS e
+          WHERE e.deleted = 0
+            AND NOT EXISTS (SELECT 1 FROM events AS later WHERE ${laterVersionSql("later", "e")})`,
+      )
+      .all();
+    expect(currentRows.map(r => r.event_id)).toContain(v2Id);
+    expect(currentRows.map(r => r.event_id)).not.toContain(v1Id);
     db.close();
   });
 });

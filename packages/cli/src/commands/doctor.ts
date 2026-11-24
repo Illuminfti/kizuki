@@ -49,6 +49,7 @@ import { serveSupervisorHost } from "../service-host";
 import { withdrawalHoldLine } from "../withdrawal-hold";
 import { supervisorFailureLine } from "../service-custody";
 import { nextStep } from "./doctor-next";
+import { inspectMemtForDoctor, type DoctorMemtReport } from "./memt";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 
 const HEALTH_DEADLINE_MS = 3_000;
@@ -132,6 +133,7 @@ interface DoctorReport {
   ledger: ReturnType<typeof inspectLedgerHealth>;
   runtime: SqliteRuntime;
   canon_recovery: ReturnType<typeof inspectCanonRecoveryDetail>;
+  memt: DoctorMemtReport;
   ok: boolean;
 }
 
@@ -498,6 +500,7 @@ async function collect(
   const filedClaims = listClaims(ctx.db, { status: "skipped", limit: 8, filter: (claim) => !isCaptureFanoutSkip(claim) }).map(
     toDoctorClaim,
   );
+  const memt = await inspectMemtForDoctor(vaultPath, env);
 
   return {
     config,
@@ -527,6 +530,7 @@ async function collect(
     ledger,
     runtime: readSqliteRuntime(ctx.db),
     canon_recovery: canonRecovery,
+    memt,
     ok: ok && ledger.ok,
   };
 }
@@ -555,6 +559,7 @@ function printHuman(io: CliIo, report: DoctorReport): void {
     `derived search=${derived.search.rebuilt_at ?? "never"} docs=${derived.search.doc_count} watermark=${clean(derived.search.ledger_watermark ?? "none")} graph=${derived.graph.rebuilt_at ?? "never"} docs=${derived.graph.doc_count} watermark=${clean(derived.graph.ledger_watermark ?? "none")}`,
   );
   io.out(report.serve.stores.vector_layer.detail);
+  io.out(report.memt.detail);
   const stores = report.serve.stores;
   if (stores.skipped_pages_total > 0) {
     io.out(`index-degraded: ${stores.skipped_pages_total} canon file(s) cannot be indexed`);

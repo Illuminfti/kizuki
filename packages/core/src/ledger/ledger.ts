@@ -7,7 +7,7 @@ import type {
   CaptureEventInput,
 } from "../contracts/event";
 import { canonicalSerialize, computeContentHash, computeLegacyContentHash, sha256Hex } from "../util/hash";
-import { instantBoundPair, instantPairSql } from "../query/sql";
+import { instantBoundPair, instantNanoSql, instantPairSql, instantSecondSql } from "../query/sql";
 import { canonicalizeRfc3339Utc, isRfc3339 } from "../util/time";
 import { isUlid, ulid } from "../util/ulid";
 import { EventRecordError, eventFromRow as fromRow, type EventRow } from "./event-record";
@@ -51,6 +51,7 @@ export interface ReplayFilter {
   connector_id?: string;
   kind?: string;
   since?: string;
+  until?: string;
 }
 
 interface ExistingEventRow {
@@ -236,7 +237,8 @@ export function recordNativeCorrectionEvent(db: Database, input: CaptureEventInp
   const event = checked.value;
   return db.transaction(() => {
     using existing = db.prepare<EventRow, [string, string]>(`SELECT * FROM events
-      WHERE connector_id=? AND source_record_id=? ORDER BY accepted_at,event_id LIMIT 1`);
+      WHERE connector_id=? AND source_record_id=?
+      ORDER BY ${instantSecondSql("accepted_at")}, ${instantNanoSql("accepted_at")}, event_id LIMIT 1`);
     const prior = existing.get(event.connector_id, event.source_record_id);
     if (prior !== null) {
       const stored = fromRow(prior, db);
@@ -322,6 +324,48 @@ export function liveEventIds(db: Database, ids: readonly string[]): Set<string> 
   return live;
 }
 
+const YEAR_0001_EPOCH_SECOND = -62_135_596_800; // 0001-01-01T00:00:00Z
+const ACCEPTED_AT_ORDER = `${instantSecondSql("accepted_at")}, ${instantNanoSql("accepted_at")}`;
+const EVENTS_ACCEPTED_AT_ORDER = `${instantSecondSql("events.accepted_at")}, ${instantNanoSql("events.accepted_at")}`;
+
+/**
+ * Any valid RFC3339 offset lies within [-23:59, +23:59] (< 86,400s). Subtracting
+ * 86,400s produces a fixed-width UTC `YYYY-MM-DDTHH:MM:SS` prefix guaranteed `<=`
+ * every valid RFC3339 spelling of any instant `>= epochSecond`, allowing SQLite
+ * to narrow scans via `idx_events_accepted` before exact instant comparison.
+ */
+function minLexicalAcceptedAtForEpochSecond(epochSecond: number): string {
+  const floorSecond = epochSecond - 86_400;
+  if (floorSecond <= YEAR_0001_EPOCH_SECOND) return "0000-01-01T00:00:00";
+  const iso = new Date(floorSecond * 1_000).toISOString();
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(iso) ? iso.slice(0, 19) : "0000-01-01T00:00:00";
+}
+
+function cursorInstantBounds(cursor: LedgerCursor): {
+  minLexical: string;
+  second: number;
+  nano: number;
+  eventId: string;
+} {
+  let second: number;
+  let nano: number;
+  try {
+    [second, nano] = instantBoundPair(cursor.accepted_at, "cursor.accepted_at");
+  } catch (error) {
+    throw new LedgerStoreError(
+      "usage",
+      error instanceof Error ? error.message : "cursor.accepted_at must be an RFC3339 timestamp",
+      { cause: error },
+    );
+  }
+  return {
+    minLexical: minLexicalAcceptedAtForEpochSecond(second),
+    second,
+    nano,
+    eventId: cursor.event_id,
+  };
+}
+
 export function readSince(
   db: Database,
   cursor: LedgerCursor | null,
@@ -332,30 +376,33 @@ export function readSince(
     return { events: [], cursor, exhausted: true };
   }
 
-  const rows =
-    cursor === null
-      ? db
-          .query<EventRow, [number]>(
-            `
-              SELECT ${EVENT_COLUMNS}
-              FROM events
-              ORDER BY accepted_at, event_id
-              LIMIT ?
-            `,
-          )
-          .all(limit)
-      : db
-          .query<EventRow, [string, string, string, number]>(
-            `
-              SELECT ${EVENT_COLUMNS}
-              FROM events
-              WHERE accepted_at > ?
-                 OR (accepted_at = ? AND event_id > ?)
-              ORDER BY accepted_at, event_id
-              LIMIT ?
-            `,
-          )
-          .all(cursor.accepted_at, cursor.accepted_at, cursor.event_id, limit);
+  let rows: EventRow[];
+  if (cursor === null) {
+    rows = db
+      .query<EventRow, [number]>(
+        `
+          SELECT ${EVENT_COLUMNS}
+          FROM events
+          ORDER BY ${ACCEPTED_AT_ORDER}, event_id
+          LIMIT ?
+        `,
+      )
+      .all(limit);
+  } else {
+    const bounds = cursorInstantBounds(cursor);
+    rows = db
+      .query<EventRow, [string, number, number, string, number]>(
+        `
+          SELECT ${EVENT_COLUMNS}
+          FROM events
+          WHERE accepted_at >= ?
+            AND (${ACCEPTED_AT_ORDER}, event_id) > (?, ?, ?)
+          ORDER BY ${ACCEPTED_AT_ORDER}, event_id
+          LIMIT ?
+        `,
+      )
+      .all(bounds.minLexical, bounds.second, bounds.nano, bounds.eventId, limit);
+  }
 
   return pageFromRows(rows, limit, cursor, db);
 }
@@ -395,6 +442,16 @@ export function normalizeReplayFilter(filter: ReplayFilter): ReplayFilter {
     }
     out.since = canonical;
   }
+  if (filter.until !== undefined) {
+    if (!isRfc3339(filter.until)) {
+      throw new LedgerStoreError("usage", "until must be an RFC3339 timestamp");
+    }
+    const canonical = canonicalizeRfc3339Utc(filter.until);
+    if (canonical === null) {
+      throw new LedgerStoreError("usage", "until has no RFC3339 UTC spelling");
+    }
+    out.until = canonical;
+  }
   return out;
 }
 
@@ -414,11 +471,13 @@ export const LIVE_PREDICATE = `
          SELECT source_key FROM source_event_bindings WHERE event_id = events.event_id
        )
        AND (
-         tombstone.accepted_at > events.accepted_at
-         OR (
-           tombstone.accepted_at = events.accepted_at
-           AND tombstone.event_id > events.event_id
-         )
+         ${instantSecondSql("tombstone.accepted_at")},
+         ${instantNanoSql("tombstone.accepted_at")},
+         tombstone.event_id
+       ) > (
+         ${instantSecondSql("events.accepted_at")},
+         ${instantNanoSql("events.accepted_at")},
+         events.event_id
        )
   )
 `;
@@ -438,8 +497,13 @@ export function laterVersionSql(later: string, earlier: string): string {
     AND ${later}.source_record_id = ${earlier}.source_record_id
     AND ${binding(later)} IS ${binding(earlier)}
     AND (
-      ${later}.accepted_at > ${earlier}.accepted_at
-      OR (${later}.accepted_at = ${earlier}.accepted_at AND ${later}.event_id > ${earlier}.event_id)
+      ${instantSecondSql(`${later}.accepted_at`)},
+      ${instantNanoSql(`${later}.accepted_at`)},
+      ${later}.event_id
+    ) > (
+      ${instantSecondSql(`${earlier}.accepted_at`)},
+      ${instantNanoSql(`${earlier}.accepted_at`)},
+      ${earlier}.event_id
     )
   )`;
 }
@@ -463,12 +527,18 @@ function replayWhere(
     conditions.push(`${instantPairSql("events.occurred_at")} >= (?, ?)`);
     bindings.push(...instantBoundPair(filter.since, "since"));
   }
+  if (filter.until !== undefined) {
+    conditions.push(`${instantPairSql("events.occurred_at")} < (?, ?)`);
+    bindings.push(...instantBoundPair(filter.until, "until"));
+  }
   if (liveOnly) conditions.push(LIVE_PREDICATE);
   if (cursor !== null) {
+    const bounds = cursorInstantBounds(cursor);
     conditions.push(
-      "(events.accepted_at > ? OR (events.accepted_at = ? AND events.event_id > ?))",
+      "events.accepted_at >= ?",
+      `(${EVENTS_ACCEPTED_AT_ORDER}, events.event_id) > (?, ?, ?)`,
     );
-    bindings.push(cursor.accepted_at, cursor.accepted_at, cursor.event_id);
+    bindings.push(bounds.minLexical, bounds.second, bounds.nano, bounds.eventId);
   }
   return {
     sql: conditions.length === 0 ? "" : `WHERE ${conditions.join(" AND ")}`,
@@ -491,7 +561,7 @@ function* replayPages(
           SELECT ${EVENT_COLUMNS}
           FROM events
           ${where.sql}
-          ORDER BY events.accepted_at, events.event_id
+          ORDER BY ${EVENTS_ACCEPTED_AT_ORDER}, events.event_id
           LIMIT ?
         `,
       )
@@ -520,12 +590,33 @@ export function* replayLive(
 
 export function latestLedgerCursor(db: Database): LedgerCursor | null {
   if (!tableExists(db, "events")) return null;
+  const lexicalTail = db
+    .query<{ accepted_at: string }, []>(
+      "SELECT accepted_at FROM events ORDER BY accepted_at DESC LIMIT 1",
+    )
+    .get();
+  if (lexicalTail === null) return null;
+  if (isRfc3339(lexicalTail.accepted_at)) {
+    const [second] = instantBoundPair(lexicalTail.accepted_at, "accepted_at");
+    const minLexical = minLexicalAcceptedAtForEpochSecond(second);
+    return (
+      db
+        .query<LedgerCursor, [string]>(
+          `SELECT accepted_at, event_id
+             FROM events
+            WHERE accepted_at >= ?
+            ORDER BY ${instantSecondSql("accepted_at")} DESC, ${instantNanoSql("accepted_at")} DESC, event_id DESC
+            LIMIT 1`,
+        )
+        .get(minLexical) ?? null
+    );
+  }
   return (
     db
       .query<LedgerCursor, []>(
         `SELECT accepted_at, event_id
            FROM events
-          ORDER BY accepted_at DESC, event_id DESC
+          ORDER BY ${instantSecondSql("accepted_at")} DESC, ${instantNanoSql("accepted_at")} DESC, event_id DESC
           LIMIT 1`,
       )
       .get() ?? null
@@ -538,13 +629,15 @@ export function latestLedgerCursor(db: Database): LedgerCursor | null {
  */
 export function countSince(db: Database, cursor: LedgerCursor | null): number {
   if (cursor === null) return count(db);
+  const bounds = cursorInstantBounds(cursor);
   return (
     db
-      .query<{ count: number }, [string, string, string]>(
+      .query<{ count: number }, [string, number, number, string]>(
         `SELECT COUNT(*) AS count FROM events
-         WHERE accepted_at > ? OR (accepted_at = ? AND event_id > ?)`,
+         WHERE accepted_at >= ?
+           AND (${ACCEPTED_AT_ORDER}, event_id) > (?, ?, ?)`,
       )
-      .get(cursor.accepted_at, cursor.accepted_at, cursor.event_id)?.count ?? 0
+      .get(bounds.minLexical, bounds.second, bounds.nano, bounds.eventId)?.count ?? 0
   );
 }
 

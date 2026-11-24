@@ -1,0 +1,148 @@
+export {
+  MEMT_SENSITIVITIES,
+  MEMT_SENSITIVITY_ORDER,
+  allowedSensitivitiesForCeiling,
+  compareSensitivity,
+  defaultMemtRegistryPath,
+  defaultMemtSnapshotDir,
+  isMemtSensitivity,
+  maxSensitivity,
+  normalizeSourceRefVariants,
+  openMemtRegistryDb,
+  withinSensitivityCeiling,
+} from "./db";
+export type { MemtSensitivity, OpenMemtRegistryOptions } from "./db";
+
+export {
+  MEMT_COMMIT_CHUNK_POLICIES,
+  MEMT_CONTROL_ACTIONS,
+  MEMT_DEFAULT_CHUNK_TOKENS,
+  MEMT_LEASE_MAX_TTL_S,
+  MEMT_LEASE_MIN_TTL_S,
+  MEMT_MODEL_FAMILIES,
+  MEMT_PROTOCOL_VERSION,
+  MEMT_SNAPSHOT_FORMAT,
+  MemTClientError,
+  buildCommitRid,
+  buildQueryRid,
+  generateMemTNonce,
+  normalizeMemTModel,
+  parseMemTCapabilities,
+  parseMemTControlResponse,
+  parseMemTGenerateResponse,
+  parseMemTIdentity,
+  parseMemTRid,
+  validateGenerateRequest,
+  validateLeaseTtl,
+} from "./protocol";
+export type {
+  MemTCapabilities,
+  MemTClientErrorOptions,
+  MemTCommitChunkPolicy,
+  MemTControlAction,
+  MemTControlCloseRequest,
+  MemTControlCreateRequest,
+  MemTControlInspectRequest,
+  MemTControlLeaseRequest,
+  MemTControlMemoryReadRequest,
+  MemTControlRequest,
+  MemTControlResponse,
+  MemTControlSnapshotRequest,
+  MemTControlTransactionRequest,
+  MemTErrorStage,
+  MemTGenerateRequest,
+  MemTGenerateResponse,
+  MemTIdentity,
+  MemTModelFamily,
+  MemTSamplingParams,
+  MemTSessionInspect,
+  MemTTransactionReceipt,
+  MemTTransactionState,
+  ParsedMemTRid,
+} from "./protocol";
+
+export {
+  MemTClient,
+  MemTSession,
+  chunkTextByTokens,
+  estimateMemTTokens,
+} from "./client";
+export type {
+  MemTClientOptions,
+  MemTCommitOptions,
+  MemTCommitResult,
+  MemTConversationTurn,
+  MemTQueryOptions,
+  MemTQueryResult,
+  MemTRecoveryReport,
+  MemTRequestOptions,
+  MemTSessionCreateOptions,
+  MemTSessionStatus,
+  MemTSnapshotExportResult,
+  MemTSnapshotImportResult,
+  MemTSnapshotTarget,
+} from "./client";
+
+export {
+  MAX_SAFETENSORS_HEADER_BYTES,
+  MemTCustodyError,
+  SnapshotCustodyRegistry,
+  buildMinimalSafetensorsBuffer,
+  validateMemTSnapshotBytes,
+  validateMemTSnapshotFile,
+} from "./snapshot";
+export type {
+  AssertLoadableOptions,
+  BuildMinimalSafetensorsOptions,
+  InvalidateSnapshotsResult,
+  MemTCustodyErrorCode,
+  MemTSnapshotValidationResult,
+  MemtSnapshotRecord,
+  MemtSnapshotTaintState,
+  MemtTensorSpec,
+  RegisterSnapshotInput,
+  SnapshotCustodyRegistryOptions,
+} from "./snapshot";
+
+export {
+  EXPERIENCE_OUTCOMES,
+  ExperienceBank,
+  cosineSimilarity,
+  decodeFloat32Vector,
+  encodeFloat32Vector,
+} from "./experience";
+export type {
+  ExperienceBankOptions,
+  ExperienceOutcome,
+  ExperienceRecord,
+  ExperienceSearchHit,
+  MarkOutcomeOptions,
+  PurgeExperiencesResult,
+  RecordExperienceInput,
+  RecordExperienceResult,
+  SearchExperiencesInput,
+  UninternalizedExperiencesFilter,
+} from "./experience";
+
+export {
+  MemtEngine,
+  createMemtEngine,
+  fuseHybridRecall,
+  loadMemtConfig,
+} from "./hybrid";
+export type {
+  FuseHybridRecallInput,
+  HybridRecallItem,
+  HybridRecallResult,
+  HybridTrustTag,
+  InternalizePartitionInput,
+  InternalizePartitionResult,
+  MemtConfig,
+  MemtEngineOptions,
+  MemtEngineStatus,
+  MemtHybridRecallInput,
+  MemtLatentSynthesis,
+  MemtPurgeResult,
+  System2EvidenceHit,
+  System2EvidenceKind,
+} from "./hybrid";

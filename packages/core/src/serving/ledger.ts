@@ -32,6 +32,10 @@ export interface ServableEvent {
 export interface QuotedSource extends ServableEvent {
   connector_id: string;
   text: string;
+  source_record_id?: string;
+  text_hash?: string;
+  accepted_at?: string;
+  metadata?: string;
 }
 
 interface ServableEventRow {
@@ -257,9 +261,20 @@ export function ledgerHitSource(hit: SearchHit): QuotedSource {
 /** Load the current authoritative row; cached retrieval snippets are never evidence. */
 export function currentQuotedSource(db: Database, eventId: string): QuotedSource | null {
   if (!liveEventIds(db, [eventId]).has(eventId)) return null;
-  const row = db.query<ServableEventRow & { connector_id: string; text: string }, [string]>(
-    `SELECT event_id, connector_id, kind, occurred_at, text,
-            coalesce(sensitivity_hint, 'unlabeled') AS sensitivity, subjects
+  const row = db.query<
+    ServableEventRow & {
+      connector_id: string;
+      text: string;
+      source_record_id: string;
+      text_hash: string;
+      accepted_at: string;
+      metadata: string;
+    },
+    [string]
+  >(
+    `SELECT event_id, connector_id, source_record_id, kind, occurred_at, text,
+            coalesce(sensitivity_hint, 'unlabeled') AS sensitivity, subjects,
+            text_hash, accepted_at, metadata
        FROM events WHERE event_id = ?`,
   ).get(eventId);
   return row === null ? null : { ...row, subjects: subjectIds(row.subjects) };

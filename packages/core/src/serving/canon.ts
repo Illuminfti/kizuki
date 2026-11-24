@@ -99,9 +99,51 @@ interface VaultMemo {
 /** A process serves one vault; a few more cover tests and multi-vault hosts. */
 const MEMO_VAULTS = 4;
 const MEMO_SCOPES = 8;
+const MAX_MEMO_PAGES = 16_384;
+const MAX_MEMO_BODY_BYTES = 32 * 1024 * 1024;
+const MAX_SINGLE_CACHED_BODY_BYTES = 131_072;
+const MEMO_IDLE_TTL_MS = 120_000;
 const memos = new Map<string, VaultMemo>();
+let memoIdleTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleMemoIdleTrim(): void {
+  if (memoIdleTimer !== null) clearTimeout(memoIdleTimer);
+  memoIdleTimer = setTimeout(() => {
+    memoIdleTimer = null;
+    memos.clear();
+  }, MEMO_IDLE_TTL_MS);
+  memoIdleTimer.unref?.();
+}
+
+export function trimServingCaches(): void {
+  if (memoIdleTimer !== null) {
+    clearTimeout(memoIdleTimer);
+    memoIdleTimer = null;
+  }
+  memos.clear();
+}
+
+function boundCanonPageCache(cache: CanonPageCache): void {
+  let totalBytes = 0;
+  for (const [relPath, entry] of cache.files) {
+    const len = entry.body.length;
+    if (len > MAX_SINGLE_CACHED_BODY_BYTES) {
+      cache.files.delete(relPath);
+      continue;
+    }
+    totalBytes += len;
+  }
+  if (cache.files.size > MAX_MEMO_PAGES || totalBytes > MAX_MEMO_BODY_BYTES) {
+    for (const [relPath, entry] of cache.files) {
+      if (cache.files.size <= MAX_MEMO_PAGES && totalBytes <= MAX_MEMO_BODY_BYTES) break;
+      totalBytes -= entry.body.length;
+      cache.files.delete(relPath);
+    }
+  }
+}
 
 function vaultMemo(vaultPath: string): VaultMemo {
+  scheduleMemoIdleTrim();
   const key = resolve(vaultPath);
   const known = memos.get(key);
   if (known !== undefined) return known;
@@ -253,14 +295,21 @@ function resolveAuthorities(db: Database, memo: AuthorityMemo, pages: readonly C
 export function loadCanon(ctx: ServeContext, options: { readonly include_archived?: boolean } = {}): CanonIndex {
   const generation = canonReadGeneration(ctx.db);
   assertCanonReadAdmission(ctx);
+  const grant = ctx.principal.grant;
+  const includeArchived = options.include_archived === true;
+  const reqKey = JSON.stringify([includeArchived, ctx.principal.kind, ctx.sourcePurpose ?? "recall", grant.ceiling, grant.types, grant.subjects, grant.since, grant.until, denyClassesOf(grant)]);
+  const cachedIndex = ctx.requestCanon?.get(reqKey);
+  if (cachedIndex !== undefined && cachedIndex.generation === generation) {
+    return cachedIndex;
+  }
   const memo = vaultMemo(ctx.vaultPath);
   const denied = deniedCanonPaths(ctx);
-  const report = listCanonPagesReport(ctx.vaultPath, memo.pages, denied, { include_archived: options.include_archived === true });
+  const report = listCanonPagesReport(ctx.vaultPath, memo.pages, denied, { include_archived: includeArchived });
+  boundCanonPageCache(memo.pages);
   const { fatal, withheld } = splitServingSkips(report.skipped);
   if (fatal.length > 0) {
     throw new CanonUnreadableError(fatal);
   }
-  const grant = ctx.principal.grant;
   const scopeKey = JSON.stringify([ctx.principal.kind, ctx.sourcePurpose ?? "recall", grant.ceiling, grant.types, grant.subjects, grant.since, grant.until, denyClassesOf(grant)]);
   let authorityMemo = memo.authorities.get(scopeKey);
   if (authorityMemo === undefined) {
@@ -283,7 +332,7 @@ export function loadCanon(ctx: ServeContext, options: { readonly include_archive
   `).all(JSON.stringify(permitted.map(page => page.relPath))) : [];
   assertCanonReadAdmission(ctx);
   if (canonReadGeneration(ctx.db) !== generation) throw new ServeError("held", "canon changed during request; retry");
-  return {
+  const index: CanonIndex = {
     sourceContext: ctx,
     generation,
     pages: report.pages,
@@ -294,6 +343,8 @@ export function loadCanon(ctx: ServeContext, options: { readonly include_archive
     authority: resolveAuthorities(ctx.db, authorityMemo, permitted),
     withheld,
   };
+  ctx.requestCanon?.set(reqKey, index);
+  return index;
 }
 
 /** Recheck durable admission even for a canon snapshot loaded before recovery. */

@@ -182,9 +182,11 @@ test("loopback supplies v2 for token clients that omit the selector", async () =
     expect(world.status).toBe(200);
     expect(world.body.value.schema).toBe(V2);
     const health = await r.agent("system_health", {});
-    expect(health.body.error).toEqual({
-      code: "unsupported_contract", message: "requested contract unavailable", retryable: false,
-    });
+    expect(health.status).toBe(200);
+    expect(health.body.value.schema).toBe(V2);
+    expect(Object.keys(health.body.value).sort()).toEqual(ENVELOPE_V2_KEYS);
+    expect(health.body.value.data.vault_ready).toBe(true);
+    expect(forbiddenPaths(health.body)).toEqual([]);
   } finally {
     await r.dispose();
   }
@@ -209,7 +211,7 @@ test("every loopback tool uses the closed v2 envelope or a fixed refusal across 
     for (const tool of TOOLS) {
       const reply = await r.agent(tool, v2(inputs[tool]));
       expect(forbiddenPaths(reply.body)).toEqual([]);
-      if (["system_health", "propose", "correct", "get_page", "graph_neighbors"].includes(tool)) {
+      if (["propose", "correct", "get_page", "graph_neighbors"].includes(tool)) {
         expect(reply.status).toBe(400);
         expect(reply.body.ok).toBe(false);
       } else {
@@ -304,7 +306,7 @@ test("a refused selector is audited and reads nothing", async () => {
   }
 });
 
-test("system_health has no v2 form and world_view has no v1 form", async () => {
+test("system_health supports v1 and v2 while world_view has no v1 form", async () => {
   const r = await rig();
   try {
     const fixed = {
@@ -313,7 +315,11 @@ test("system_health has no v2 form and world_view has no v1 form", async () => {
       retryable: false,
     };
     for (const send of [r.owner, r.agent]) {
-      expect((await send("system_health", v2({}))).body.error).toEqual(fixed);
+      const healthV2 = await send("system_health", v2({}));
+      expect(healthV2.status).toBe(200);
+      expect(healthV2.body.value.schema).toBe(V2);
+      expect(healthV2.body.value.data.vault_ready).toBe(true);
+      expect(forbiddenPaths(healthV2.body)).toEqual([]);
       expect(
         (
           await send("world_view", {

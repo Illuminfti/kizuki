@@ -20,7 +20,7 @@ export function unsupportedContract(): ServeError {
  * The contract a call is served under, or null when it cannot be served. A
  * selector rides beside the arguments and never inside them, so an argument
  * bag that carries the key is a nested or conflicting selector and is
- * refused. `system_health` has no v2 form, and `world_view` has no v1 form.
+ * refused. `world_view` has no v1 form.
  */
 export function chooseContract(
   tool: Tool,
@@ -38,7 +38,6 @@ export function chooseContract(
       : requested;
   if (contract !== ENVELOPE_SCHEMA && contract !== ENVELOPE_V2_SCHEMA)
     return null;
-  if (tool === "system_health" && contract === ENVELOPE_V2_SCHEMA) return null;
   if (tool === "world_view" && contract === ENVELOPE_SCHEMA) return null;
   return contract;
 }

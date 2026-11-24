@@ -15,6 +15,7 @@ import { recoverCommand } from "./recover";
 import { reflexCommand } from "./reflex";
 import { restoreCommand } from "./restore";
 import { initCommand } from "./init";
+import { memtCommand } from "./memt";
 import { modelsCommand } from "./models";
 import { parityCommand } from "./parity";
 import { purgeCommand } from "./purge";
@@ -72,6 +73,7 @@ export const COMMANDS: readonly Command[] = [
   contextCommand,
   hookCommand,
   worldCommand,
+  memtCommand,
   attentionCommand,
   verifyCommand,
   doctorCommand,

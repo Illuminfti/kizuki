@@ -101,10 +101,10 @@ describe("world_view as a client sees it", () => {
 });
 
 describe("the advertised size", () => {
-  test("tools/list stays under 40 KB", async () => {
+  test("tools/list stays under 48 KB", async () => {
     const client = await connectClient(live().owner(), open);
     const listed = await client.listTools();
-    expect(Buffer.byteLength(JSON.stringify(listed))).toBeLessThan(40 * 1024);
+    expect(Buffer.byteLength(JSON.stringify(listed))).toBeLessThan(48 * 1024);
     const world = listed.tools.find((tool) => tool.name === "world_view");
     expect(Buffer.byteLength(JSON.stringify(world?.outputSchema))).toBeLessThan(4 * 1024);
   });
@@ -136,7 +136,7 @@ describe("the advertised size", () => {
 describe("tools/list is scoped to the grant", () => {
   test("the owner is offered every tool", async () => {
     const client = await connectClient(live().owner(), open);
-    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([...TOOLS]);
+    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([...TOOLS, "memt_status", "memt_recall", "memt_experience", "memt_snapshot"]);
   });
 
   test("an agent is offered exactly the tools its grant allows", async () => {
@@ -151,7 +151,7 @@ describe("tools/list is scoped to the grant", () => {
   test("a grant changed mid-session changes the next listing, and revocation empties it", async () => {
     const running = live();
     const client = await connectClient(running.agent("reader-personal"), open);
-    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([...TOOLS]);
+    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([...TOOLS, "memt_status", "memt_recall", "memt_experience", "memt_snapshot"]);
     setGrant(running.db, "reader-personal", { tools: ["search", "timeline"] });
     expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(["search", "timeline"]);
     revokeAgent(running.db, "reader-personal");

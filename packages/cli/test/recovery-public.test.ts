@@ -304,3 +304,53 @@ test('serve --once on a held vault exits 0 and names the hold; an exact stage co
   const recovered = JSON.parse(h.runCli(f.env, 'doctor', '--json').stdout).data.canon_recovery;
   expect(recovered).toMatchObject({ pending: false, reason: null, stages: [], next: null });
 }, 60_000);
+
+test('kizuki recover --resolve-stale-hold defaults to dry-run, refuses published holds, and resolves unapplied authority_changed holds with --apply', async () => {
+  const f = await heldStage();
+  const logAbs = join(f.vault, '.kizuki', 'receipts', 'promotions.jsonl');
+  const archiveAbs = join(f.vault, f.pending.receipt.archive_path!);
+  if (existsSync(archiveAbs)) renameSync(archiveAbs, join(f.vault, f.pending.stages.archive_stage!));
+  writeFileSync(logAbs, readFileSync(logAbs).subarray(0, f.pending.checkpoint.byte_length), { mode: 0o600 });
+
+  // Mutate the pending claim so admission fails with authority_changed.
+  f.db.query("UPDATE claims SET status='superseded' WHERE claim_id=?").run(f.pending.receipt.claim_ids[0]!);
+  expect(h.runCli(f.env, 'recover', '--json').exitCode).toBe(1);
+
+  // 1. Default --resolve-stale-hold is dry-run: exits 0, mutates nothing.
+  const dry = h.runCli(f.env, 'recover', '--resolve-stale-hold', '--json');
+  expect(dry.exitCode).toBe(0);
+  expect(JSON.parse(dry.stdout).data.stale_hold_resolution).toMatchObject({
+    status: 'resolvable',
+    dry_run: true,
+    receipt_id: f.pending.receipt.receipt_id,
+    hold_reason: 'authority_changed',
+    before_verified: true,
+  });
+  expect(inspectCanonRecovery(f.db).pending).toBe(true);
+
+  // 2. If the postimage were already on disk, --resolve-stale-hold --apply refuses with exitCode 1.
+  const pageAbs = join(f.vault, f.pending.receipt.page_path);
+  const beforeBytes = readFileSync(pageAbs);
+  writeFileSync(pageAbs, Buffer.from(f.pending.after_base64!, 'base64'), { mode: 0o600 });
+  const refused = h.runCli(f.env, 'recover', '--resolve-stale-hold', '--apply', '--json');
+  expect(refused.exitCode).toBe(1);
+  expect(JSON.parse(refused.stdout).data.stale_hold_resolution).toMatchObject({
+    status: 'refused',
+    refusal_reason: 'already_published',
+  });
+  expect(inspectCanonRecovery(f.db).pending).toBe(true);
+
+  // 3. Restore beforeBytes: --resolve-stale-hold --apply safely aborts and clears the hold!
+  writeFileSync(pageAbs, beforeBytes, { mode: 0o600 });
+  const applied = h.runCli(f.env, 'recover', '--resolve-stale-hold', '--apply', '--json');
+  expect(applied.exitCode).toBe(0);
+  expect(JSON.parse(applied.stdout).data.stale_hold_resolution).toMatchObject({
+    status: 'resolved',
+    dry_run: false,
+    receipt_id: f.pending.receipt.receipt_id,
+    before_verified: true,
+  });
+  expect(inspectCanonRecovery(f.db).pending).toBe(false);
+  expect(existsSync(f.stage)).toBe(false);
+  expect(existsSync(join(f.vault, '.kizuki', 'canon-recovery-hold.json'))).toBe(false);
+}, 60_000);

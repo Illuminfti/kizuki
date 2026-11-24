@@ -136,4 +136,23 @@ describe("serveHealth", () => {
     expect(data?.connections).toEqual([]);
     db.close();
   });
+
+  test("v2 system_health returns a redacted operational summary for scoped agents", () => {
+    const envelope = serveHealth(fixture.agent("reader-personal"), "kizuki.envelope/v2");
+    expect(envelope.schema).toBe("kizuki.envelope/v2");
+    expect(envelope.canon).toEqual([]);
+    expect(envelope.quoted).toEqual([]);
+    const json = JSON.stringify(envelope.data);
+    expect(json).not.toContain(fixture.vaultPath);
+    expect(json).not.toContain("kzk_");
+    expect(json).not.toContain("/");
+    const data = envelope.data as unknown as import("../../src/serving/health").HealthV2Data;
+    expect(data.vault_ready).toBe(true);
+    expect(data.principal.kind).toBe("agent");
+    expect(data.principal.ceiling).toBe("personal");
+    expect(data.counts.events).toBeGreaterThanOrEqual(0);
+    expect(data.counts.connections).toBeGreaterThanOrEqual(0);
+    expect(data.vector_layer.mode).toBe("fts5");
+    expect(data.memt.mode).toBe("unavailable");
+  });
 });

@@ -16,8 +16,11 @@ export const CANON_STAGE_RECOVERIES_PATH = ".kizuki/receipts/stage-recoveries.js
 export const CANON_STAGE_QUARANTINE_PATH = ".kizuki/quarantine/canon-stage";
 /** Last held recovery attempt, for doctor. Rewritten atomically; not a receipt. */
 export const CANON_RECOVERY_HOLD_PATH = ".kizuki/canon-recovery-hold.json";
+/** Auditable log of owner-authorized unapplied stale-hold resolutions. */
+export const CANON_RECOVERY_RESOLUTIONS_PATH = ".kizuki/receipts/recovery-resolutions.jsonl";
 const RECORD_SCHEMA = "kizuki.canon-stage-recovery/v2";
 const HOLD_SCHEMA = "kizuki.canon-recovery-hold/v1";
+const RESOLUTION_SCHEMA = "kizuki.canon-recovery-resolution/v1";
 /** The log is diagnostics, not a receipt: the oldest records fall off past this bound. */
 const RECORD_LIMIT = 512;
 const QUARANTINE_SCAN_LIMIT = 4096;
@@ -55,6 +58,17 @@ export interface CanonRecoveryHold {
   readonly reason: CanonRecoveryReason;
   readonly at: string;
   readonly attempts: number;
+}
+export interface CanonRecoveryResolutionRecord {
+  readonly schema: typeof RESOLUTION_SCHEMA;
+  readonly id: string;
+  readonly receipt_id: string;
+  readonly hold_reason: CanonRecoveryReason;
+  readonly action: "aborted_unapplied_write";
+  readonly before_present: boolean;
+  readonly claim_count: number;
+  readonly stage_recoveries: number;
+  readonly at: string;
 }
 export interface CanonQuarantineInspection {
   readonly state: "absent" | "private" | "unsafe";
@@ -370,6 +384,97 @@ export function clearCanonRecoveryHold(files: CanonFiles): void {
   } catch { /* An unwritable hold is stale; doctor ignores a hold whose receipt is no longer pending. */ }
 }
 
+function parseResolutionRecord(value: unknown): CanonRecoveryResolutionRecord | null {
+  if (
+    !isPlainObject(value) ||
+    value["schema"] !== RESOLUTION_SCHEMA ||
+    !isUlid(value["id"]) ||
+    !isUlid(value["receipt_id"]) ||
+    typeof value["hold_reason"] !== "string" ||
+    value["action"] !== "aborted_unapplied_write" ||
+    typeof value["before_present"] !== "boolean" ||
+    !Number.isSafeInteger(value["claim_count"]) ||
+    !Number.isSafeInteger(value["stage_recoveries"]) ||
+    typeof value["at"] !== "string"
+  ) {
+    return null;
+  }
+  return value as unknown as CanonRecoveryResolutionRecord;
+}
+
+export function recordCanonRecoveryResolution(
+  files: CanonFiles,
+  fields: Omit<CanonRecoveryResolutionRecord, "schema" | "id">,
+): CanonRecoveryResolutionRecord {
+  const snapshot = files.readPrivate(CANON_RECOVERY_RESOLUTIONS_PATH);
+  const records: CanonRecoveryResolutionRecord[] = [];
+  if (snapshot !== null) {
+    try {
+      for (const line of Buffer.from(snapshot.bytes).toString("utf8").split("\n")) {
+        if (line.length === 0) continue;
+        try {
+          const parsed = parseResolutionRecord(JSON.parse(line));
+          if (parsed !== null) records.push(parsed);
+        } catch { /* Drop malformed diagnostic line on rewrite. */ }
+      }
+    } catch (error) {
+      snapshot.close();
+      throw error;
+    }
+  }
+  const entry: CanonRecoveryResolutionRecord = {
+    schema: RESOLUTION_SCHEMA,
+    id: ulid(),
+    receipt_id: fields.receipt_id,
+    hold_reason: fields.hold_reason,
+    action: fields.action,
+    before_present: fields.before_present,
+    claim_count: fields.claim_count,
+    stage_recoveries: fields.stage_recoveries,
+    at: fields.at,
+  };
+  const kept = [...records, entry].slice(-RECORD_LIMIT);
+  files.ensureDirectory(".kizuki/receipts");
+  writePrivate(
+    files,
+    CANON_RECOVERY_RESOLUTIONS_PATH,
+    Buffer.from(kept.map(item => `${JSON.stringify(item)}\n`).join("")),
+    snapshot,
+  );
+  return entry;
+}
+
+export function readCanonRecoveryResolutions(
+  vaultPath: string,
+  receiptId?: string,
+): CanonRecoveryResolutionRecord[] {
+  let files: CanonFiles | undefined;
+  try {
+    files = openCanonFiles(vaultPath);
+    const snapshot = files.readPrivate(CANON_RECOVERY_RESOLUTIONS_PATH);
+    if (snapshot === null) return [];
+    try {
+      const records: CanonRecoveryResolutionRecord[] = [];
+      for (const line of Buffer.from(snapshot.bytes).toString("utf8").split("\n")) {
+        if (line.length === 0) continue;
+        try {
+          const parsed = parseResolutionRecord(JSON.parse(line));
+          if (parsed !== null && (receiptId === undefined || parsed.receipt_id === receiptId)) {
+            records.push(parsed);
+          }
+        } catch { /* Ignore unparsed diagnostic line. */ }
+      }
+      return records;
+    } finally {
+      snapshot.close();
+    }
+  } catch {
+    return [];
+  } finally {
+    try { files?.close(); } catch { /* Read-only view. */ }
+  }
+}
+
 /** One owner-facing next step, derived from the typed reason and stage state.
  * Only a reason that clears on its own may promise automatic completion. */
 export function canonRecoveryNextStep(reason: CanonRecoveryReason | null, stages: readonly CanonStageInspection[], receiptId: string | null = null): string {
@@ -388,7 +493,7 @@ export function canonRecoveryNextStep(reason: CanonRecoveryReason | null, stages
     case "page_changed": case "archive_changed":
       return "the page changed after the write was admitted; the write stays held and other memory stays readable. Undo or restore that edit, then run: kizuki recover --json";
     case "authority_changed": case "predecessor_changed":
-      return "the write's sources or claims changed after admission; it stays held until source withdrawal or undo resolves it";
+      return "the write's sources or claims changed after admission; it stays held until source withdrawal or undo resolves it, or preview safe unapplied abort with: kizuki recover --resolve-stale-hold";
     case "intent_invalid":
       return "the pending write's durable intent fails validation and never completes on its own, while reads and ingest continue; restore the vault from a verified backup: kizuki restore --from DIR --into DIR";
     case "receipt_changed":

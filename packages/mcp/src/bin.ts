@@ -106,6 +106,7 @@ export async function main(argv: string[]): Promise<void> {
   let db: ReturnType<typeof openLedgerForServing> | undefined;
   try {
     db = openLedgerForServing(join(stateDir, "kizuki.db"), { busyTimeoutMs: LEDGER_BUSY_TIMEOUT_MS });
+    db.exec("PRAGMA temp_store = MEMORY; PRAGMA cache_size = -8192; PRAGMA mmap_size = 0;");
   } catch (error) {
     db?.close();
     // A ledger that needs repair is repaired by opening it, which is a write.

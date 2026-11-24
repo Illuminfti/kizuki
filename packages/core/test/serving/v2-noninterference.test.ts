@@ -64,8 +64,6 @@ test("the v2 matrix exercises valid reads and exact scoped refusals", async () =
       const pending = read.run(scene.reader);
       if (read.name === "get_page" || read.name === "propose" || read.name === "correct")
         await expect(pending).rejects.toMatchObject(NOT_FOUND);
-      else if (read.name === "system_health")
-        await expect(pending).rejects.toMatchObject({ code: "unsupported_contract", message: "requested contract unavailable" });
       else await expect(pending).resolves.toBeDefined();
     }
   } finally { scene.dispose(); }

@@ -315,7 +315,7 @@ function enter(
     ]);
     throw new ServeError("tool_not_granted", "tool not granted");
   }
-  return { live: { ...live, sourcePurpose: tool === "correct" ? "correction" : tool === "propose" ? "derive" : live.sourcePurpose ?? "recall", redactor: createRedactor(live.principal, live.servingSecrets) }, audit_id: reserved.audit_id };
+  return { live: { ...live, requestCanon: live.requestCanon ?? new Map(), sourcePurpose: tool === "correct" ? "correction" : tool === "propose" ? "derive" : live.sourcePurpose ?? "recall", redactor: createRedactor(live.principal, live.servingSecrets) }, audit_id: reserved.audit_id };
 }
 
 /**
@@ -454,54 +454,77 @@ function gated<T, C extends ResponseContract, V = T | null, Q extends readonly u
 ): ResponseEnvelope<T, C, V, Q> {
   const at = new Date().toISOString();
   const { live, audit_id } = enter(ctx, tool, args, at);
-  if (recheck !== undefined) {
-    try {
-      const served = run({ ctx: live, at });
-      return live.db.transaction(() => {
-        const current = liveContext(live);
-        if (current === null) throw new ServeError("unknown_agent", "unknown agent");
-        if (!toolAllowed(current.principal.grant, tool)) throw new ServeError("tool_not_granted", "tool not granted");
-        const fresh = { ...current, redactor: createRedactor(current.principal, current.servingSecrets) };
-        const final = recheck({ ctx: fresh, at }, served);
-        validatePublication(fresh, tool, final);
-        return envelopeOf<T, C, V, Q>(fresh, tool, args, at, audit_id, final, contract);
-      }).immediate();
-    } catch (error) {
-      failed(live, tool, args, audit_id, error);
-    }
-  }
-  if (contract === ENVELOPE_V2_SCHEMA) {
-    try {
-      return live.db.transaction(() => {
-        assertPublicationAuthority(ctx, live);
-        const served = run({ ctx: live, at });
-        return envelopeOf<T, C, V, Q>(live, tool, args, at, audit_id, served, contract);
-      }).immediate();
-    } catch (error) {
-      failed(live, tool, args, audit_id, error);
-    }
-  }
-  const sourceEpoch = sourcePolicyEpoch(live.db);
-  const purgeEpoch = purgeReadEpoch(live.db);
-  const readEpoch = tool === "query_entities" ? claimsEpoch(live.db) : null;
-  const canonGeneration = tool === "propose" || tool === "correct" ? null : canonReadGeneration(live.db);
-  let served: Served<T>;
   try {
-    served = run({ ctx: live, at });
-    if (purgeReadEpoch(live.db) !== purgeEpoch) throw new ServeError("held", "canon unavailable during purge recovery");
-    if (canonGeneration !== null && canonReadGeneration(live.db) !== canonGeneration) throw new ServeError("held", "canon changed during request; retry");
-    if (sourcePolicyEpoch(live.db) !== sourceEpoch) throw new ServeError("error", "source authorization changed during serving");
-    if (readEpoch !== null) {
-      if (readEpoch !== claimsEpoch(live.db)) throw new ServeError("error", "memory changed during request; retry");
-      const current = liveContext(ctx);
-      if (current === null) throw new ServeError("unknown_agent", "unknown agent");
-      if (live.principal.kind === "agent" && current.principal.kind === "agent" &&
-          live.principal.grant_epoch !== current.principal.grant_epoch) throw new ServeError("error", "authority changed during request; retry");
+    if (recheck !== undefined) {
+      try {
+        const served = run({ ctx: live, at });
+        return live.db.transaction(() => {
+          const current = liveContext(live);
+          if (current === null) throw new ServeError("unknown_agent", "unknown agent");
+          if (!toolAllowed(current.principal.grant, tool)) throw new ServeError("tool_not_granted", "tool not granted");
+          const fresh = { ...current, redactor: createRedactor(current.principal, current.servingSecrets) };
+          const final = recheck({ ctx: fresh, at }, served);
+          validatePublication(fresh, tool, final);
+          return envelopeOf<T, C, V, Q>(fresh, tool, args, at, audit_id, final, contract);
+        }).immediate();
+      } catch (error) {
+        failed(live, tool, args, audit_id, error);
+      }
     }
-  } catch (error) {
-    failed(live, tool, args, audit_id, error);
+    if (contract === ENVELOPE_V2_SCHEMA) {
+      const writesDb = tool === "propose" || tool === "correct";
+      try {
+        if (writesDb) {
+          return live.db.transaction(() => {
+            assertPublicationAuthority(ctx, live);
+            const served = run({ ctx: live, at });
+            return envelopeOf<T, C, V, Q>(live, tool, args, at, audit_id, served, contract);
+          }).immediate();
+        }
+        const sourceEpoch = sourcePolicyEpoch(live.db);
+        const purgeEpoch = purgeReadEpoch(live.db);
+        const canonGeneration = canonReadGeneration(live.db);
+        const readEpoch = tool === "query_entities" ? claimsEpoch(live.db) : null;
+        const served = live.db.transaction(() => {
+          assertPublicationAuthority(ctx, live);
+          return run({ ctx: live, at });
+        }).deferred();
+        return live.db.transaction(() => {
+          if (purgeReadEpoch(live.db) !== purgeEpoch) throw new ServeError("held", "canon unavailable during purge recovery");
+          if (canonReadGeneration(live.db) !== canonGeneration) throw new ServeError("held", "canon changed during request; retry");
+          if (sourcePolicyEpoch(live.db) !== sourceEpoch) throw new ServeError("error", "source authorization changed during serving");
+          if (readEpoch !== null && readEpoch !== claimsEpoch(live.db)) throw new ServeError("error", "memory changed during request; retry");
+          assertPublicationAuthority(ctx, live);
+          return envelopeOf<T, C, V, Q>(live, tool, args, at, audit_id, served, contract);
+        }).immediate();
+      } catch (error) {
+        failed(live, tool, args, audit_id, error);
+      }
+    }
+    const sourceEpoch = sourcePolicyEpoch(live.db);
+    const purgeEpoch = purgeReadEpoch(live.db);
+    const readEpoch = tool === "query_entities" ? claimsEpoch(live.db) : null;
+    const canonGeneration = tool === "propose" || tool === "correct" ? null : canonReadGeneration(live.db);
+    let served: Served<T>;
+    try {
+      served = run({ ctx: live, at });
+      if (purgeReadEpoch(live.db) !== purgeEpoch) throw new ServeError("held", "canon unavailable during purge recovery");
+      if (canonGeneration !== null && canonReadGeneration(live.db) !== canonGeneration) throw new ServeError("held", "canon changed during request; retry");
+      if (sourcePolicyEpoch(live.db) !== sourceEpoch) throw new ServeError("error", "source authorization changed during serving");
+      if (readEpoch !== null) {
+        if (readEpoch !== claimsEpoch(live.db)) throw new ServeError("error", "memory changed during request; retry");
+        const current = liveContext(ctx);
+        if (current === null) throw new ServeError("unknown_agent", "unknown agent");
+        if (live.principal.kind === "agent" && current.principal.kind === "agent" &&
+            live.principal.grant_epoch !== current.principal.grant_epoch) throw new ServeError("error", "authority changed during request; retry");
+      }
+    } catch (error) {
+      failed(live, tool, args, audit_id, error);
+    }
+    return envelopeOf<T, C, V, Q>(live, tool, args, at, audit_id, served, contract);
+  } finally {
+    live.requestCanon?.clear();
   }
-  return envelopeOf<T, C, V, Q>(live, tool, args, at, audit_id, served, contract);
 }
 
 /**
@@ -533,6 +556,7 @@ async function gatedAsync<T, C extends ResponseContract, V = T | null, Q extends
 ): Promise<ResponseEnvelope<T, C, V, Q>> {
   const at = new Date().toISOString();
   const { live, audit_id } = enter(ctx, tool, args, at);
+  try {
   if (contract === ENVELOPE_V2_SCHEMA) {
     try {
       const served = await run({ ctx: live, at });
@@ -570,4 +594,7 @@ async function gatedAsync<T, C extends ResponseContract, V = T | null, Q extends
     failed(live, tool, args, audit_id, error);
   }
   return envelopeOf<T, C, V, Q>(live, tool, args, at, audit_id, served, contract);
+  } finally {
+    live.requestCanon?.clear();
+  }
 }

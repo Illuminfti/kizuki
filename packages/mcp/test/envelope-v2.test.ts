@@ -52,9 +52,7 @@ test("a newly enrolled stdio client uses v2 on every tool, and hidden revocation
       if (tool === "propose") {
         expect(JSON.parse(result.content[0]!.text)).toMatchObject({ error: "invalid_arguments" });
       }
-      if (tool === "system_health") {
-        expect(JSON.parse(result.content[0]!.text)).toMatchObject({ error: "unsupported_contract", message: "requested contract unavailable" });
-      } else if (!result.isError) {
+      if (!result.isError) {
         const envelope = envelopeOf(result);
         expect(Object.keys(envelope).sort()).toEqual(KEYS);
         expect(envelope.schema).toBe("kizuki.envelope/v2");

@@ -765,4 +765,51 @@ describe("serveSearch bounds captured text to an excerpt", () => {
       live.dispose();
     }
   });
+
+  test("duplicate captured messages fold before limit so distinct hits are not crowded out", async () => {
+    const live = await serveFixture();
+    try {
+      const storeCustom = (
+        sourceRecordId: string,
+        occurredAt: string,
+        text: string,
+        metadata: Record<string, unknown> = {},
+      ) => {
+        const res = accept(live.db, {
+          schema: "kizuki.event/v1",
+          connector_id: "fixture",
+          source_record_id: sourceRecordId,
+          kind: "message",
+          occurred_at: occurredAt,
+          observed_at: "2026-03-01T00:00:00Z",
+          text,
+          subjects: [{ subject_id: "person:ada", role: "from" }],
+          sensitivity_hint: "public",
+          deleted: false,
+          attachments: [],
+          metadata,
+        });
+        if (res.status !== "stored") throw new Error(`store failed: ${res.status}`);
+        return res.event.event_id;
+      };
+      // Two copies of the same captured message (matching connector+kind+occurred_at+text_hash)
+      const alpha1 = storeCustom("dup-alpha-1", "2026-03-02T10:00:00Z", "dedupprobe alpha common message");
+      const alpha2 = storeCustom("dup-alpha-2", "2026-03-02T10:00:00Z", "dedupprobe alpha common message");
+      // Two versions sharing metadata.message_id
+      const gamma1 = storeCustom("dup-gamma-1", "2026-03-02T10:05:00Z", "dedupprobe gamma draft message", { message_id: "ext-msg-gamma", channel_id: "chan-1" });
+      const gamma2 = storeCustom("dup-gamma-2", "2026-03-02T10:06:00Z", "dedupprobe gamma updated message", { message_id: "ext-msg-gamma", channel_id: "chan-1" });
+      // A distinct message that would have been crowded out under limit=2 without folding
+      const beta = storeCustom("distinct-beta", "2026-03-02T10:10:00Z", "dedupprobe beta distinct message");
+      rebuildDerived(live.db, live.vaultPath);
+
+      const res = await serveSearch(live.owner(), { query: "dedupprobe", scope: "ledger", limit: 3 });
+      const ids = res.quoted.map((chunk) => chunk.event_id);
+      expect(ids).toHaveLength(3);
+      expect(ids.filter((id) => id === alpha1 || id === alpha2)).toHaveLength(1);
+      expect(ids.filter((id) => id === gamma1 || id === gamma2)).toHaveLength(1);
+      expect(ids).toContain(beta);
+    } finally {
+      live.dispose();
+    }
+  });
 });

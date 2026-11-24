@@ -54,11 +54,7 @@ test("real stdio and HTTP scan all ten tools and CLI scans every scoped command 
     await both("world_view", { operation: "describe" });
     const proposed = await both("propose", { kind: "claim", body: "Scoped preference for review.", subject: quoted.subjects[0], subjects: [quoted.subjects[0]], provenance: [quoted.eventVersion], predicate: "preference.prefers", object: { kind: "literal", value: "review" } });
     await both("correct", { statement: "Scoped preference for careful review.", target: proposed.data.claim, object: { kind: "literal", value: "careful review" } });
-    const health = await clients.agent.call("system_health", {});
-    expect(health.isError).toBe(true); scan(health);
-    expect(JSON.parse(health.content[0]!.text)).toEqual({ error: "unsupported_contract", message: "requested contract unavailable", retry_after_seconds: null });
-    const healthHttp = await fetch(`${server.url}/v1/system_health`, { method: "POST", headers: { authorization: `Bearer ${clients.agentToken}`, "content-type": "application/json" }, body: "{}" });
-    expect(healthHttp.status).toBe(400); scan(await healthHttp.json()); seen.add("system_health");
+    await both("system_health", {});
     expect([...seen].sort()).toEqual([...TOOLS].sort());
     const initialized = h.runCli(env, "init", clients.vaultPath, "--no-service", "--no-default");
     expect(initialized.exitCode, initialized.stderr).toBe(0);

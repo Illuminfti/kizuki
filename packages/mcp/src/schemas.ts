@@ -167,6 +167,47 @@ const LISTED_PACKET_DATA_V2 = z.strictObject({
   result: z.looseObject({ status: z.enum(["current", "unchanged", "incomplete"]) }),
 });
 
+const HEALTH_DATA_V2 = z.strictObject({
+  vault_ready: z.boolean(),
+  principal: z.strictObject({
+    kind: z.enum(["owner", "agent"]),
+    ceiling: SENSITIVITY,
+    tools: z.array(z.enum(TOOLS)),
+  }),
+  counts: z.strictObject({
+    servable_pages: z.int().min(0),
+    events: z.int().min(0),
+    live_claims: z.int().min(0),
+    connections: z.int().min(0),
+    counts_capped: z.literal(true).optional(),
+  }),
+  backlog: z.strictObject({
+    extract_events: z.int().min(0),
+    pending_retrieval_ops: z.int().min(0),
+  }),
+  last_extracted_at: z.string().nullable(),
+  rails: z.array(z.strictObject({
+    rail: z.string(),
+    status: z.enum(["healthy", "running", "stale", "degraded", "idle", "disabled", "unknown"]),
+    enabled: z.boolean(),
+    last_run_at: z.string().nullable(),
+    last_success_at: z.string().nullable(),
+    interval_s: z.int().nullable(),
+  })),
+  vector_layer: z.strictObject({
+    enabled: z.boolean(),
+    status: z.enum(["online", "offline", "disabled", "unknown"]),
+    mode: z.enum(["vector", "fts5", "unknown"]),
+  }),
+  memt: z.strictObject({
+    enabled: z.boolean(),
+    mode: z.enum(["native-gpu", "local-hybrid", "disabled", "unavailable"]),
+    status: z.enum(["ready", "degraded", "disabled", "unavailable"]),
+    experience_count: z.int().min(0).optional(),
+  }),
+  degraded: z.array(z.string()),
+});
+
 /** The scoped counterpart of `envelopeFor`: the same chunk narrowing, the closed envelope around it. */
 export function envelopeV2For(tool: Tool) {
   return ENVELOPE_V2_SHAPE.extend({
@@ -177,6 +218,7 @@ export function envelopeV2For(tool: Tool) {
     ...(["get_page", "query_entities", "timeline"].includes(tool) ? { data: z.null() } : {}),
     ...(tool === "search" ? { data: z.strictObject({ gaps: z.array(z.enum(["retrieval_unavailable", "coverage", "budget"])) }) } : {}),
     ...(tool === "graph_neighbors" ? { data: GRAPH_DATA_V2 } : {}),
+    ...(tool === "system_health" ? { data: HEALTH_DATA_V2 } : {}),
     ...(tool === "propose" ? { data: PROPOSE_DATA_V2 } : {}),
     ...(tool === "correct" ? { data: CORRECT_DATA_V2 } : {}),
   });
@@ -185,7 +227,6 @@ export function envelopeV2For(tool: Tool) {
 /** Both implemented contracts, discriminated by schema, for explicit negotiation. */
 export function negotiatedEnvelopeFor(tool: Tool) {
   const v1 = envelopeFor(tool);
-  if (tool === "system_health") return v1;
   const v2 = envelopeV2For(tool);
   // Keep common chunk constraints at the object root. Repeating both full
   // schemas in anyOf would exceed the existing tools/list size budget.
@@ -420,3 +461,47 @@ export const WORLD_ENVELOPE = WORLD.answer;
 
 /** The card grammar is named by `schema` and left to `kizuki.concept-card/v1` and its siblings. */
 export const WORLD_ENVELOPE_LISTED = WORLD.listed;
+
+export const MEMT_STATUS_INPUT = z.strictObject({
+  probe: z.boolean().optional(),
+});
+
+export const MEMT_RECALL_INPUT = z.strictObject({
+  query: z.string().min(1).max(512),
+  domain: z.string().min(1).max(128).optional(),
+  scope_key: z.string().min(1).max(128).optional(),
+  partition_key: z.string().min(1).max(128).optional(),
+  scope: z.enum(["canon", "ledger", "all"]).optional(),
+  limit: z.int().min(1).max(50).optional(),
+  include_synthesis: z.boolean().optional(),
+});
+
+export const MEMT_EXPERIENCE_INPUT = z.strictObject({
+  action: z.enum(["record", "search", "verify"]),
+  id: z.string().min(1).max(128).optional(),
+  domain: z.string().min(1).max(128).optional(),
+  scope_key: z.string().min(1).max(128).optional(),
+  sensitivity: SENSITIVITY.optional(),
+  condition: z.string().min(1).max(2048).optional(),
+  recommendation: z.string().min(1).max(2048).optional(),
+  verification: z.string().max(1024).optional(),
+  outcome: z.enum(["verified", "observed", "failed", "superseded"]).optional(),
+  citations: z.array(z.string().min(1).max(256)).max(32).optional(),
+  confidence: z.number().min(0).max(1).optional(),
+  query: z.string().max(512).optional(),
+  limit: z.int().min(1).max(50).optional(),
+});
+
+export const MEMT_SNAPSHOT_INPUT = z.strictObject({
+  action: z.enum(["inspect", "check", "export", "sync"]).optional(),
+  partition_key: z.string().min(1).max(128).optional(),
+  domain: z.string().min(1).max(128).optional(),
+  sensitivity: SENSITIVITY.optional(),
+  summary_texts: z.array(z.string().min(1).max(4096)).max(16).optional(),
+  source_ids: z.array(z.string().min(1).max(256)).max(64).optional(),
+  min_confidence: z.number().min(0).max(1).optional(),
+});
+
+export const MEMT_GENERIC_OUTPUT = z.looseObject({
+  schema: z.string(),
+});

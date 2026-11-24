@@ -11,10 +11,13 @@ import { claimReader } from "./claims";
 import { asSensitivity, asTaint, eligible, loadCanon, pageDecision } from "./canon";
 import { auditArguments, gate, principalName } from "./gate";
 import type { Served } from "./gate";
+import { buildHealthV2, type HealthV2Data, type HealthV2Rail } from "./health-v2";
 import { eventDecision, readServableEvents } from "./ledger";
 import { authorizedEventSql } from "../world/policy-sql";
 import type { ServeContext, ResponseContract, ResponseEnvelope } from "./types";
-import { ENVELOPE_SCHEMA } from "./types";
+import { ENVELOPE_SCHEMA, ENVELOPE_V2_SCHEMA } from "./types";
+
+export type { HealthV2Data, HealthV2Rail };
 
 /**
  * The owner sees the vault. An agent sees only counts over what its grant can
@@ -84,19 +87,30 @@ export interface HealthData {
 
 /** A bound on what one health call counts, so the call stays cheap on a large ledger. */
 const AGENT_VIEW_CAP = 100_000;
+const AGENT_VIEW_BATCH = 2_000;
 /** What the principal reads, counted and listed only after SQL authorization. */
 function readableView(ctx: ServeContext): { events: number; connections: { connector_id: string; source_key: string }[]; claims: number; capped: boolean } {
   const grant = ctx.principal.grant;
   const permitted = authorizedEventSql(ctx);
   const where = permitted.clauses.join(" AND ");
-  const selected = ctx.db.query<{ event_id: string }, (string | number)[]>(
-    `SELECT events.event_id FROM events WHERE ${where} ORDER BY events.event_id LIMIT ?`,
-  ).all(...permitted.bindings, AGENT_VIEW_CAP);
-  const facts = readServableEvents(ctx.db, selected.map(row => row.event_id));
   let events = 0;
-  for (const row of selected) {
-    const event = facts.get(row.event_id);
-    if (event !== undefined && eventDecision(grant, event, ctx).allow) events += 1;
+  let scanned = 0;
+  let afterId = "";
+  const pageStmt = ctx.db.query<{ event_id: string }, (string | number)[]>(
+    `SELECT events.event_id FROM events WHERE (${where}) AND events.event_id > ? ORDER BY events.event_id LIMIT ?`,
+  );
+  while (scanned < AGENT_VIEW_CAP) {
+    const take = Math.min(AGENT_VIEW_BATCH, AGENT_VIEW_CAP - scanned);
+    const batch = pageStmt.all(...permitted.bindings, afterId, take);
+    if (batch.length === 0) break;
+    scanned += batch.length;
+    afterId = batch[batch.length - 1]!.event_id;
+    const facts = readServableEvents(ctx.db, batch.map(row => row.event_id));
+    for (const row of batch) {
+      const event = facts.get(row.event_id);
+      if (event !== undefined && eventDecision(grant, event, ctx).allow) events += 1;
+    }
+    if (batch.length < take) break;
   }
   const reader = claimReader(ctx.db, grant, { owner: false, purpose: ctx.sourcePurpose ?? "recall" });
   const claims = listClaims(ctx.db, { status: "live", limit: AGENT_VIEW_CAP, scope: reader.scope, filter: reader.canRead }).length;
@@ -139,6 +153,27 @@ export function serveHealth<C extends ResponseContract = typeof ENVELOPE_SCHEMA>
         ceiling: grant.ceiling,
         tools: [...grant.tools],
       };
+      if (contract === ENVELOPE_V2_SCHEMA) {
+        const view = ctx.principal.kind !== "owner" ? readableView(ctx) : null;
+        return {
+          canon: [],
+          quoted: [],
+          withheld: [],
+          data: buildHealthV2(
+            ctx,
+            view === null
+              ? null
+              : {
+                  events: view.events,
+                  claims: view.claims,
+                  connections: view.connections.length,
+                  capped: view.capped,
+                },
+            index,
+          ) as unknown as HealthData,
+        };
+      }
+
       if (ctx.principal.kind !== "owner") {
         const view = readableView(ctx);
         return {

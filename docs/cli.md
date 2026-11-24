@@ -1298,7 +1298,7 @@ extracted in segments and the receipts of skipped records.
 ## recover
 
 ```text
-usage: kizuki recover [--json]
+usage: kizuki recover [--resolve-stale-hold [--dry-run | --apply]] [--json]
 ```
 
 Resumes interrupted memory writes, their retrieval updates and interrupted
@@ -1662,3 +1662,14 @@ Doctor and connection status include per-source scan and ledger coverage,
 backfill state, occurrence bounds, successful-pass time, and blind spots with
 next steps. See [source coverage](source-coverage.md) for unknown-count and
 excluded-directory semantics.
+
+## memt
+
+```text
+usage: kizuki memt <status|recall|experience|sync|snapshot|deploy-check> [options] [--json]
+```
+
+Inspects, queries, records procedural experiences, synchronizes uninternalized
+experiences into MemT-1.0 KV snapshots when the GPU backend is online, verifies
+`memt-memory-v1` `.safetensors` snapshots, and checks RunPod/SGLang tunnel
+readiness while preserving automatic `local-hybrid` fallback when offline.

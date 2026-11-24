@@ -1,4 +1,5 @@
 import { TOOLS } from "@kizuki/core";
+import { trimServingCaches } from "@kizuki/core/internal";
 import type { ServeContext } from "@kizuki/core";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createServer } from "./server";
@@ -46,18 +47,39 @@ export async function runStdio(ctx: ServeContext): Promise<void> {
   // turn is the normal case, not an edge one. Counting requests against the
   // answers the transport has sent is what makes the shutdown wait for the
   // work rather than for a fixed number of turns.
+  const IDLE_TRIM_MS = 60_000;
+  let idleTrimTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearIdleTrim = (): void => {
+    if (idleTrimTimer !== null) {
+      clearTimeout(idleTrimTimer);
+      idleTrimTimer = null;
+    }
+  };
+  const scheduleIdleTrim = (): void => {
+    clearIdleTrim();
+    idleTrimTimer = setTimeout(() => {
+      idleTrimTimer = null;
+      if (inFlight === 0) {
+        trimServingCaches();
+        (globalThis as { Bun?: { gc?: (force?: boolean) => void } }).Bun?.gc?.(false);
+      }
+    }, IDLE_TRIM_MS);
+    idleTrimTimer.unref?.();
+  };
   let inFlight = 0;
   const outstanding = new Set<string>();
   let ended = false;
   let close: (() => void) | null = null;
   const settle = (): void => {
     if (!ended || inFlight > 0 || close === null) return;
+    clearIdleTrim();
     const stop = close;
     close = null;
     stop();
   };
   const begin = (id: unknown): void => {
     if (id === undefined) return;
+    clearIdleTrim();
     const key = requestKey(id);
     if (outstanding.has(key)) return;
     outstanding.add(key);
@@ -69,6 +91,7 @@ export async function runStdio(ctx: ServeContext): Promise<void> {
     if (!outstanding.has(key)) return;
     outstanding.delete(key);
     inFlight -= 1;
+    if (inFlight === 0 && !ended) scheduleIdleTrim();
     settle();
   };
 
@@ -106,8 +129,12 @@ export async function runStdio(ctx: ServeContext): Promise<void> {
   // and errors but not for end of input, so a harness closing the pipe has to
   // be turned into a close here or the process would outlive its client.
   await new Promise<void>((resolve) => {
-    server.server.onclose = () => resolve();
+    server.server.onclose = () => {
+      clearIdleTrim();
+      resolve();
+    };
     close = () => {
+      clearIdleTrim();
       void drained().then(() => server.close());
     };
     process.stdin.once("end", () => {

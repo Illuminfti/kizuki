@@ -102,10 +102,15 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
     await this.syncEngineMetadata();
   }
   private get textBudget(): number { return this.options.max_text_bytes ?? EMBEDDED_ENGINE_MAX_TEXT_BYTES; }
+  private corpusLimit(resource: keyof CorpusSize): number {
+    if (resource === "text_bytes") return this.textBudget;
+    const scale = Math.max(1, Math.ceil(this.textBudget / EMBEDDED_ENGINE_MAX_TEXT_BYTES));
+    return CORPUS_LIMITS[resource] * scale;
+  }
   /** Records why the corpus was turned away, where `kizuki doctor` can read it without opening the engine. */
   private async checkCapacity(size: CorpusSize): Promise<void> {
     for (const resource of Object.keys(CORPUS_LIMITS) as Array<keyof CorpusSize>) {
-      const limit = resource === "text_bytes" ? this.textBudget : CORPUS_LIMITS[resource];
+      const limit = this.corpusLimit(resource);
       if (size[resource] <= limit) continue;
       const refusal = { resource, requested: size[resource], limit,
         corpus_bytes: size.text_bytes, limit_bytes: this.textBudget, at: this.ctx.clock() };
@@ -117,7 +122,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
   private documentSize(doc: RetrievalDoc): CorpusSize {
     let chunks: number;
     try {
-      chunks = chunkDocument(doc, this.tokens, this.overlap, this.countTokens, CORPUS_LIMITS.chunks).length;
+      chunks = chunkDocument(doc, this.tokens, this.overlap, this.countTokens, this.corpusLimit("chunks")).length;
     } catch (error) {
       if (!(error instanceof ChunkLimitError)) throw error;
       // The capacity check records this refusal without allocating the rest.
@@ -376,7 +381,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
   embedPending(options: { limit?: number } = {}): Promise<EmbedProgress> {
     this.assertMutable();
     assertNoStoreTransaction("embedPending");
-    if (options.limit !== undefined && (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > CORPUS_LIMITS.chunks)) {
+    if (options.limit !== undefined && (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > this.corpusLimit("chunks"))) {
       throw new PortError("config_invalid", "invalid embedding pass limit", false);
     }
     return this.runEmbedding(options.limit);
@@ -601,8 +606,25 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
       // A complete, bounded input is priced before replacing any private stage.
       // Include every authority/provenance field, not only the embedded text.
       const identity = await this.store.run(async () => {
-        const rows = (await this.store.db.query<{doc: RetrievalDoc}>("SELECT doc FROM incoming_rebuild_docs ORDER BY doc_id")).rows;
-        return sha256Text(canonical({ docs: rows.map(row => row.doc), space, chunking: this.chunkingId(), snapshot_id: options.snapshot_id ?? null }));
+        const hasher = new Bun.CryptoHasher("sha256");
+        hasher.update(`{"chunking":${canonical(this.chunkingId())},"docs":[`);
+        let last = "";
+        let first = true;
+        for (;;) {
+          const rows = (await this.store.db.query<{ doc_id: string; doc: RetrievalDoc }>(
+            "SELECT doc_id, doc FROM incoming_rebuild_docs WHERE doc_id>$1 ORDER BY doc_id LIMIT 200",
+            [last],
+          )).rows;
+          if (rows.length === 0) break;
+          for (const row of rows) {
+            if (!first) hasher.update(",");
+            first = false;
+            hasher.update(canonical(row.doc));
+            last = row.doc_id;
+          }
+        }
+        hasher.update(`],"snapshot_id":${canonical(options.snapshot_id ?? null)},"space":${canonical(space)}}`);
+        return hasher.digest("hex");
       });
       await this.store.run(() => this.store.transaction(async tx => {
         const prior = (await tx.query<{value: string}>("SELECT value FROM retrieval_meta WHERE key='rebuild_identity'")).rows[0]?.value;
@@ -619,8 +641,6 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
         // source documents. Exact framed inputs share a vector, while every row still
         // receives its own staged vector before the atomic replacement.
         const embedded = new Map<string, Float32Array>();
-        const completed = new Map((await this.store.run(async () => (await this.store.db.query<{chunk_id: string; embedding: string}>(
-          "SELECT chunk_id,embedding::text FROM rebuild_vectors")).rows)).map(row => [row.chunk_id, Float32Array.from(JSON.parse(row.embedding) as number[])]));
         let batch: PendingEmbedding[] = [];
         const flush = async (): Promise<void> => {
           if (batch.length === 0) return;
@@ -646,6 +666,9 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
           const rows = await this.store.run(async () => (await this.store.db.query<{doc: RetrievalDoc}>(
             "SELECT doc FROM rebuild_docs WHERE doc_id>$1 ORDER BY doc_id LIMIT 100", [last])).rows);
           if (rows.length === 0) break;
+          const pageIds = rows.map(row => row.doc.doc_id);
+          const completed = new Map((await this.store.run(async () => (await this.store.db.query<{chunk_id: string; embedding: string}>(
+            "SELECT chunk_id,embedding::text FROM rebuild_vectors WHERE doc_id=ANY($1::text[])", [pageIds])).rows)).map(row => [row.chunk_id, Float32Array.from(JSON.parse(row.embedding) as number[])]));
           for (const {doc} of rows) {
             check();
             const chunks = chunkDocument(doc, this.tokens, this.overlap, this.countTokens);

@@ -128,11 +128,14 @@ test("over stdio system_health tells an agent nothing the owner alone may see", 
     "data"
   ] as Record<string, unknown>;
   expect(all).toHaveProperty("agents");
-  expect(seen.isError).toBe(true);
-  expect(JSON.parse(seen.content[0]!.text)).toEqual({
-    error: "unsupported_contract", message: "requested contract unavailable", retry_after_seconds: null,
-  });
-  expect(seen.structuredContent).toBeUndefined();
+  expect(seen.isError).toBeUndefined();
+  const seenEnvelope = envelopeOf(seen);
+  expect(seenEnvelope["schema"]).toBe("kizuki.envelope/v2");
+  const seenData = seenEnvelope["data"] as Record<string, unknown>;
+  expect(seenData).not.toHaveProperty("agents");
+  expect(seenData).not.toHaveProperty("runtime");
+  expect(seenData).not.toHaveProperty("withheld_pages");
+  expect(seenData["vault_ready"]).toBe(true);
 });
 
 test("world_view labels are redacted over stdio within the closed v2 envelope", async () => {

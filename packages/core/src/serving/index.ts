@@ -4,6 +4,7 @@ export type {
   CanonChunk,
   Denied,
   Envelope,
+  MemtHealthSnapshot,
   QuotedChunk,
   QuotedPageChunk,
   ServeContext,
@@ -13,7 +14,7 @@ export type {
 
 export { dispatchServeTool } from "./dispatch";
 
-export { CanonUnreadableError } from "./canon";
+export { CanonUnreadableError, trimServingCaches } from "./canon";
 export { gate } from "./gate";
 export type { Served } from "./gate";
 
@@ -28,7 +29,7 @@ export type { TimelineArgs, TimelineExpandData } from "./timeline";
 export { serveGraph } from "./graph";
 export type { GraphArgs, GraphData } from "./graph";
 export { serveHealth } from "./health";
-export type { HealthData } from "./health";
+export type { HealthData, HealthV2Data, HealthV2Rail } from "./health";
 export {
   PACKET_PURPOSES,
   PACKET_SECTIONS,

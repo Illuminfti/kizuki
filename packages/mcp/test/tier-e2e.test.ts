@@ -92,9 +92,8 @@ describe("classes over the protocol", () => {
       expect(owner.withheld_pages.map((entry) => entry.path)).toEqual(["entities/zz-link.md"]);
 
       const asAgent = await call(await connectClient(fixture.agent("private-default"), open), "system_health", {});
-      expect(asAgent.isError).toBe(true);
-      expect(errorOf(asAgent).error).toBe("unsupported_contract");
-      expect(asAgent.structuredContent).toBeUndefined();
+      expect(asAgent.isError).toBeUndefined();
+      expect(envelopeOf(asAgent)["schema"]).toBe("kizuki.envelope/v2");
       expect(JSON.stringify(asAgent)).not.toContain("zz-link.md");
       expect(JSON.stringify(asAgent)).not.toContain(fixture.vaultPath);
     } finally {

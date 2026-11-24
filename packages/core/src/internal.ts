@@ -33,3 +33,9 @@ export type { IngestClock, IngestSession } from "./ingest/pace";
 export { withControlWait } from "./ledger/busy";
 
 export { reconcileDerivedPages, reconcileDerivedPagesWhenChanged } from "./derived-refresh";
+export { resolveStaleCanonHold, resolveStaleCanonHoldOwned } from "./canon/recovery";
+export type { ResolveStaleCanonHoldOptions, StaleCanonHoldResolution } from "./canon/recovery";
+export { CANON_RECOVERY_RESOLUTIONS_PATH, readCanonRecoveryResolutions } from "./canon/stage-recovery";
+export type { CanonRecoveryResolutionRecord } from "./canon/stage-recovery";
+export { trimServingCaches } from "./serving/canon";
+export type { MemtHealthSnapshot } from "./serving/types";
