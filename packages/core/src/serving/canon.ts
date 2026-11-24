@@ -104,13 +104,19 @@ const MAX_MEMO_BODY_BYTES = 32 * 1024 * 1024;
 const MAX_SINGLE_CACHED_BODY_BYTES = 131_072;
 const MEMO_IDLE_TTL_MS = 120_000;
 const memos = new Map<string, VaultMemo>();
+const servingCacheTrimmers: (() => void)[] = [];
 let memoIdleTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function registerServingCacheTrimmer(trimmer: () => void): void {
+  servingCacheTrimmers.push(trimmer);
+}
 
 function scheduleMemoIdleTrim(): void {
   if (memoIdleTimer !== null) clearTimeout(memoIdleTimer);
   memoIdleTimer = setTimeout(() => {
     memoIdleTimer = null;
     memos.clear();
+    for (const trimmer of servingCacheTrimmers) trimmer();
   }, MEMO_IDLE_TTL_MS);
   memoIdleTimer.unref?.();
 }
@@ -121,6 +127,7 @@ export function trimServingCaches(): void {
     memoIdleTimer = null;
   }
   memos.clear();
+  for (const trimmer of servingCacheTrimmers) trimmer();
 }
 
 function boundCanonPageCache(cache: CanonPageCache): void {

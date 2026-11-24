@@ -4,7 +4,7 @@ import { createRedactor } from "./redact";
 import { searchableText, servedTextMatcher } from "./search-match";
 import type { Database } from "bun:sqlite";
 import { denyClassesOf } from "../agents";
-import { visibleIndexDegraded, visibleLedgerIndexMissing } from "./index-health";
+import { cachedSearchCanonScope, visibleIndexDegraded, visibleLedgerIndexMissing } from "./index-health";
 import { authorize } from "../agents";
 import type { AuditDenial, AuditItem, Grant } from "../agents";
 import { canonReadGeneration } from "../canon/write-intent";
@@ -280,9 +280,10 @@ export async function serveSearch<C extends ResponseContract = typeof ENVELOPE_S
       const access = new CanonAccessPhase(index, narrowed);
       const classified: Classification = { canon: [], quoted: [], withheld: [] };
       const quoteCollector = new CanonicalQuoteCollector<QuotedChunk>();
+      const { canonIds, canonPaths } = cachedSearchCanonScope(index, narrowed, access);
       const rankedOpts = {
-        canonIds: index.pages.filter(page => eligible(page) && access.decision(page).allow).map(page => `page:${page.id}`),
-        canonPaths: index.pages.filter(page => authorize(narrowed, pageScope(ctx, page, narrowed)).allow).map(page => page.relPath),
+        canonIds,
+        canonPaths,
         ...base,
         limit: MAX_RETRIEVAL_LIMIT,
         ceiling: grant.ceiling,

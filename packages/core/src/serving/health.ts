@@ -1,17 +1,22 @@
+import { resolve } from "node:path";
 import { countAgents } from "../agents";
 import { listClaims } from "../claims/store";
 import type { Sensitivity, Tool } from "../agents";
 import { countClaims, countPendingRetrievalOps } from "../claims/store";
+import { purgeReadEpoch } from "../derived-holds";
 import { readDerivedMeta } from "../derived-meta";
 import { getCheckpoint, listConnections } from "../ledger/connections";
 import { count } from "../ledger/ledger";
 import { readSqliteRuntime } from "../ledger/runtime";
 import type { SqliteRuntime } from "../ledger/runtime";
+import { inspectSourceGrant, sourcePolicyEpoch, type SourceGrant } from "../ledger/source-grants";
 import { claimReader } from "./claims";
-import { asSensitivity, asTaint, eligible, loadCanon, pageDecision } from "./canon";
+import { asSensitivity, asTaint, eligible, loadCanon, registerServingCacheTrimmer } from "./canon";
+import { CanonAccessPhase } from "./canon-access";
 import { auditArguments, gate, principalName } from "./gate";
 import type { Served } from "./gate";
 import { buildHealthV2, type HealthV2Data, type HealthV2Rail } from "./health-v2";
+import { canonIndexDigest, dbVersionStamp, grantCacheKey } from "./index-health";
 import { eventDecision, readServableEvents } from "./ledger";
 import { authorizedEventSql } from "../world/policy-sql";
 import type { ServeContext, ResponseContract, ResponseEnvelope } from "./types";
@@ -88,11 +93,34 @@ export interface HealthData {
 /** A bound on what one health call counts, so the call stays cheap on a large ledger. */
 const AGENT_VIEW_CAP = 100_000;
 const AGENT_VIEW_BATCH = 2_000;
+const MAX_HEALTH_SNAPSHOT_CACHE = 16;
+
+interface CachedHealthScan {
+  active: number;
+  labeled: number;
+  stamped: number;
+  servable: number;
+  servablePageIds: string[];
+  view: { events: number; connections: { connector_id: string; source_key: string }[]; claims: number; capped: boolean } | null;
+}
+
+const healthScanCache = new Map<string, CachedHealthScan>();
+registerServingCacheTrimmer(() => {
+  healthScanCache.clear();
+});
+
 /** What the principal reads, counted and listed only after SQL authorization. */
 function readableView(ctx: ServeContext): { events: number; connections: { connector_id: string; source_key: string }[]; claims: number; capped: boolean } {
   const grant = ctx.principal.grant;
   const permitted = authorizedEventSql(ctx);
   const where = permitted.clauses.join(" AND ");
+  const sourceGrants = new Map<string, SourceGrant | null>();
+  const grantOf = (sourceKey: string): SourceGrant | null => {
+    if (sourceGrants.has(sourceKey)) return sourceGrants.get(sourceKey)!;
+    const loaded = inspectSourceGrant(ctx.db, sourceKey);
+    sourceGrants.set(sourceKey, loaded);
+    return loaded;
+  };
   let events = 0;
   let scanned = 0;
   let afterId = "";
@@ -108,11 +136,11 @@ function readableView(ctx: ServeContext): { events: number; connections: { conne
     const facts = readServableEvents(ctx.db, batch.map(row => row.event_id));
     for (const row of batch) {
       const event = facts.get(row.event_id);
-      if (event !== undefined && eventDecision(grant, event, ctx).allow) events += 1;
+      if (event !== undefined && eventDecision(grant, event, ctx, grantOf).allow) events += 1;
     }
     if (batch.length < take) break;
   }
-  const reader = claimReader(ctx.db, grant, { owner: false, purpose: ctx.sourcePurpose ?? "recall" });
+  const reader = claimReader(ctx.db, grant, { owner: false, purpose: ctx.sourcePurpose ?? "recall", grantOf });
   const claims = listClaims(ctx.db, { status: "live", limit: AGENT_VIEW_CAP, scope: reader.scope, filter: reader.canRead }).length;
   // A connector may have many accounts. Only an exact source binding proves
   // which connection contributed readable evidence; legacy guesses fail closed.
@@ -133,19 +161,44 @@ export function serveHealth<C extends ResponseContract = typeof ENVELOPE_SCHEMA>
     auditArguments({}),
     ({ ctx }): Served<HealthData> => {
       const grant = ctx.principal.grant;
-      const index = loadCanon(ctx, { include_archived: ctx.principal.kind === "owner" });
+      const includeArchived = ctx.principal.kind === "owner";
+      const index = loadCanon(ctx, { include_archived: includeArchived });
+      const dbStamp = dbVersionStamp(ctx.db);
+      const cacheKey = dbStamp === null
+        ? null
+        : `${resolve(ctx.vaultPath)}|${includeArchived ? "1" : "0"}|${dbStamp}|${sourcePolicyEpoch(ctx.db)}|${purgeReadEpoch(ctx.db)}|${canonIndexDigest(index)}|${grantCacheKey(ctx, grant)}`;
 
-      let active = 0;
-      let labeled = 0;
-      let stamped = 0;
-      let servable = 0;
-      for (const page of index.pages) {
-        if (asSensitivity(page.data["sensitivity"]) !== null) labeled += 1;
-        if (asTaint(page.data["taint"]) !== null) stamped += 1;
-        if (!eligible(page)) continue;
-        active += 1;
-        if (pageDecision(index, grant, page).allow) servable += 1;
+      let scan = cacheKey === null ? undefined : healthScanCache.get(cacheKey);
+      if (scan === undefined) {
+        const access = new CanonAccessPhase(index, grant);
+        let active = 0;
+        let labeled = 0;
+        let stamped = 0;
+        let servable = 0;
+        const servablePageIds: string[] = [];
+        for (const page of index.pages) {
+          const isLabeled = asSensitivity(page.data["sensitivity"]) !== null;
+          const isStamped = asTaint(page.data["taint"]) !== null;
+          if (isLabeled) labeled += 1;
+          if (isStamped) stamped += 1;
+          if (!eligible(page)) continue;
+          active += 1;
+          if (access.decision(page).allow) {
+            servable += 1;
+            if (isLabeled && isStamped) servablePageIds.push(page.id);
+          }
+        }
+        const view = ctx.principal.kind !== "owner" ? readableView(ctx) : null;
+        scan = { active, labeled, stamped, servable, servablePageIds, view };
+        if (cacheKey !== null) {
+          if (healthScanCache.size >= MAX_HEALTH_SNAPSHOT_CACHE) {
+            healthScanCache.delete(healthScanCache.keys().next().value!);
+          }
+          healthScanCache.set(cacheKey, scan);
+        }
       }
+
+      const { active, labeled, stamped, servable, servablePageIds, view } = scan;
 
       const principal = {
         kind: ctx.principal.kind,
@@ -154,7 +207,6 @@ export function serveHealth<C extends ResponseContract = typeof ENVELOPE_SCHEMA>
         tools: [...grant.tools],
       };
       if (contract === ENVELOPE_V2_SCHEMA) {
-        const view = ctx.principal.kind !== "owner" ? readableView(ctx) : null;
         return {
           canon: [],
           quoted: [],
@@ -170,12 +222,13 @@ export function serveHealth<C extends ResponseContract = typeof ENVELOPE_SCHEMA>
                   capped: view.capped,
                 },
             index,
+            servablePageIds,
           ) as unknown as HealthData,
         };
       }
 
       if (ctx.principal.kind !== "owner") {
-        const view = readableView(ctx);
+        const scoped = view!;
         return {
           canon: [],
           quoted: [],
@@ -183,10 +236,10 @@ export function serveHealth<C extends ResponseContract = typeof ENVELOPE_SCHEMA>
           data: {
             principal,
             pages: { servable },
-            events: view.events,
-            live_claims: view.claims,
-            ...(view.capped ? { counts_capped: true as const } : {}),
-            connections: view.connections,
+            events: scoped.events,
+            live_claims: scoped.claims,
+            ...(scoped.capped ? { counts_capped: true as const } : {}),
+            connections: scoped.connections,
           },
         };
       }

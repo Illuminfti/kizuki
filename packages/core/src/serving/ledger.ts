@@ -1,7 +1,7 @@
 import { selectedEvent } from "../query/selection";
 import type { Database } from "bun:sqlite";
 import { liveEventIds } from "../ledger/ledger";
-import { sourceEventsAllowed, sourceSensitivity } from "../ledger/source-grants";
+import { sourceEventsAllowed, sourceSensitivity, type SourceGrantLookup } from "../ledger/source-grants";
 import type { ServeContext } from "./types";
 import { authorize, denyClassesOf } from "../agents";
 import { classesByEvent, classesOfEvents } from "../ledger/event-classes";
@@ -116,15 +116,16 @@ export function eventDecision(
   grant: Grant,
   facts: ServableEvent,
   ctx?: ServeContext,
+  grantOf?: SourceGrantLookup,
 ):
   | { allow: true; sensitivity: Sensitivity }
   | { allow: false; reason: DenyReason } {
   const scope = authorize(grant, eventServable(facts));
   if (!scope.allow) return scope;
-  if (ctx !== undefined && !sourceEventsAllowed(ctx.db, [facts.event_id], { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall", deny_classes: denyClassesOf(grant) })) return { allow: false, reason: "held" };
+  if (ctx !== undefined && !sourceEventsAllowed(ctx.db, [facts.event_id], { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall", deny_classes: denyClassesOf(grant), ...(grantOf === undefined ? {} : { grantOf }) })) return { allow: false, reason: "held" };
   if (ctx !== undefined && !selectedEvent(ctx.db, ctx.selection, facts.event_id)) return { allow: false, reason: "held" };
   const original = asSensitivity(facts.sensitivity);
-  const label = original === null || ctx === undefined ? original : sourceSensitivity(ctx.db, [facts.event_id], original);
+  const label = original === null || ctx === undefined ? original : sourceSensitivity(ctx.db, [facts.event_id], original, grantOf);
   if (label === null) return { allow: false, reason: "missing_sensitivity" };
   // Facts read straight from the ledger carry their classes; a timeline row
   // does not, so a caller with a context looks them up rather than skip the check.

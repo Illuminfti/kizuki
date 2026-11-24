@@ -203,16 +203,23 @@ export function buildHealthV2(
   ctx: ServeContext,
   viewSummary: ScopedViewSummary | null,
   preloadedIndex?: CanonIndex,
+  precomputedServablePageIds?: readonly string[],
 ): HealthV2Data {
   const index = preloadedIndex ?? loadCanon(ctx);
   const grant = ctx.principal.grant;
-  const servablePageIds: string[] = [];
-  for (const page of index.pages) {
-    const labeled = asSensitivity(page.data["sensitivity"]) !== null;
-    const stamped = asTaint(page.data["taint"]) !== null;
-    if (labeled && stamped && eligible(page) && pageDecision(index, grant, page).allow) {
-      servablePageIds.push(page.id);
+  let servablePageIds: readonly string[];
+  if (precomputedServablePageIds !== undefined) {
+    servablePageIds = precomputedServablePageIds;
+  } else {
+    const computed: string[] = [];
+    for (const page of index.pages) {
+      const labeled = asSensitivity(page.data["sensitivity"]) !== null;
+      const stamped = asTaint(page.data["taint"]) !== null;
+      if (labeled && stamped && eligible(page) && pageDecision(index, grant, page).allow) {
+        computed.push(page.id);
+      }
     }
+    servablePageIds = computed;
   }
 
   const counts: HealthV2Data["counts"] = ctx.principal.kind === "owner" || viewSummary === null

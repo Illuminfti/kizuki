@@ -317,15 +317,33 @@ export function createMemtBridge(
       ? args["scope"]
       : "all";
 
-    const searchEnvelope = await dispatchServeTool(
-      ctx,
-      "search",
-      { query, scope, limit },
-      { response_contract: principal.kind === "agent" ? ENVELOPE_V2_SCHEMA : undefined },
-    );
-    const system2Hits = convertSystem2Hits(
-      searchEnvelope as Envelope<unknown, QuotedChunk | QuotedPageChunk> | EnvelopeV2,
-    );
+    let system2Hits: System2EvidenceHit[] = [];
+    const extraDegraded: string[] = [];
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const searchEnvelope = await dispatchServeTool(
+          ctx,
+          "search",
+          { query, scope, limit },
+          { response_contract: principal.kind === "agent" ? ENVELOPE_V2_SCHEMA : undefined },
+        );
+        system2Hits = convertSystem2Hits(
+          searchEnvelope as Envelope<unknown, QuotedChunk | QuotedPageChunk> | EnvelopeV2,
+        );
+        break;
+      } catch (error) {
+        if (error instanceof ServeError && error.code === "held") {
+          if (attempt < 2) {
+            await Bun.sleep(150 * (attempt + 1));
+            continue;
+          }
+          extraDegraded.push("system2_held");
+          system2Hits = [];
+          break;
+        }
+        throw error;
+      }
+    }
 
     const engine = getEngine();
     const domain = asString(args["domain"]);
@@ -341,6 +359,8 @@ export function createMemtBridge(
       limit,
       includeSynthesis: args["include_synthesis"] !== false,
     });
+
+    const combinedDegraded = [...new Set([...result.degraded, ...extraDegraded])];
 
     return {
       schema: "kizuki.memt-recall/v1",
@@ -373,7 +393,7 @@ export function createMemtBridge(
             text: redactor.text(result.synthesis.text),
             citations: result.synthesis.citations.map((c) => redactor.text(c)),
           },
-      degraded: [...result.degraded],
+      degraded: combinedDegraded,
     };
   };
 
