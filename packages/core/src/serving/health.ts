@@ -1,22 +1,24 @@
 import { resolve } from "node:path";
-import { countAgents } from "../agents";
+import { authorize, countAgents } from "../agents";
+import { CanonAuthorityResolver } from "../canon/authority";
+import { claimReadSql } from "../claims/read-scope";
 import { listClaims } from "../claims/store";
 import type { Sensitivity, Tool } from "../agents";
 import { countClaims, countPendingRetrievalOps } from "../claims/store";
-import { purgeReadEpoch } from "../derived-holds";
 import { readDerivedMeta } from "../derived-meta";
 import { getCheckpoint, listConnections } from "../ledger/connections";
-import { count } from "../ledger/ledger";
+import { count, readLiveEvent } from "../ledger/ledger";
 import { readSqliteRuntime } from "../ledger/runtime";
 import type { SqliteRuntime } from "../ledger/runtime";
-import { inspectSourceGrant, sourcePolicyEpoch, type SourceGrant } from "../ledger/source-grants";
+import { tableExists } from "../ledger/schema";
+import { inspectSourceGrant, type SourceGrant } from "../ledger/source-grants";
+import { assessLivePageEvidence } from "../vault/provenance";
 import { claimReader } from "./claims";
-import { asSensitivity, asTaint, eligible, loadCanon, registerServingCacheTrimmer } from "./canon";
-import { CanonAccessPhase } from "./canon-access";
+import { asSensitivity, asTaint, eligible, loadCanon, pageDecision, pageScope, registerServingCacheTrimmer } from "./canon";
 import { auditArguments, gate, principalName } from "./gate";
 import type { Served } from "./gate";
 import { buildHealthV2, type HealthV2Data, type HealthV2Rail } from "./health-v2";
-import { canonIndexDigest, dbVersionStamp, grantCacheKey } from "./index-health";
+import { grantCacheKey, ownerDbStamp, visibleCanonStamp } from "./index-health";
 import { eventDecision, readServableEvents } from "./ledger";
 import { authorizedEventSql } from "../world/policy-sql";
 import type { ServeContext, ResponseContract, ResponseEnvelope } from "./types";
@@ -154,6 +156,53 @@ function readableView(ctx: ServeContext): { events: number; connections: { conne
   return { events, connections, claims, capped: events >= AGENT_VIEW_CAP || claims >= AGENT_VIEW_CAP };
 }
 
+function visibleHealthStamp(
+  ctx: ServeContext,
+  index: ReturnType<typeof loadCanon>,
+  includeArchived: boolean,
+): string | null {
+  const grant = ctx.principal.grant;
+  if (ctx.principal.kind === "owner") {
+    const ownerStamp = ownerDbStamp(ctx.db, true);
+    if (ownerStamp === null) return null;
+    const hasher = new Bun.CryptoHasher("sha256");
+    for (const p of index.pages) hasher.update(`${p.relPath}\0${p.id}\0${p.contentHash}\n`);
+    return `${resolve(ctx.vaultPath)}|owner|${includeArchived ? "1" : "0"}|${ownerStamp}|${hasher.digest("hex")}`;
+  }
+  const canonStamp = visibleCanonStamp(ctx, grant, index, true);
+  if (canonStamp === null) return null;
+  const permitted = authorizedEventSql(ctx);
+  const where = permitted.clauses.join(" AND ");
+  const evRow = tableExists(ctx.db, "events")
+    ? ctx.db.query<{ n: number; head: number }, (string | number)[]>(
+        `SELECT count(*) AS n, coalesce(max(rowid), 0) AS head FROM events WHERE ${where}`,
+      ).get(...permitted.bindings)
+    : null;
+  let claimStamp = "0:0";
+  if (tableExists(ctx.db, "claims")) {
+    const scope = claimReadSql(ctx.db, {
+      grant,
+      source: { owner: false, purpose: ctx.sourcePurpose ?? "recall" },
+      ...(ctx.selection === undefined ? {} : { selection: ctx.selection }),
+    });
+    const clRow = ctx.db.query<{ n: number; head: number }, (string | number)[]>(
+      `SELECT count(*) AS n, coalesce(max(rowid), 0) AS head FROM claims WHERE status = 'live' AND (${scope.sql})`,
+    ).get(...scope.bindings);
+    claimStamp = `${clRow?.n ?? 0}:${clRow?.head ?? 0}`;
+  }
+  const connAgg = tableExists(ctx.db, "connections") && tableExists(ctx.db, "source_event_bindings")
+    ? (ctx.db.query<{ agg: string }, (string | number)[]>(
+        `SELECT coalesce(group_concat(connections.connector_id || ':' || connections.source_key), '') AS agg
+         FROM connections
+         WHERE connections.disconnected_at IS NULL AND EXISTS (
+           SELECT 1 FROM source_event_bindings binding JOIN events ON events.event_id = binding.event_id
+           WHERE binding.source_key = connections.source_key AND events.connector_id = connections.connector_id AND ${where}
+         )`,
+      ).get(...permitted.bindings)?.agg ?? "")
+    : "";
+  return `${resolve(ctx.vaultPath)}|agent|${canonStamp}|e=${evRow?.n ?? 0}:${evRow?.head ?? 0}|c=${claimStamp}|k=${connAgg}|${grantCacheKey(ctx, grant)}`;
+}
+
 export function serveHealth<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(ctx: ServeContext, contract: C = ENVELOPE_SCHEMA as C): ResponseEnvelope<HealthData, C> {
   return gate(
     ctx,
@@ -163,14 +212,45 @@ export function serveHealth<C extends ResponseContract = typeof ENVELOPE_SCHEMA>
       const grant = ctx.principal.grant;
       const includeArchived = ctx.principal.kind === "owner";
       const index = loadCanon(ctx, { include_archived: includeArchived });
-      const dbStamp = dbVersionStamp(ctx.db);
-      const cacheKey = dbStamp === null
-        ? null
-        : `${resolve(ctx.vaultPath)}|${includeArchived ? "1" : "0"}|${dbStamp}|${sourcePolicyEpoch(ctx.db)}|${purgeReadEpoch(ctx.db)}|${canonIndexDigest(index)}|${grantCacheKey(ctx, grant)}`;
+      const cacheKey = visibleHealthStamp(ctx, index, includeArchived);
 
       let scan = cacheKey === null ? undefined : healthScanCache.get(cacheKey);
       if (scan === undefined) {
-        const access = new CanonAccessPhase(index, grant);
+        // Build one shared authority resolver + source grant / live event caches
+        // instead of CanonAccessPhase (which self-invalidates inside transactions).
+        const eligiblePaths = index.pages
+          .filter((page) => !index.deniedPaths.has(page.relPath) && eligible(page) && authorize(grant, pageScope(ctx, page, grant)).allow)
+          .map((page) => page.relPath);
+        const resolver = new CanonAuthorityResolver(ctx.db, eligiblePaths);
+        const resolverPaths = new Set(eligiblePaths);
+        const liveEvents = new Map<string, boolean>();
+        const liveExternalEvent = (id: string): boolean => {
+          const cached = liveEvents.get(id);
+          if (cached !== undefined) return cached;
+          const ok = readLiveEvent(ctx.db, id)?.origin === "external";
+          if (liveEvents.size < 65_536) liveEvents.set(id, ok);
+          return ok;
+        };
+        const sourceGrants = new Map<string, SourceGrant | null>();
+        const grantOf = (sourceKey: string): SourceGrant | null => {
+          if (sourceGrants.has(sourceKey)) return sourceGrants.get(sourceKey)!;
+          const loaded = inspectSourceGrant(ctx.db, sourceKey);
+          sourceGrants.set(sourceKey, loaded);
+          return loaded;
+        };
+        const readAccess = {
+          evidence: (page: (typeof index.pages)[number], context: ServeContext, historical = false) =>
+            assessLivePageEvidence(
+              ctx.db,
+              page,
+              resolverPaths.has(page.relPath) ? resolver : undefined,
+              context,
+              historical,
+              liveExternalEvent,
+            ),
+          grantOf,
+        };
+
         let active = 0;
         let labeled = 0;
         let stamped = 0;
@@ -183,7 +263,7 @@ export function serveHealth<C extends ResponseContract = typeof ENVELOPE_SCHEMA>
           if (isStamped) stamped += 1;
           if (!eligible(page)) continue;
           active += 1;
-          if (access.decision(page).allow) {
+          if (pageDecision(index, grant, page, readAccess).allow) {
             servable += 1;
             if (isLabeled && isStamped) servablePageIds.push(page.id);
           }

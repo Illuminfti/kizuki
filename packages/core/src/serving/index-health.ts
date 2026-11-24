@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import type { Database } from "bun:sqlite";
 import { authorize, sensitivity, denyClassesOf, type Grant } from "../agents";
+import { canonReadGeneration } from "../canon/write-intent";
 import { purgeReadEpoch } from "../derived-holds";
 import { readDerivedMeta } from "../derived-meta";
 import { sourceEventsAllowed, sourcePolicyEpoch, sourceSensitivity } from "../ledger/source-grants";
@@ -13,6 +14,7 @@ import { stringArray } from "../vault/pages";
 import { assessLivePageEvidence, isDeterministicBrief, projectablePageEvidence } from "../vault/provenance";
 import { eligible, pageDecision, pageScope, registerServingCacheTrimmer, type CanonIndex } from "./canon";
 import type { CanonAccessPhase } from "./canon-access";
+import { claimsEpoch } from "./epoch";
 import { principalName } from "./gate";
 
 const MAX_INDEX_HEALTH_CACHE = 32;
@@ -34,23 +36,40 @@ registerServingCacheTrimmer(() => {
   canonScopeCache.clear();
 });
 
-export function dbVersionStamp(db: Database): string | null {
-  if (db.inTransaction) return null;
-  const row = db.query<{ changes: number; version: number; schema: number }, []>(
-    "SELECT total_changes() AS changes, (SELECT data_version FROM pragma_data_version) AS version, (SELECT schema_version FROM pragma_schema_version) AS schema",
-  ).get();
-  return row ? `${row.changes}:${row.version}:${row.schema}` : null;
-}
-
-export function canonIndexDigest(index: CanonIndex): string {
-  const hasher = new Bun.CryptoHasher("sha256");
-  hasher.update(`${index.generation}:${index.pages.length}:${index.holds.size}:${index.deniedPaths.size}\n`);
-  for (const page of index.pages) {
-    hasher.update(`${page.relPath}\0${page.id}\0${page.contentHash}\n`);
+/**
+ * Owner-only global content version stamp (ignores `agent_audit` writes).
+ * Never used for scoped agents so hidden mutations cannot invalidate agent caches.
+ */
+export function ownerDbStamp(db: Database, allowReadTransaction = false): string | null {
+  if (!allowReadTransaction && db.inTransaction) return null;
+  const parts: string[] = [];
+  if (tableExists(db, "events")) {
+    parts.push("(SELECT COUNT(*) FROM events) AS ev_cnt");
+    parts.push("(SELECT COALESCE(MAX(rowid), 0) FROM events) AS ev_max");
+    parts.push("(SELECT COUNT(*) FROM events WHERE deleted = 1) AS ev_del");
   }
-  for (const held of index.holds) hasher.update(`H:${held}\n`);
-  for (const denied of index.deniedPaths) hasher.update(`D:${denied}\n`);
-  return hasher.digest("hex");
+  if (tableExists(db, "search_documents")) {
+    parts.push("(SELECT COUNT(*) FROM search_documents) AS sd_cnt");
+  }
+  if (tableExists(db, "canon_receipts")) {
+    parts.push("(SELECT COUNT(*) FROM canon_receipts) AS cr_cnt");
+  }
+  if (tableExists(db, "event_purges")) {
+    parts.push("(SELECT COUNT(*) FROM event_purges) AS ep_cnt");
+  }
+  if (tableExists(db, "event_classes")) {
+    parts.push("(SELECT COUNT(*) FROM event_classes) AS ec_cnt");
+  }
+  if (tableExists(db, "claims")) {
+    parts.push("(SELECT COUNT(*) FROM claims WHERE status = 'live') AS cl_cnt");
+  }
+  if (tableExists(db, "canon_holds")) {
+    parts.push("(SELECT COUNT(*) FROM canon_holds) AS ch_cnt");
+  }
+  const counts = parts.length === 0
+    ? ""
+    : Object.values(db.query<Record<string, number>, []>(`SELECT ${parts.join(", ")}`).get() ?? {}).join(":");
+  return `${canonReadGeneration(db)}:${sourcePolicyEpoch(db)}:${purgeReadEpoch(db)}:${claimsEpoch(db)}:${counts}`;
 }
 
 export function grantCacheKey(ctx: ServeContext, grant: Grant): string {
@@ -69,17 +88,97 @@ export function grantCacheKey(ctx: ServeContext, grant: Grant): string {
   ]);
 }
 
-/** Cacheable permitted canon IDs/paths for search under one immutable DB + canon + scope snapshot. */
+/**
+ * Caller-visible canon stamp: depends strictly on pages, receipts, index rows,
+ * source grants, and purges reachable by this caller's grant. Hidden mutations
+ * never change this stamp and cannot cause cache-invalidation side channels,
+ * while `agent_audit` writes never invalidate consecutive MCP calls.
+ */
+export function visibleCanonStamp(
+  ctx: ServeContext,
+  grant: Grant,
+  index: CanonIndex,
+  allowReadTransaction = false,
+): string | null {
+  if (!allowReadTransaction && ctx.db.inTransaction) return null;
+  const permitted = index.pages.filter(
+    (page) => !index.deniedPaths.has(page.relPath) && eligible(page) && authorize(grant, pageScope(ctx, page, grant)).allow,
+  );
+  const hasher = new Bun.CryptoHasher("sha256");
+  hasher.update(`${permitted.length}:${index.holds.size}\n`);
+  const paths: string[] = [];
+  const docIds: string[] = [];
+  const sourceIdSet = new Set<string>();
+  for (const page of permitted) {
+    hasher.update(`${page.relPath}\0${page.id}\0${page.contentHash}\n`);
+    paths.push(page.relPath);
+    docIds.push(`page:${page.id}`);
+    for (const ref of stringArray(page.data["sources"])) {
+      sourceIdSet.add(eventIdFromReference(ref));
+    }
+  }
+  for (const held of index.holds) hasher.update(`H:${held}\n`);
+  const pageDigest = hasher.digest("hex");
+
+  const pathsJson = JSON.stringify(paths);
+  const docIdsJson = JSON.stringify(docIds);
+  const sourcesJson = JSON.stringify([...sourceIdSet]);
+
+  const receiptRow = tableExists(ctx.db, "canon_receipts")
+    ? ctx.db.query<{ n: number; head: number }, [string]>(
+        "SELECT count(*) AS n, coalesce(max(rowid), 0) AS head FROM canon_receipts WHERE page_path IN (SELECT value FROM json_each(?))",
+      ).get(pathsJson)
+    : null;
+  const lineageCount = tableExists(ctx.db, "canon_source_survivor_lineage") && tableExists(ctx.db, "canon_receipts")
+    ? (ctx.db.query<{ n: number }, [string]>(
+        "SELECT count(*) AS n FROM canon_source_survivor_lineage WHERE child_receipt_id IN (SELECT receipt_id FROM canon_receipts WHERE page_path IN (SELECT value FROM json_each(?)))",
+      ).get(pathsJson)?.n ?? 0)
+    : 0;
+  const searchRow = tableExists(ctx.db, "search_documents")
+    ? ctx.db.query<{ n: number; head: number }, [string]>(
+        "SELECT count(*) AS n, coalesce(max(rowid), 0) AS head FROM search_documents WHERE scope='canon' AND doc_id IN (SELECT value FROM json_each(?))",
+      ).get(docIdsJson)
+    : null;
+  const grantAgg = tableExists(ctx.db, "source_grants") && tableExists(ctx.db, "source_event_bindings")
+    ? (ctx.db.query<{ agg: string }, [string]>(
+        `SELECT coalesce(group_concat(g.source_key || ':' || g.revision || ':' || g.status || ':' || length(g.policy)), '') AS agg
+         FROM source_grants g
+         WHERE EXISTS (
+           SELECT 1 FROM source_event_bindings b
+           WHERE b.source_key = g.source_key AND b.event_id IN (SELECT value FROM json_each(?))
+         )`,
+      ).get(sourcesJson)?.agg ?? "")
+    : "";
+  const purgeCount = tableExists(ctx.db, "event_purges")
+    ? (ctx.db.query<{ n: number }, [string]>(
+        "SELECT count(*) AS n FROM event_purges WHERE event_id IN (SELECT value FROM json_each(?))",
+      ).get(sourcesJson)?.n ?? 0)
+    : 0;
+  const deletedCount = tableExists(ctx.db, "events")
+    ? (ctx.db.query<{ n: number }, [string]>(
+        "SELECT count(*) AS n FROM events WHERE deleted = 1 AND event_id IN (SELECT value FROM json_each(?))",
+      ).get(sourcesJson)?.n ?? 0)
+    : 0;
+  const classCount = tableExists(ctx.db, "event_classes")
+    ? (ctx.db.query<{ n: number }, [string]>(
+        "SELECT count(*) AS n FROM event_classes WHERE event_id IN (SELECT value FROM json_each(?))",
+      ).get(sourcesJson)?.n ?? 0)
+    : 0;
+
+  return `${pageDigest}|r=${receiptRow?.n ?? 0}:${receiptRow?.head ?? 0}:${lineageCount}|s=${searchRow?.n ?? 0}:${searchRow?.head ?? 0}|g=${grantAgg}|p=${purgeCount}:${deletedCount}:${classCount}`;
+}
+
+/** Cacheable permitted canon IDs/paths for search under one caller-visible snapshot. */
 export function cachedSearchCanonScope(
   index: CanonIndex,
   grant: Grant,
   access: CanonAccessPhase,
 ): { canonIds: string[]; canonPaths: string[] } {
   const ctx = index.sourceContext;
-  const dbStamp = dbVersionStamp(ctx.db);
-  const key = dbStamp === null
+  const stamp = visibleCanonStamp(ctx, grant, index);
+  const key = stamp === null
     ? null
-    : `${resolve(ctx.vaultPath)}|${dbStamp}|${sourcePolicyEpoch(ctx.db)}|${purgeReadEpoch(ctx.db)}|${canonIndexDigest(index)}|${grantCacheKey(ctx, grant)}`;
+    : `${resolve(ctx.vaultPath)}|${stamp}|${grantCacheKey(ctx, grant)}`;
   if (key !== null) {
     const cached = canonScopeCache.get(key);
     if (cached !== undefined) {
@@ -102,10 +201,10 @@ export function cachedSearchCanonScope(
 export function visibleIndexDegraded(index: CanonIndex, grant: Grant, layer: "search" | "graph", pages: readonly CanonPage[] = index.pages, access?: CanonAccessPhase): boolean {
   if (access !== undefined && !access.appliesTo(index, grant)) access = undefined;
   const ctx = index.sourceContext;
-  const dbStamp = pages === index.pages ? dbVersionStamp(ctx.db) : null;
-  const cacheKey = dbStamp === null
+  const stamp = pages === index.pages ? visibleCanonStamp(ctx, grant, index) : null;
+  const cacheKey = stamp === null
     ? null
-    : `${resolve(ctx.vaultPath)}|${layer}|${dbStamp}|${sourcePolicyEpoch(ctx.db)}|${purgeReadEpoch(ctx.db)}|${canonIndexDigest(index)}|${grantCacheKey(ctx, grant)}`;
+    : `${resolve(ctx.vaultPath)}|${layer}|${stamp}|${grantCacheKey(ctx, grant)}`;
   if (cacheKey !== null) {
     const cached = indexDegradedCache.get(cacheKey);
     if (cached !== undefined) return cached;
@@ -167,10 +266,10 @@ export function visibleIndexDegraded(index: CanonIndex, grant: Grant, layer: "se
 
 /** Coverage is checked inside the permitted live ledger corpus, before LIMIT. */
 export function visibleLedgerIndexMissing(ctx: ServeContext, grant: Grant): boolean {
-  const dbStamp = dbVersionStamp(ctx.db);
-  const cacheKey = dbStamp === null
+  const ownerStamp = ctx.principal.kind === "owner" ? ownerDbStamp(ctx.db) : null;
+  const cacheKey = ownerStamp === null
     ? null
-    : `${resolve(ctx.vaultPath)}|ledger|${dbStamp}|${sourcePolicyEpoch(ctx.db)}|${purgeReadEpoch(ctx.db)}|${grantCacheKey(ctx, grant)}`;
+    : `${resolve(ctx.vaultPath)}|ledger|${ownerStamp}|${grantCacheKey(ctx, grant)}`;
   if (cacheKey !== null) {
     const cached = ledgerMissingCache.get(cacheKey);
     if (cached !== undefined) return cached;
