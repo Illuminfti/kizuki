@@ -527,12 +527,10 @@ export function resolveStaleCanonHoldOwned(
   try {
     try {
       stream.assertCheckpointCustody(intent.checkpoint, true);
+      stream.verifyUnappliedTail(intent.checkpoint, Buffer.from(`${JSON.stringify(intent.receipt)}\n`));
     } catch (error) {
       const typed = asCanonRecoveryError(error, receiptId);
-      return refuse(typed?.reason ?? "receipt_stream_changed", typed?.reason ?? holdReason, true);
-    }
-    if (!receiptTailMatchesUnappliedIntent(files, intent)) {
-      return refuse("receipt_stream_refused", "receipt_stream_refused", true);
+      return refuse(typed?.reason ?? "receipt_stream_refused", typed?.reason ?? "receipt_stream_refused", true);
     }
 
     if (dryRun) {

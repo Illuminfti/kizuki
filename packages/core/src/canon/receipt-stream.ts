@@ -425,6 +425,12 @@ class ReceiptStream {
       }finally{if(!transferred)closeSync(fd);}
     });
   }
+  /** Verify the receipt stream matches the checkpoint and any tail is at most a prefix of the unapplied receipt line. */
+  verifyUnappliedTail(input: OrdinaryReceiptCheckpoint, exactReceiptLine: Uint8Array): void {
+    this.#guard(() => {
+      this.#admittedTail(input, exactReceiptLine);
+    });
+  }
   /** Only the source-denial coordinator may authorize withdrawal of its pending receipt. */
   withdrawExact(input: OrdinaryReceiptCheckpoint, exactReceiptLine: Uint8Array): void {
     this.#guard(() => {
@@ -467,7 +473,7 @@ class ReceiptStream {
 export type ReceiptAppendStream = Pick<ReceiptStream, "append" | "sync" | "verifyBinding" | "close">;
 export type SourceErasureReceiptFile = ReceiptAppendStream & Pick<ReceiptStream, "readUtf8">;
 export type WorldErasureReceiptStream = Pick<ReceiptStream, "planRedaction" | "reconcileRedaction" | "assertCheckpointCustody" | "sync" | "verifyBinding" | "close">;
-export type OrdinaryRecoveryReceiptStream = Pick<ReceiptStream, "checkpoint" | "reconcile" | "withdrawExact" | "assertCheckpointCustody" | "sync" | "verifyBinding" | "close">;
+export type OrdinaryRecoveryReceiptStream = Pick<ReceiptStream, "checkpoint" | "reconcile" | "verifyUnappliedTail" | "withdrawExact" | "assertCheckpointCustody" | "sync" | "verifyBinding" | "close">;
 
 function openStream(scope: VaultMutationScope, io: CanonIo, readable: boolean, ordinaryRecovery = false): ReceiptStream {
   const files = requireCanonFiles(scope, io);
@@ -523,6 +529,7 @@ export function openOrdinaryRecoveryReceiptStream(scope: VaultMutationScope, io:
   const stream = openStream(scope, io, true, true);
   // No generic append/read surface escapes this purpose-bound capability.
   return Object.freeze({ checkpoint: () => stream.checkpoint(), reconcile: (checkpoint: OrdinaryReceiptCheckpoint, line: Uint8Array) => stream.reconcile(checkpoint, line),
+    verifyUnappliedTail: (checkpoint: OrdinaryReceiptCheckpoint, line: Uint8Array) => stream.verifyUnappliedTail(checkpoint, line),
     withdrawExact: (checkpoint: OrdinaryReceiptCheckpoint, line: Uint8Array) => stream.withdrawExact(checkpoint, line),
     assertCheckpointCustody: (checkpoint: OrdinaryReceiptCheckpoint, file: boolean) => stream.assertCheckpointCustody(checkpoint, file),
     sync: () => stream.sync(), verifyBinding: () => stream.verifyBinding(), close: () => stream.close() });
