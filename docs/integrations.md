@@ -1,19 +1,25 @@
 # Connect a harness to Kizuki
 
 Kizuki is not an agent harness. It gives whichever harness you run two things: a
-scoped read surface over MCP, and a hook command that hands a session a short,
+scoped read/write surface over MCP (14 tools total: 10 core tools plus 4 MemT
+procedural-memory tools), and a hook command that hands a session a short,
 labelled block of context when it starts. This guide wires both into Claude Code,
-Codex and any other client that can launch a stdio MCP server or run a command.
+Codex, Cursor, and any other client that can launch a stdio MCP server or run a
+command.
 
 Every path below is a placeholder. Replace `/absolute/path/to/vault` and
-`/absolute/path/to/credential` with your own, and keep them absolute.
+`/absolute/path/to/credential` with your own, and keep them absolute. From a
+source checkout instead of a compiled release package, invoke
+`bun packages/mcp/src/bin.ts` in place of `kizuki-mcp`, and use the safe Bun
+launcher shown in [How the hook behaves](#how-the-hook-behaves) for
+`hook session-start`.
 
 ## What you set up
 
 | Piece             | Command                     | What it gives the agent                                                            |
 | ----------------- | --------------------------- | ---------------------------------------------------------------------------------- |
 | Scoped credential | `kizuki agent add`          | An identity with an explicit grant. Every call it makes is audited under its name. |
-| MCP server        | `kizuki-mcp`                | The read tools, plus `propose` and `correct` when the grant allows them.           |
+| MCP server        | `kizuki-mcp`                | The 10 core read/write tools plus 4 MemT tools allowed by the grant.               |
 | Session hook      | `kizuki hook session-start` | A bounded context block injected once, at session start.                           |
 
 The hook is a pull. It asks Kizuki for a `context_packet` with `purpose=session`,
@@ -55,7 +61,12 @@ kizuki agent add my-harness \
 
 The `ceiling` is the most sensitive label the agent may read. `world_view` in
 `tools` lets the session block include Situations from the world model; without
-it those parts of the block say so and stay empty. See the
+it those parts of the block say so and stay empty. Access to the four MemT
+procedural-memory MCP tools derives from the same core `tools` list without
+widening the grant: `memt_status` requires `system_health`; `memt_recall`
+requires `search` + `context_packet`; `memt_experience` requires `propose` (or
+`search` + `context_packet` for read-only search); `memt_snapshot` requires
+`system_health` + `propose`. See the
 [agent enrollment guide](agent-enrollment.md) for recovery and revocation. To end
 access later, run `kizuki agent revoke my-harness`.
 
@@ -162,7 +173,33 @@ if the hook never runs, that is the first thing to look at. `--harness codex`
 prints the same `hookSpecificOutput` object Claude Code takes; if your Codex
 build wants plain standard output instead, use `--harness generic`.
 
-## 4. Any other client
+## 4. Cursor
+
+Add Kizuki to a project's `.cursor/mcp.json` or your user-level
+`~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "kizuki": {
+      "command": "kizuki-mcp",
+      "args": [
+        "--vault",
+        "/absolute/path/to/vault",
+        "--token-ref",
+        "file:/absolute/path/to/credentials/my-harness.credential"
+      ]
+    }
+  }
+}
+```
+
+From a source checkout, set `"command": "bun"` and prepend
+`"/absolute/path/to/kizuki/packages/mcp/src/bin.ts"` to `"args"`. This uses
+Cursor's standard stdio MCP configuration shape and has not been live-tested
+against a real Cursor client on this revision.
+
+## 5. Any other client
 
 An MCP client that can launch a stdio server needs only the command line:
 
