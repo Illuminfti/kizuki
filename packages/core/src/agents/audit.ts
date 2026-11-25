@@ -405,7 +405,7 @@ function insertAudit(
   const servedCount = assertCount(lists.served.length, "served_count");
   const deniedCount = assertCount(lists.denied.length, "denied_count");
   const auditId = ulid();
-  using statement = db.prepare<
+  db.query<
     never,
     [string, string, string, string, string, string, number, number, number | null, string]
   >(
@@ -413,8 +413,7 @@ function insertAudit(
        (audit_id, agent_id, tool, query_shape, served, denied,
         served_count, denied_count, grant_epoch, at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  );
-  statement.run(
+  ).run(
     auditId,
     agentId,
     tool,
@@ -615,6 +614,60 @@ export function recordAudit(
     denied,
     stamped,
     grantEpochOf(principal),
+  );
+}
+
+/**
+ * Reserves and finalizes one audit row in a single IMMEDIATE transaction (one
+ * WAL sync instead of two) for principals that are never rate-limited and
+ * read-only calls that cannot mutate state. Running both INSERT and UPDATE
+ * inside the same transaction ensures audit triggers on either operation fail
+ * closed and roll back before any response is released.
+ */
+export function recordImmediateAudit(
+  db: Database,
+  principal: Principal,
+  tool: Tool,
+  args: Record<string, unknown>,
+  served: AuditItem[],
+  denied: AuditDenial[],
+  at: string = new Date().toISOString(),
+  options?: { attempts?: number; beforeCommit?: () => void },
+): string {
+  assertTool(tool);
+  const stamped = new Date(rfc3339Millis(at, "at")).toISOString();
+  const agentId = principal.kind === "owner" ? "owner" : principal.agent.agent_id;
+  const grantEpoch = grantEpochOf(principal);
+  const lists = assertAuditLists(served, denied);
+  const servedCount = assertCount(lists.served.length, "served_count");
+  const deniedCount = assertCount(lists.denied.length, "denied_count");
+  const shaped = JSON.stringify(shapeArguments(args));
+  const servedJson = JSON.stringify(lists.served);
+  const deniedJson = JSON.stringify(lists.denied);
+  const auditId = ulid();
+  return runImmediate(
+    db,
+    () => {
+      db.query<never, [string, string, string, number | null, string]>(
+        `INSERT INTO agent_audit
+           (audit_id, agent_id, tool, query_shape, served, denied,
+            served_count, denied_count, grant_epoch, at)
+         VALUES (?, ?, ?, '{}', '[]', '[]', 0, 0, ?, ?)`,
+      ).run(auditId, agentId, tool, grantEpoch, stamped);
+      db.query<never, [string, string, string, number, number, string]>(
+        `UPDATE agent_audit
+            SET query_shape = ?, served = ?, denied = ?,
+                served_count = ?, denied_count = ?
+          WHERE audit_id = ?`,
+      ).run(shaped, servedJson, deniedJson, servedCount, deniedCount, auditId);
+      const changed = db.query<{ n: number }, []>("SELECT changes() AS n").get();
+      if (changed?.n !== 1) {
+        throw new Error("serving audit update was not recorded");
+      }
+      options?.beforeCommit?.();
+      return auditId;
+    },
+    options?.attempts,
   );
 }
 
