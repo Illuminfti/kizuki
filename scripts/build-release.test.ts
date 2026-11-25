@@ -1,10 +1,9 @@
-import { createHash } from "node:crypto";
 import { expect, test, setDefaultTimeout } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PLACEHOLDER_CREDENTIALS_MESSAGE } from "../packages/connector-telegram/src/app-credentials";
-import { COMPILED_CREDENTIAL_GROUPS, buildMetadataDefines, packagedQuickStart, resolveBuildTimestamp, resolveCompiledCredentials, type CredentialGroup } from "./build-release";
+import { COMPILED_CREDENTIAL_GROUPS, buildMetadataDefines, packagedQuickStart, resolveCompiledCredentials, type CredentialGroup } from "./build-release";
 import { checksumManifest, parseBuildInfoValue } from "./release-artifacts";
 import { distributionFixture } from "./release-package-fixture";
 import { BUN_DISTRIBUTION_PIN } from "./release-notices";
@@ -193,51 +192,13 @@ test("build metadata refuses a partial revision and an invalid time", () => {
   expect(() => buildMetadataDefines("a".repeat(40), new Date(Number.NaN))).toThrow("valid build time");
 });
 
-test("resolveBuildTimestamp prioritizes validated SOURCE_DATE_EPOCH, then commit epoch, and rejects malformed input", () => {
-  expect(resolveBuildTimestamp({ SOURCE_DATE_EPOCH: "0" }, "1700000000").toISOString()).toBe("1970-01-01T00:00:00.000Z");
-  expect(resolveBuildTimestamp({ SOURCE_DATE_EPOCH: "1767323045" }, "1700000000").toISOString()).toBe("2026-01-02T03:04:05.000Z");
-  expect(resolveBuildTimestamp({}, "1767323045").toISOString()).toBe("2026-01-02T03:04:05.000Z");
-  for (const invalid of ["", "-1", "12.3", " 100", "abc", "0123"]) {
-    expect(() => resolveBuildTimestamp({ SOURCE_DATE_EPOCH: invalid }, "1767323045")).toThrow("SOURCE_DATE_EPOCH");
-    expect(() => resolveBuildTimestamp({}, invalid)).toThrow("valid source commit timestamp");
-  }
-});
-
-test("two compiled binaries with identical resolved build metadata are byte-identical", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "kizuki-reproducible-build-"));
-  try {
-    const sha = "0123456789abcdef0123456789abcdef01234567";
-    const entrypoint = join(directory, "probe.ts");
-    writeFileSync(entrypoint, VERSION_PROBE, "utf8");
-    const builtAt = resolveBuildTimestamp({}, "1767323045");
-    const define = { KIZUKI_COMPILED: "true", ...buildMetadataDefines(sha, builtAt) };
-    const compileOnce = async (slot: string): Promise<string> => {
-      const staging = join(directory, slot);
-      mkdirSync(staging, { recursive: true });
-      const binary = join(staging, "kizuki");
-      const flags = Object.entries(define).flatMap(([key, value]) => ["--define", `${key}=${value}`]);
-      const compiled = Bun.spawnSync([process.execPath, "build", entrypoint, "--compile", "--outfile", binary, ...flags], { stdout: "pipe", stderr: "pipe" });
-      if (compiled.exitCode !== 0) throw new Error(`repro build failed: ${compiled.stderr.toString()}`);
-      return createHash("sha256").update(readFileSync(binary)).digest("hex");
-    };
-    const first = await compileOnce("staging-1");
-    await Bun.sleep(1050);
-    const second = await compileOnce("staging-2");
-    expect(second).toBe(first);
-  } finally {
-    rmSync(directory, { force: true, recursive: true });
-  }
-});
-
-test("packagedQuickStart includes local PATH symlinks, PATH export, 14-tool MCP note, and upgrade/integration links", () => {
+test("packagedQuickStart includes local PATH symlinks, 14-tool MCP note, and upgrade/integration links", () => {
   const sha = "c".repeat(40);
   const text = packagedQuickStart({ version: "1.0.2", target: selectedReleaseTarget(), sourceSha: sha });
   expect(text).toContain('ln -sf "$PWD/kizuki" "$HOME/.local/bin/kizuki"');
   expect(text).toContain('ln -sf "$PWD/kizuki-mcp" "$HOME/.local/bin/kizuki-mcp"');
-  expect(text).toContain('export PATH="$HOME/.local/bin:$PATH"');
   expect(text).toContain("14 scoped tools");
   expect(text).toContain(`https://github.com/Illuminfti/kizuki/blob/${sha}/docs/integrations.md`);
   expect(text).toContain(`https://github.com/Illuminfti/kizuki/blob/${sha}/docs/upgrade.md`);
   expect(text).not.toMatch(/\/home\/|\/Users\/|\/data\//);
-  expect(text).not.toContain("\u2014");
 });

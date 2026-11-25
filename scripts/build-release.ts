@@ -110,6 +110,37 @@ export function resolveCompiledCredentials(
 }
 
 const UNIX_EPOCH_SECONDS = /^(?:0|[1-9][0-9]{0,12})$/;
+/** Maximum Unix epoch second representable as a 4-digit UTC ISO-8601 year (`9999-12-31T23:59:59.000Z`). */
+export const MAX_BUILD_TIMESTAMP_EPOCH_SECONDS = 253_402_300_799;
+export const BUILD_TIMESTAMP_ISO_PATTERN = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
+
+/**
+ * True iff `value` is a canonical 4-digit UTC ISO-8601 build timestamp within
+ * `[1970-01-01T00:00:00.000Z, 9999-12-31T23:59:59.999Z]`.
+ */
+export function isValidBuildTimestamp(value: string): boolean {
+  if (!BUILD_TIMESTAMP_ISO_PATTERN.test(value)) return false;
+  const ms = Date.parse(value);
+  return (
+    Number.isFinite(ms) &&
+    ms >= 0 &&
+    ms <= MAX_BUILD_TIMESTAMP_EPOCH_SECONDS * 1000 + 999 &&
+    new Date(ms).toISOString() === value
+  );
+}
+
+function parseEpochTimestamp(raw: string, formatError: string, rangeError: string): Date {
+  if (!UNIX_EPOCH_SECONDS.test(raw)) throw new Error(formatError);
+  const seconds = Number(raw);
+  if (!Number.isSafeInteger(seconds) || seconds < 0 || seconds > MAX_BUILD_TIMESTAMP_EPOCH_SECONDS) {
+    throw new Error(rangeError);
+  }
+  const timestamp = new Date(seconds * 1000);
+  if (Number.isNaN(timestamp.getTime()) || !isValidBuildTimestamp(timestamp.toISOString())) {
+    throw new Error(rangeError);
+  }
+  return timestamp;
+}
 
 /**
  * Resolves a deterministic build timestamp for reproducible release artifacts.
@@ -122,24 +153,18 @@ export function resolveBuildTimestamp(
 ): Date {
   const raw = environment.SOURCE_DATE_EPOCH;
   if (raw !== undefined) {
-    if (!UNIX_EPOCH_SECONDS.test(raw)) {
-      throw new Error("SOURCE_DATE_EPOCH must be a non-negative integer Unix timestamp in seconds");
-    }
-    const timestamp = new Date(Number(raw) * 1000);
-    if (Number.isNaN(timestamp.getTime())) {
-      throw new Error("SOURCE_DATE_EPOCH is out of valid date range");
-    }
-    return timestamp;
+    return parseEpochTimestamp(
+      raw,
+      "SOURCE_DATE_EPOCH must be a non-negative integer Unix timestamp in seconds",
+      "SOURCE_DATE_EPOCH is out of valid date range",
+    );
   }
   if (commitEpochSeconds !== undefined) {
-    if (!UNIX_EPOCH_SECONDS.test(commitEpochSeconds)) {
-      throw new Error("build metadata needs a valid source commit timestamp");
-    }
-    const timestamp = new Date(Number(commitEpochSeconds) * 1000);
-    if (Number.isNaN(timestamp.getTime())) {
-      throw new Error("build metadata source commit timestamp is out of range");
-    }
-    return timestamp;
+    return parseEpochTimestamp(
+      commitEpochSeconds,
+      "build metadata needs a valid source commit timestamp",
+      "build metadata source commit timestamp is out of range",
+    );
   }
   return new Date();
 }
@@ -150,7 +175,9 @@ export function resolveBuildTimestamp(
  */
 export function buildMetadataDefines(sourceSha: string, builtAt: Date): Record<string, string> {
   if (!/^[0-9a-f]{40}$/.test(sourceSha)) throw new Error("build metadata needs a full source revision");
-  if (Number.isNaN(builtAt.getTime())) throw new Error("build metadata needs a valid build time");
+  if (Number.isNaN(builtAt.getTime()) || !isValidBuildTimestamp(builtAt.toISOString())) {
+    throw new Error("build metadata needs a valid build time");
+  }
   return { KIZUKI_BUILD_SHA: JSON.stringify(sourceSha), KIZUKI_BUILD_TIME: JSON.stringify(builtAt.toISOString()) };
 }
 

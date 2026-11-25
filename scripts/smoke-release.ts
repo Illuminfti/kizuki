@@ -6,7 +6,7 @@ import { mcpSession } from "./smoke-release-mcp";
 
 import { selectedReleaseTarget } from "./release-targets";
 import { parseBuildInfo } from "./stranger-proof";
-import { PACKAGED_CLI_COMMANDS, packagedCommandLine } from "./build-release";
+import { PACKAGED_CLI_COMMANDS, isValidBuildTimestamp, packagedCommandLine } from "./build-release";
 const target = selectedReleaseTarget();
 
 const root = resolve(import.meta.dir, "..");
@@ -55,7 +55,7 @@ interface DoctorJsonEnvelope {
     ledger?: { ok?: boolean };
     effective_config?: { model_ref?: string | null };
     connections?: { connector_id?: string; health?: string; problem?: string | null }[];
-    memt?: { mode?: string; gpu_backend?: string };
+    memt?: { mode?: string; gpu_backend?: string; gpu_configured?: boolean; endpoint_host?: string | null };
     serve?: {
       ok?: boolean;
       failures?: unknown[];
@@ -91,7 +91,9 @@ function assertHealthyNoModelDoctor(
     doctor.data.serve.model?.model_ref !== null ||
     doctor.data.serve.stores?.vector_layer?.state !== "off" ||
     doctor.data.memt?.mode !== "local-hybrid" ||
-    doctor.data.memt?.gpu_backend !== "offline"
+    doctor.data.memt?.gpu_backend !== "offline" ||
+    doctor.data.memt?.gpu_configured !== false ||
+    doctor.data.memt?.endpoint_host !== null
   ) {
     throw new Error(`${label} doctor did not report a clean healthy no-model vault with zero degraded flags`);
   }
@@ -109,9 +111,9 @@ function assertCleanEnvelope(
   raw: { stdout: string; stderr: string },
   expectedSchema: string,
   label: string,
-): { stdout: string; envelope: { schema?: string; status?: string; degraded?: unknown[]; warnings?: unknown[] } } {
+): { stdout: string; envelope: { schema?: string; status?: string; degraded?: unknown[]; warnings?: unknown[]; data?: unknown } } {
   if (raw.stderr !== "") throw new Error(`${label} emitted unexpected stderr`);
-  const envelope = JSON.parse(raw.stdout) as { schema?: string; status?: string; degraded?: unknown[]; warnings?: unknown[] };
+  const envelope = JSON.parse(raw.stdout) as { schema?: string; status?: string; degraded?: unknown[]; warnings?: unknown[]; data?: unknown };
   if (
     envelope.schema !== expectedSchema ||
     envelope.status !== "ok" ||
@@ -123,6 +125,18 @@ function assertCleanEnvelope(
     throw new Error(`${label} reported degraded or warning state`);
   }
   return { stdout: raw.stdout, envelope };
+}
+
+function assertContextPacket(
+  raw: { stdout: string; stderr: string },
+  expectedText: string,
+  label: string,
+): void {
+  const { envelope } = assertCleanEnvelope(raw, "kizuki.cli.context/v1", label);
+  const packetMd = (envelope.data as { data?: { packet_md?: unknown } } | undefined)?.data?.packet_md;
+  if (typeof packetMd !== "string" || !packetMd.includes(expectedText)) {
+    throw new Error(`${label} packet_md is missing expected fixture text`);
+  }
 }
 
 /**
@@ -159,8 +173,15 @@ try {
 
   // The binary identifies its exact build: BUILD.json's revision, and a compiled-in build time.
   const versionLine = run(cli, ["version"], env).trim();
-  const identity = versionLine.match(/^(\S+) source=([0-9a-f]{40}) built=(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z)$/);
-  if (identity === null || identity[1] !== version || identity[2] !== build.source_sha) throw new Error("CLI version does not identify the packaged build");
+  const identity = versionLine.match(/^(\S+) source=([0-9a-f]{40}) built=(\S+)$/);
+  if (
+    identity === null ||
+    identity[1] !== version ||
+    identity[2] !== build.source_sha ||
+    !isValidBuildTimestamp(identity[3]!)
+  ) {
+    throw new Error("CLI version does not identify the packaged build");
+  }
   const help = run(cli, ["--help"], env);
   if (!help.includes("usage: kizuki")) throw new Error("CLI help missing");
   for (const argv of Object.values(PACKAGED_CLI_COMMANDS)) {
@@ -201,12 +222,11 @@ try {
     "imported",
     { expectMarkdownConnection: true },
   );
-  const context = assertCleanEnvelope(
+  assertContextPacket(
     runJson(cli, ["context", "--query", "Ada", "--json", "--vault", vault], env),
-    "kizuki.cli.context/v1",
+    "Ada met Grace at the library.",
     "imported context",
   );
-  if (!context.stdout.includes("Ada")) throw new Error("imported note is missing from compiled context");
   const memtStatus = JSON.parse(runJson(cli, ["memt", "status", "--json", "--vault", vault], env).stdout) as {
     schema?: string;
     status?: string;
@@ -256,12 +276,11 @@ try {
     "restored query",
   );
   if (!restoredQuery.stdout.includes("Ada")) throw new Error("restored vault was not queryable");
-  const restoredContext = assertCleanEnvelope(
+  assertContextPacket(
     runJson(cli, ["context", "--query", "Ada", "--json", "--vault", restored], env),
-    "kizuki.cli.context/v1",
+    "Ada met Grace at the library.",
     "restored context",
   );
-  if (!restoredContext.stdout.includes("Ada")) throw new Error("restored vault note missing from context");
   run(cli, ["serve", "--install", "--vault", vault], env);
   run(cli, ["serve", "--uninstall", "--vault", vault], env);
   if (!existsSync(join(vault, ".kizuki"))) throw new Error("uninstall removed the vault");
