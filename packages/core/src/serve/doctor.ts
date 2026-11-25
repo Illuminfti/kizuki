@@ -3,10 +3,15 @@ import { consolidationDoctor } from "./doctor-consolidation";
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { loadConfiguredRetrieval, readRetrievalEngineRefusal } from "../retrieval/config";
+import { eventIdFromReference } from "../retrieval/ids";
 import { embeddingThroughputFromReceipts } from "../retrieval/reembed";
 import { inspectPageIndex } from "../canon";
+import { CanonAuthorityResolver, type CanonRevisionBasis } from "../canon/authority";
+import { assertReceiptPaths } from "../canon/paths";
 import { staleCanonIntentFailure } from "./canon-intent-health";
 import { isMachineOriginPath } from "../canon/origin";
+import { EVENT_LIMITS, EVENT_SCHEMA } from "../contracts/event";
+import { isAuthorityTier, type AuthorityTier } from "../contracts/proposal";
 import { formatProducerDiagnostic } from "../producer/diagnostics";
 import { SINGLE_SOURCE_CAP } from "../claims/authority";
 import { countPendingRetrievalOps } from "../claims/store";
@@ -15,10 +20,18 @@ import { readDerivedMeta } from "../derived-meta";
 import { readDerivedHolds } from "../derived-holds";
 import { inspectConnectionStateRecovery } from "../ledger/connection-state";
 import { inspectCheckpoints, inspectConnections } from "../ledger/connections";
+import { nativeRequestDigest } from "../ledger/event-origin-binding";
+import { eventFromRow, validateEventRecord, type EventRow } from "../ledger/event-record";
+import { LIVE_PREDICATE } from "../ledger/ledger";
 import { tableExists } from "../ledger/schema";
+import { inspectSourceGrant, sourceEventsAllowed, sourcePolicyEpoch, type SourceGrant } from "../ledger/source-grants";
 import { inspectPurgeHealth } from "../ledger/purge";
+import { isRfc3339 } from "../util/time";
+import { utf8ByteLength } from "../util/validate";
 import { canonCapacity, loadCanonLimits } from "../vault/canon-limits";
-import { listCanonPagesReport, type CanonPageReport } from "../vault/pages";
+import { isLiveCanonPage, listCanonPagesReport, type CanonPage, type CanonPageReport } from "../vault/pages";
+import { assessLivePageEvidence, isDeterministicBrief, type PageAssessment, type WalkEvidence } from "../vault/provenance";
+import { parsePageSources } from "../vault/schema";
 import { loadConfiguredModelRef, loadEmbeddingSelection, loadServeConfig, type EmbeddingSelection } from "./config";
 import { ageSeconds, railDoctor, syncPassWait } from "./doctor-rails";
 import { egressDoctor, extractionDoctor } from "./doctor-extraction";
@@ -81,6 +94,11 @@ export interface ServeDoctorOptions {
    * to true.
    */
   readonly page_walk?: boolean;
+  /**
+   * Pre-walked canon page report to reuse when the caller already scanned the
+   * vault in the same doctor pass, avoiding duplicate directory walks.
+   */
+  readonly pages?: CanonPageReport;
   /**
    * False when the caller runs inside the service: its supervisor, intent and
    * liveness are the service's own to know, so they are neither checked nor a
@@ -388,14 +406,386 @@ function countWriterRoles(db: Database): StoreDoctor["writers"] {
   return writers;
 }
 
+const HASH_HEX = /^[a-f0-9]{64}$/;
+const MAX_PAGE_RECEIPTS = 4096;
+const EVENT_COLUMNS = `
+  event_id, connector_id, source_record_id, kind, occurred_at, observed_at,
+  text, subjects, sensitivity_hint, deleted, attachments, metadata,
+  content_hash, accepted_at, content_hash_version, text_hash, origin,
+  origin_binding_version, origin_binding_kind, origin_binding
+`;
+
+interface FastReceiptRow {
+  receipt_id: string;
+  page_path: string;
+  receipt_kind: string;
+  before_hash: string | null;
+  after_hash: string;
+  authority: string;
+  reverts: string | null;
+  archive_path: string | null;
+  at: string;
+}
+
+function parseBoundedEventJson(raw: string): unknown {
+  if (
+    typeof raw !== "string" ||
+    raw.length > EVENT_LIMITS.eventBytes ||
+    utf8ByteLength(raw) > EVENT_LIMITS.eventBytes
+  ) {
+    throw new Error("event_record_invalid");
+  }
+  return JSON.parse(raw);
+}
+
+/**
+ * Cryptographically verifies a stored event row using a pre-checked native
+ * digest, avoiding per-row SQLite lookups (`nativeRequestDigest` and
+ * `validatedRowsOf`) and the 64 MB connection-scoped validation cache.
+ */
+function verifyExternalEventRow(
+  row: EventRow,
+  db: Database,
+  nativeEventIds: ReadonlySet<string>,
+): boolean {
+  if (
+    (row.deleted !== 0 && row.deleted !== 1) ||
+    !isRfc3339(row.accepted_at) ||
+    row.accepted_at.length > EVENT_LIMITS.timestampBytes
+  ) {
+    return false;
+  }
+  const raw = {
+    schema: EVENT_SCHEMA,
+    event_id: row.event_id,
+    connector_id: row.connector_id,
+    source_record_id: row.source_record_id,
+    kind: row.kind,
+    occurred_at: row.occurred_at,
+    observed_at: row.observed_at,
+    text: row.text,
+    subjects: parseBoundedEventJson(row.subjects),
+    ...(row.sensitivity_hint === null ? {} : { sensitivity_hint: row.sensitivity_hint }),
+    deleted: row.deleted === 1,
+    attachments: parseBoundedEventJson(row.attachments),
+    metadata: parseBoundedEventJson(row.metadata),
+    content_hash: row.content_hash,
+    content_hash_version: row.content_hash_version,
+    text_hash: row.text_hash,
+    origin: row.origin,
+    origin_binding_version: row.origin_binding_version,
+    origin_binding_kind: row.origin_binding_kind,
+    origin_binding: row.origin_binding,
+  };
+  const digest = nativeEventIds.has(row.event_id)
+    ? nativeRequestDigest(db, row.event_id)
+    : null;
+  return (
+    validateEventRecord(raw, {
+      accepted_at: row.accepted_at,
+      native_request_digest: digest,
+    }).origin === "external"
+  );
+}
+
+/**
+ * Batched equivalent of `assessWalkEvidence` for `storeDoctor`. Ordinary v1
+ * write receipts are resolved in bulk inside a single deferred read transaction;
+ * typed v2 receipts, reverts, purge rewrites, lineage checkpoints, and any edge
+ * cases delegate to `CanonAuthorityResolver` + `assessLivePageEvidence`.
+ */
+function assessWalkEvidenceForDoctor(
+  db: Database,
+  candidates: readonly CanonPage[],
+): WalkEvidence {
+  const assessed = new Map<string, PageAssessment>();
+  if (candidates.length === 0) return assessed;
+
+  return db.transaction(() => {
+    const recoveryPending = new Set<string>();
+    if (tableExists(db, "canon_write_intents")) {
+      for (const row of db.query<{ page_path: string }, []>(
+        "SELECT page_path FROM canon_write_intents",
+      ).all()) {
+        recoveryPending.add(row.page_path);
+      }
+    }
+    if (tableExists(db, "canon_projection_obligations")) {
+      for (const row of db.query<{ page_path: string }, []>(
+        "SELECT page_path FROM canon_projection_obligations",
+      ).all()) {
+        recoveryPending.add(row.page_path);
+      }
+    }
+
+    const candidatePaths = new Set<string>();
+    for (const page of candidates) candidatePaths.add(page.relPath);
+
+    let fallbackAll = false;
+    const typedOrErasedPaths = new Set<string>();
+    const lineageReceiptIds = new Set<string>();
+    const overflowPaths = new Set<string>();
+    const receiptsByPath = new Map<string, FastReceiptRow[]>();
+
+    if (tableExists(db, "canon_receipts")) {
+      const cols = new Set(
+        db.query<{ name: string }, []>("SELECT name FROM pragma_table_info('canon_receipts')")
+          .all()
+          .map((row) => row.name),
+      );
+      if (cols.has("record_codec") || cols.has("receipt_state")) {
+        const whereParts: string[] = [];
+        if (cols.has("receipt_state")) whereParts.push("receipt_state = 'erased'");
+        if (cols.has("record_codec")) whereParts.push("(record_codec IS NOT NULL AND record_codec <> 'v1')");
+        for (const row of db.query<{ page_path: string }, []>(
+          `SELECT DISTINCT page_path FROM canon_receipts
+            WHERE (${whereParts.join(" OR ")}) AND page_path IS NOT NULL`,
+        ).all()) {
+          typedOrErasedPaths.add(row.page_path);
+        }
+      }
+
+      if (tableExists(db, "canon_source_survivor_lineage")) {
+        try {
+          for (const row of db.query<{ child_receipt_id: string }, []>(
+            "SELECT child_receipt_id FROM canon_source_survivor_lineage",
+          ).all()) {
+            lineageReceiptIds.add(row.child_receipt_id);
+          }
+        } catch {
+          fallbackAll = true;
+        }
+      }
+
+      if (!fallbackAll) {
+        const countByPath = new Map<string, number>();
+        const collectRow = (row: FastReceiptRow): void => {
+          if (!candidatePaths.has(row.page_path)) return;
+          const nextCount = (countByPath.get(row.page_path) ?? 0) + 1;
+          countByPath.set(row.page_path, nextCount);
+          if (nextCount > MAX_PAGE_RECEIPTS) {
+            overflowPaths.add(row.page_path);
+            return;
+          }
+          let list = receiptsByPath.get(row.page_path);
+          if (list === undefined) {
+            list = [];
+            receiptsByPath.set(row.page_path, list);
+          }
+          list.push(row);
+        };
+
+        const receiptCols = "receipt_id, page_path, receipt_kind, before_hash, after_hash, authority, reverts, archive_path, at";
+        if (candidatePaths.size > 400) {
+          for (const row of db.query<FastReceiptRow, []>(
+            `SELECT ${receiptCols} FROM canon_receipts WHERE page_path IS NOT NULL`,
+          ).iterate()) {
+            collectRow(row);
+          }
+        } else {
+          const paths = [...candidatePaths];
+          const slots = paths.map(() => "?").join(",");
+          for (const row of db.query<FastReceiptRow, string[]>(
+            `SELECT ${receiptCols} FROM canon_receipts WHERE page_path IN (${slots})`,
+          ).all(...paths)) {
+            collectRow(row);
+          }
+        }
+
+        for (const rows of receiptsByPath.values()) {
+          if (rows.length > 1) {
+            rows.sort((a, b) => Date.parse(b.at) - Date.parse(a.at) || b.receipt_id.localeCompare(a.receipt_id));
+          }
+        }
+      }
+    }
+
+    const fastEntries: {
+      page: CanonPage;
+      sourceIds: string[];
+      revision: CanonRevisionBasis | null;
+    }[] = [];
+    const fallbackPages: CanonPage[] = [];
+    const neededEventIds = new Set<string>();
+
+    for (const page of candidates) {
+      if (recoveryPending.has(page.relPath)) {
+        assessed.set(page.relPath, {
+          evidence: { admitted: false, reason: "recovery_pending" },
+          derivable: false,
+        });
+        continue;
+      }
+      const sources = parsePageSources(page.data);
+      if (!sources.ok || sources.value.length === 0) {
+        assessed.set(page.relPath, {
+          evidence: { admitted: false, reason: "sources_unavailable" },
+          derivable: false,
+        });
+        continue;
+      }
+      const sourceIds = [...new Set(sources.value.map(eventIdFromReference))];
+      if (
+        fallbackAll ||
+        typedOrErasedPaths.has(page.relPath) ||
+        overflowPaths.has(page.relPath) ||
+        !HASH_HEX.test(page.contentHash)
+      ) {
+        fallbackPages.push(page);
+        continue;
+      }
+
+      const match = receiptsByPath
+        .get(page.relPath)
+        ?.find((row) => row.after_hash === page.contentHash);
+      let revision: CanonRevisionBasis | null = null;
+      if (match !== undefined) {
+        if (
+          match.receipt_kind !== "write" ||
+          match.reverts !== null ||
+          lineageReceiptIds.has(match.receipt_id) ||
+          !Number.isFinite(Date.parse(match.at)) ||
+          !isAuthorityTier(match.authority) ||
+          (match.before_hash !== null && !HASH_HEX.test(match.before_hash))
+        ) {
+          fallbackPages.push(page);
+          continue;
+        }
+        try {
+          assertReceiptPaths({ page_path: match.page_path, archive_path: match.archive_path });
+        } catch {
+          fallbackPages.push(page);
+          continue;
+        }
+        revision = {
+          receipt_id: match.receipt_id,
+          after_hash: match.after_hash,
+          at: match.at,
+          authority: match.authority as AuthorityTier,
+        };
+      }
+      fastEntries.push({ page, sourceIds, revision });
+      for (const id of sourceIds) neededEventIds.add(id);
+    }
+
+    const liveExternalEvents = new Set<string>();
+    if (neededEventIds.size > 0 && tableExists(db, "events")) {
+      try {
+        const hasNativeTable = tableExists(db, "native_owner_evidence");
+        const nativeEventIds = new Set<string>();
+        if (hasNativeTable) {
+          for (const row of db
+            .query<{ event_id: string }, []>("SELECT event_id FROM native_owner_evidence")
+            .all()) {
+            nativeEventIds.add(row.event_id);
+          }
+        }
+        const hasTombstones =
+          db.query("SELECT 1 FROM events WHERE deleted = 1 LIMIT 1").get() !== null;
+        const liveClause = hasTombstones ? LIVE_PREDICATE : "events.deleted = 0";
+        const ids = [...neededEventIds];
+        for (let offset = 0; offset < ids.length; offset += 500) {
+          const batch = ids.slice(offset, offset + 500);
+          const slots = batch.map(() => "?").join(",");
+          const rows = db
+            .query<EventRow, string[]>(
+              `SELECT ${EVENT_COLUMNS} FROM events
+                WHERE event_id IN (${slots}) AND origin = 'external' AND ${liveClause}`,
+            )
+            .all(...batch);
+          for (const row of rows) {
+            try {
+              const valid = hasNativeTable
+                ? verifyExternalEventRow(row, db, nativeEventIds)
+                : eventFromRow(row, db).origin === "external";
+              if (valid) liveExternalEvents.add(row.event_id);
+            } catch {
+              // Corrupt event rows remain unadmitted, matching assessLivePageEvidence.
+            }
+          }
+        }
+      } catch {
+        // Unreadable events table leaves liveExternalEvents empty (sources_unavailable).
+      }
+    }
+
+    const policyEpoch = sourcePolicyEpoch(db);
+    const grants = new Map<string, SourceGrant | null>();
+    const grantOf = (sourceKey: string): SourceGrant | null => {
+      if (grants.has(sourceKey)) return grants.get(sourceKey)!;
+      const loaded = inspectSourceGrant(db, sourceKey);
+      grants.set(sourceKey, loaded);
+      return loaded;
+    };
+    const allowedEvents = new Map<string, boolean>();
+    const eventDerivable = (id: string): boolean => {
+      const cached = allowedEvents.get(id);
+      if (cached !== undefined) return cached;
+      const ok = sourceEventsAllowed(db, [id], { owner: true, purpose: "derive", grantOf });
+      allowedEvents.set(id, ok);
+      return ok;
+    };
+
+    for (const entry of fastEntries) {
+      if (entry.sourceIds.some((id) => !liveExternalEvents.has(id))) {
+        assessed.set(entry.page.relPath, {
+          evidence: { admitted: false, reason: "sources_unavailable" },
+          derivable: false,
+        });
+        continue;
+      }
+      if (entry.revision === null) {
+        assessed.set(entry.page.relPath, {
+          evidence: { admitted: false, reason: "revision_unrecorded" },
+          derivable: false,
+        });
+        continue;
+      }
+      const derivable =
+        policyEpoch === 0 ? true : entry.sourceIds.every(eventDerivable);
+      assessed.set(entry.page.relPath, {
+        evidence: {
+          admitted: true,
+          sourceIds: entry.sourceIds,
+          revision: entry.revision,
+        },
+        derivable,
+      });
+    }
+
+    if (fallbackPages.length > 0) {
+      const resolver = new CanonAuthorityResolver(
+        db,
+        fallbackPages.map((page) => page.relPath),
+      );
+      for (const page of fallbackPages) {
+        const evidence = assessLivePageEvidence(db, page, resolver);
+        const derivable =
+          evidence.admitted &&
+          (policyEpoch === 0
+            ? true
+            : sourceEventsAllowed(db, evidence.sourceIds, {
+                owner: true,
+                purpose: "derive",
+                grantOf,
+              }));
+        assessed.set(page.relPath, { evidence, derivable });
+      }
+    }
+
+    return assessed;
+  }).deferred();
+}
+
 function countOriginPages(report: CanonPageReport): StoreDoctor["origin"] {
   let machine = 0;
   let human = 0;
-  for (const relPath of [
-    ...report.pages.map((page) => page.relPath),
-    ...report.skipped.map((page) => page.relPath),
-  ]) {
-    if (isMachineOriginPath(relPath)) machine += 1;
+  for (const page of report.pages) {
+    if (isMachineOriginPath(page.relPath)) machine += 1;
+    else human += 1;
+  }
+  for (const page of report.skipped) {
+    if (isMachineOriginPath(page.relPath)) machine += 1;
     else human += 1;
   }
   return { machine, human };
@@ -466,8 +856,16 @@ function storeDoctor(
   if (!purge.ok) degraded.push("purge-unhealthy");
   // Skipped and held documents are what make an index degraded; a stamp that
   // says so after the last of them was fixed is stale, and both are empty.
-  const held = readDerivedHolds(db).paths.size;
-  const skippedPages = derivedPageSkips(db, pages);
+  const heldPaths = readDerivedHolds(db).paths;
+  const held = heldPaths.size;
+  const candidates = pages.pages.filter(
+    (page) => isLiveCanonPage(page) && !isDeterministicBrief(page) && !heldPaths.has(page.relPath),
+  );
+  const skippedPages = derivedPageSkips(
+    db,
+    pages,
+    assessWalkEvidenceForDoctor(db, candidates),
+  );
   if (skippedPages.length > 0 || held > 0) degraded.push("index-degraded");
   if (pages.truncated) degraded.push("canon-walk-truncated");
   const search = readDerivedMeta(db, "search");
@@ -587,7 +985,7 @@ export function inspectServeDoctor(
   const pages: CanonPageReport =
     options.page_walk === false
       ? { pages: [], skipped: [], truncated: false, signatures: new Map(), scanned_files: 0, scanned_bytes: 0 }
-      : listCanonPagesReport(vaultPath);
+      : options.pages ?? listCanonPagesReport(vaultPath, undefined, undefined, { include_body: false, track_capacity: false });
   const quarantined = quarantineDoctor(db, now);
   const canon = options.page_walk === false ? null : canonCapacity(pages.pages, pages.truncated, loadCanonLimits(vaultPath), pages);
   const stores = storeDoctor(db, vaultPath, now, readEmbeddingReceipts(db, since, DOCTOR_RAIL_RECEIPTS), pages, embedding);
