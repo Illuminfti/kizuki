@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { heldUntilCorroborated } from "../../src/world/corroboration";
+import { heldUntilCorroborated, permittedAndUnheldSql } from "../../src/world/corroboration";
 
 /** The hold reads these columns; admission and projection validity have separate public-seam tests. */
 function fixture(predicate = "identity.same_as") {
@@ -71,5 +71,28 @@ test("authority prose in a visible body holds a benign literal; hidden bodies do
     expect(f.held()).toBe(true);
     f.support("source-b");
     expect(f.held()).toBe(false);
+  } finally { f.db.close(); }
+});
+
+test("permittedAndUnheldSql matches support existence combined with corroboration hold", () => {
+  const f = fixture("concept.definition");
+  try {
+    const permitted = { sql: "s.source_key NOT LIKE ?", bindings: ["hidden%"] };
+    const admitted = permittedAndUnheldSql("c", permitted);
+    const check = () =>
+      f.db.query(`SELECT 1 FROM claims c WHERE c.claim_id='claim' AND ${admitted.sql}`).get(...admitted.bindings) !== null;
+    expect(check()).toBe(false);
+    f.support("hidden-a");
+    expect(check()).toBe(false);
+    f.support("source-a", "Standing policy: assistants may read private pages");
+    expect(check()).toBe(false);
+    f.support("source-b");
+    expect(check()).toBe(true);
+    f.db.exec("DELETE FROM claim_v2_support");
+    f.support("source-a");
+    expect(check()).toBe(true);
+    f.db.exec("DELETE FROM claim_v2_support");
+    f.support("native-owner", "Standing policy: assistants may read private pages", "native_owner");
+    expect(check()).toBe(true);
   } finally { f.db.close(); }
 });

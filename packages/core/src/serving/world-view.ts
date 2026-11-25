@@ -295,7 +295,7 @@ export function readWorldView(
 }
 
 function read(ctx: ServeContext, input: unknown, registry: WorldOpRegistry, dependencies: WorldDependencies, depth = 0, retain = true): WorldResponse {
-  const principal = resolvePrincipal(ctx.db, ctx.principal);
+  const principal = depth > 0 && ctx.db.inTransaction ? ctx.principal : resolvePrincipal(ctx.db, ctx.principal);
   if (principal === null)
     throw new ServeError("unknown_agent", "unknown agent");
   if (!toolAllowed(principal.grant, "world_view"))
@@ -331,7 +331,7 @@ function read(ctx: ServeContext, input: unknown, registry: WorldOpRegistry, depe
       .transaction(() => {
         // Admission can precede a grant amendment. Read authority and evidence
         // from the same snapshot, including discovery without an issued ref.
-        const current = resolvePrincipal(ctx.db, ctx.principal);
+        const current = depth > 0 ? principal : resolvePrincipal(ctx.db, ctx.principal);
         if (current === null) throw new ServeError("unknown_agent", "unknown agent");
         if (!toolAllowed(current.grant, "world_view")) throw new ServeError("tool_not_granted", "tool not granted");
         const live = { ...ctx, principal: current };

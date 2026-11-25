@@ -7,6 +7,7 @@ import { identityReceiptCurrent } from "./identity-receipt";
 import type { ServeContext } from "../serving/types";
 import type { Database } from "bun:sqlite";
 import type { Eligible } from "./pipeline/eligible";
+import { heldClaimSql } from "./corroboration";
 import { authorizedClaimSql } from "./policy-sql";
 import { knownSupportSql, knownHeldSql, cutoffSequence, type KnownCutoff } from "./known/cutoff";
 import { issueWorldRef, type WorldNamespace } from "./references";
@@ -77,23 +78,29 @@ export function worldEvidenceCurrent(ctx: ServeContext, deps: WorldDependencies,
     ).get(basis);
     if (row === null || row.response_hash !== summary.responseHash || row.completed_at !== summary.completedAt || row.expires_at !== summary.expiresAt || row.expires_at <= new Date().toISOString()) return false;
   }
-  const legacy = claimReader(ctx.db, ctx.principal.grant, { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall" });
-  for (const [id, fingerprint] of deps.legacyClaims) {
-    const claim = getClaim(ctx.db, id);
-    if (claim === null || claim.status !== "live" || !legacy.canRead(claim) || claimPublicationFingerprint(claim) !== fingerprint) return false;
+  if (deps.legacyClaims.size > 0) {
+    const legacy = claimReader(ctx.db, ctx.principal.grant, { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall" });
+    for (const [id, fingerprint] of deps.legacyClaims) {
+      const claim = getClaim(ctx.db, id);
+      if (claim === null || claim.status !== "live" || !legacy.canRead(claim) || claimPublicationFingerprint(claim) !== fingerprint) return false;
+    }
   }
   for (const [claim, receipt] of deps.identityReceipts) if (!identityReceiptCurrent(ctx.db, claim, receipt, cutoff)) return false;
-  const permitted = knownSupportSql(ctx, cutoff);
-  const claim = authorizedClaimSql(ctx), held = knownHeldSql(ctx, "base", cutoff);
-  const retained = cutoff === undefined ? "base.status='live'" : `base.status<>'purged' AND EXISTS(SELECT 1 FROM claim_lifecycle_history kh WHERE kh.claim_id=base.claim_id AND kh.sequence<=${cutoffSequence(cutoff)})`;
-  const claims = ctx.db.query<{ n: number }, (string | number)[]>(`SELECT count(*) AS n FROM claims base WHERE base.claim_id IN (SELECT value FROM json_each(?))
-    AND ${retained} AND ${claim.sql} AND NOT ${held.sql}`)
-    .get(JSON.stringify([...deps.claims]), ...claim.bindings, ...held.bindings);
-  if (claims?.n !== deps.claims.size) return false;
+  const permitted = deps.claims.size > 0 || deps.supports.size > 0 ? knownSupportSql(ctx, cutoff) : null;
+  if (deps.claims.size > 0) {
+    const claim = authorizedClaimSql(ctx);
+    const held = cutoff === undefined ? heldClaimSql("base", permitted!) : knownHeldSql(ctx, "base", cutoff);
+    const retained = cutoff === undefined ? "base.status='live'" : `base.status<>'purged' AND EXISTS(SELECT 1 FROM claim_lifecycle_history kh WHERE kh.claim_id=base.claim_id AND kh.sequence<=${cutoffSequence(cutoff)})`;
+    const claims = ctx.db.query<{ n: number }, (string | number)[]>(`SELECT count(*) AS n FROM claims base WHERE base.claim_id IN (SELECT value FROM json_each(?))
+      AND ${retained} AND ${claim.sql} AND NOT ${held.sql}`)
+      .get(JSON.stringify([...deps.claims]), ...claim.bindings, ...held.bindings);
+    if (claims?.n !== deps.claims.size) return false;
+  }
+  if (deps.supports.size === 0) return true;
   const row = ctx.db.query<{ n: number }, (string | number)[]>(`
     SELECT count(*) AS n FROM claim_v2_support s
-    WHERE s.support_key IN (SELECT value FROM json_each(?)) AND ${permitted.sql}
-  `).get(JSON.stringify([...deps.supports]), ...permitted.bindings);
+    WHERE s.support_key IN (SELECT value FROM json_each(?)) AND ${permitted!.sql}
+  `).get(JSON.stringify([...deps.supports]), ...permitted!.bindings);
   return row?.n === deps.supports.size;
 }
 
