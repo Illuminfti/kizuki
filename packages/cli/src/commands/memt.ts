@@ -31,6 +31,7 @@ import {
 import { UsageError, parseArguments } from "../args";
 import { withReadVault } from "../context";
 import { clean, errorText, jsonEnvelope } from "../output";
+import { liveReadDaemon } from "./daemon-read";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 
 const TAINT_STATES = ["clean", "stale", "purged_invalidated"] as const;
@@ -418,22 +419,22 @@ export const memtCommand: Command = {
       const ceiling = parseSensitivityOption(parsed.options.get("--ceiling"), "private", "--ceiling");
       const limit = parsePositiveLimit(parsed.options.get("--limit"), 10, 50);
       const includeSynthesis = !parsed.flags.has("--no-synthesis");
+      const daemon = liveReadDaemon(io);
 
       return withReadVault(
-        io,
+        daemon === undefined ? io : { ...io, vaultOverride: daemon.vaultPath },
         async ctx => {
           const system2Hits: System2EvidenceHit[] = [];
           const searchDegraded: string[] = [];
           try {
-            const envelope = await serveSearch(
-              {
-                db: ctx.db,
-                vaultPath: ctx.vaultPath,
-                principal: OWNER,
+            const request = { query, scope: "all" as const, limit };
+            const envelope = daemon === undefined
+              ? await serveSearch({
+                db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER,
                 ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }),
-              },
-              { query, scope: "all", limit },
-            );
+                ...(ctx.retrievalUnavailable ? { retrievalUnavailable: ctx.retrievalUnavailable } : {}),
+              }, request)
+              : await daemon.search(request);
             for (const [index, chunk] of envelope.canon.entries()) {
               const sens = mapCoreSensitivity(chunk.sensitivity);
               if (!withinSensitivityCeiling(sens, ceiling)) continue;
@@ -465,10 +466,12 @@ export const memtCommand: Command = {
               });
             }
             searchDegraded.push(...(envelope.data?.degraded ?? []));
-          } catch {
+          } catch (error) {
+            if (daemon !== undefined) throw error;
             searchDegraded.push("system2-search-unavailable");
           }
 
+          ctx.assertCurrent();
           const config = loadMemtConfig(ctx.vaultPath, io.env);
           const hasRegistry = existsSync(config.registryPath);
           const gpuConfigured = config.enabled && config.url !== null;
@@ -516,6 +519,7 @@ export const memtCommand: Command = {
               limit,
               includeSynthesis,
             });
+            ctx.assertCurrent();
             const allDegraded = [...new Set([...searchDegraded, ...recalled.degraded])];
             const payload = {
               subcommand: "recall" as const,
@@ -551,7 +555,7 @@ export const memtCommand: Command = {
             await engine.close();
           }
         },
-        { retrieval: "optional" },
+        { audit: daemon === undefined, retrieval: daemon === undefined ? "optional" : "none" },
       );
     }
 

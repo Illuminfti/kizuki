@@ -162,6 +162,19 @@ afterAll(() => {
 });
 
 describe("kizuki memt CLI & doctor integration", () => {
+  test("recall without a daemon serves ledger evidence before a MemT registry exists", () => {
+    const setup = tempVault();
+    expect(runCli(setup.env, "import", "markdown-folder", "--source", setup.notes, ...fixtureConsent(setup.root)).exitCode).toBe(0);
+    const result = runCli(setup.env, "memt", "recall", "acme", "--json");
+    expect(result.exitCode, result.stderr).toBe(0);
+    const { data } = JSON.parse(result.stdout);
+    expect(data.degraded).not.toContain("system2-search-unavailable");
+    expect(data.items).toContainEqual(expect.objectContaining({
+      source: "system2", kind: "event", text: expect.stringContaining("acme library"),
+    }));
+    expect(existsSync(join(setup.vault, ".kizuki", "memt", "registry.sqlite"))).toBe(false);
+  });
+
   test("memt structured help matches its parser and doctor stays read-only on a clean vault", () => {
     const env = isolatedEnv();
     const help = runCli(env, "help", "memt", "--json");

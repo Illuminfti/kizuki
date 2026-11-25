@@ -1,8 +1,9 @@
 import { OWNER, ServeError, serveWorldView } from "@kizuki/core";
 import { WorldViewError, isWorldWireToken } from "@kizuki/core/world";
 import { UsageError, parseArguments } from "../args";
-import { withVault } from "../context";
+import { withReadVault, withVault } from "../context";
 import { jsonEnvelope } from "../output";
+import { liveReadDaemon } from "./daemon-read";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 import { WORLD_CLI_OPS } from "./world/ops";
 import type { WorldCliEntry } from "./world/ops";
@@ -48,41 +49,38 @@ export function createWorldCommand(entries: readonly WorldCliEntry[]): Command {
         if ((op.name !== "concept" && op.name !== "situation") || prior !== undefined) throw new UsageError(usage);
         input = { operation: "share", of: { operation: op.name, [op.name]: built[op.name] }, valid: built.valid, knownAt: built.knownAt };
       }
-      // Reference issuance is durable bookkeeping and needs the normal bound ledger writer.
-      return withVault(
-        io,
-        async (ctx) => {
-          try {
-            const envelope = serveWorldView({ db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER }, input);
-            const data = envelope.data;
-            if (parsed.flags.has("--json")) io.out(jsonEnvelope("world", "ok", envelope));
-            else if ("status" in data) io.out("not found");
-            else {
-              const { result } = data;
-              if (result.status === "unavailable") io.out(`World view unavailable: ${result.reason}.`);
-              else if (result.status === "new_view_required")
-                io.out(input.operation === "resume"
-                  ? "A new view is required: discover the object again or use a new resume handle."
-                  : "A new view is required: read again without --prior-view.");
-              else if (result.status === "unchanged")
-                io.out(`Unchanged since the prior view. It stays valid until ${result.validUntil}.`);
-              else {
-                const renderer = ops.find((candidate) => candidate.name === input.operation)!.cli;
-                for (const line of renderer.render(result.data, envelope.quoted)) io.out(line);
-                if ("validUntil" in result) io.out(`View: ${result.view.token} (valid until ${result.validUntil})`);
-                const notice = op.cli.notice?.(result.data);
-                if (notice) io.err(notice);
-              }
-            }
-          } catch (error) {
-            if (error instanceof WorldViewError || (error instanceof ServeError && error.code === "invalid_arguments"))
-              throw new UsageError(usage);
-            throw error;
+      const daemon = liveReadDaemon(io);
+      try {
+        // The writer issuing the view references lives with the process serving the view.
+        const envelope = daemon === undefined
+          ? await withVault(io, async ctx => serveWorldView({ db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER }, input), { retrieval: "none" })
+          : await withReadVault({ ...io, vaultOverride: daemon.vaultPath }, async () => daemon.world(input), { retrieval: "none" });
+        const data = envelope.data;
+        if (parsed.flags.has("--json")) io.out(jsonEnvelope("world", "ok", envelope));
+        else if ("status" in data) io.out("not found");
+        else {
+          const { result } = data;
+          if (result.status === "unavailable") io.out(`World view unavailable: ${result.reason}.`);
+          else if (result.status === "new_view_required")
+            io.out(input.operation === "resume"
+              ? "A new view is required: discover the object again or use a new resume handle."
+              : "A new view is required: read again without --prior-view.");
+          else if (result.status === "unchanged")
+            io.out(`Unchanged since the prior view. It stays valid until ${result.validUntil}.`);
+          else {
+            const renderer = ops.find((candidate) => candidate.name === input.operation)!.cli;
+            for (const line of renderer.render(result.data, envelope.quoted)) io.out(line);
+            if ("validUntil" in result) io.out(`View: ${result.view.token} (valid until ${result.validUntil})`);
+            const notice = op.cli.notice?.(result.data);
+            if (notice) io.err(notice);
           }
-          return 0;
-        },
-        { retrieval: "none" },
-      );
+        }
+      } catch (error) {
+        if (error instanceof WorldViewError || (error instanceof ServeError && error.code === "invalid_arguments"))
+          throw new UsageError(usage);
+        throw error;
+      }
+      return 0;
     },
   };
 }

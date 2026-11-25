@@ -46,6 +46,8 @@ export interface EmbeddedRetrievalOptions {
   readonly chunk_overlap?: number;
   readonly embedding_batch_size?: number;
   readonly holder_id?: string;
+  /** Daemon startup owns the lease immediately and observes hydration separately. */
+  readonly backgroundStartup?: (ready: Promise<void>) => void;
 }
 export class EmbeddedRetrievalPort implements RetrievalPort {
   static validateOwnedGeneration(ctx: PortContext): void { validateOwnedGeneration(ctx.vault_path, ctx.data_dir); }
@@ -53,6 +55,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
     return resolve(vaultPath) === resolve(this.ownedVaultPath) && resolve(this.ownedDataDir) === resolve(vaultPath, ".kizuki/retrieval", EMBEDDED_RETRIEVAL_DESCRIPTOR.id);
   }
   readonly descriptor: PortDescriptor;
+  private initialized = false;
   private closed = false;
   private readonly ownedDataDir: string;
   private readonly ownedVaultPath: string;
@@ -141,6 +144,10 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
       throw new PortError("unavailable", "retrieval port is closed", false);
     }
   }
+  private assertReadable(): void {
+    this.assertOpen();
+    if (!this.initialized) throw new PortError("unavailable", "retrieval engine is starting", true);
+  }
   private assertMutable(): void {
     this.assertOpen();
     if (this.rebuilding) {
@@ -155,6 +162,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
   async initialize(): Promise<void> {
     this.checkpoint = await this.store.meta("checkpoint") as EmbedCheckpoint | null;
     await this.syncEngineMetadata();
+    this.initialized = true;
   }
   private get textBudget(): number { return this.options.max_text_bytes ?? EMBEDDED_ENGINE_MAX_TEXT_BYTES; }
   private corpusLimit(resource: keyof CorpusSize): number {
@@ -225,7 +233,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
     return { processed: docs.length };
   }
   async search(query: RetrievalQuery): Promise<RetrievalResult> {
-    this.assertOpen();
+    this.assertReadable();
     const q = validateRetrievalQuery(query);
     const started = Date.now();
     const degraded: string[] = [];
@@ -364,7 +372,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
     return { checked: ids.length, found, store: this.descriptor.id, method: byProvenance ? "sql-event-provenance" : "sql-exact-documents", at: this.ctx.clock() };
   }
   async neighbors(entity: EntityRef, options: GraphQueryOptions): Promise<GraphResult> {
-    this.assertOpen();
+    this.assertReadable();
     if (!(options.ceiling in SENSITIVITY_ORDER) || !Number.isInteger(options.hops) || options.hops < 1 || options.hops > MAX_WALK_DEPTH || !Number.isInteger(options.limit) || options.limit < 1 || options.limit > 100) {
       throw new PortError("config_invalid", "graph query is invalid", false);
     }
@@ -378,6 +386,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
   }
   async health(): Promise<PortHealth> {
     this.assertOpen();
+    if (!this.initialized) return { status: "unavailable", reason: "retrieval engine is starting" };
     return this.store.run(async () => {
       if (await this.store.meta("migration_required") === true) {
         return { status: "unavailable", reason: "legacy retrieval requires authoritative rebuild" };
@@ -425,6 +434,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
       void this.closing.catch(() => {});
       return this.closing;
     }
+    this.assertReadable();
     validateOwnedGeneration(this.ownedVaultPath, this.ownedDataDir);
     const expectedStore = root.childIdentity("store");
     const releaseNative = this.lease.suspendForErasure();
@@ -922,10 +932,15 @@ export async function openEmbeddedRetrievalPort(ctx: PortContext, options: Embed
     const expected: EngineJson = { port: EMBEDDED_RETRIEVAL_DESCRIPTOR.id, contract: EMBEDDED_RETRIEVAL_DESCRIPTOR.contract, contract_minor: EMBEDDED_RETRIEVAL_DESCRIPTOR.contract_minor, space: null, created_at: ctx.clock(), rebuilt_at: null };
     const existing = existsSync(enginePath) ? JSON.parse(readFileSync(enginePath, "utf8")) as EngineJson : null;
     engineMismatch(existing, expected);
-    store = await SqlStore.open(ctx.data_dir);
-    if (await store.meta("created_at") === null) await store.setMeta("created_at", existing?.created_at ?? expected.created_at);
-    const port = new EmbeddedRetrievalPort(ctx, store, lease, receipt, options, ownedRoot);
-    await port.initialize();
+    const connected = await SqlStore.connect(ctx.data_dir, options.backgroundStartup !== undefined);
+    store = connected;
+    const port = new EmbeddedRetrievalPort(ctx, connected, lease, receipt, options, ownedRoot);
+    const ready = connected.initialize(ctx.data_dir, async () => {
+      if (await connected.meta("created_at") === null) await connected.setMeta("created_at", existing?.created_at ?? expected.created_at);
+      await port.initialize();
+    });
+    if (options.backgroundStartup) options.backgroundStartup(ready);
+    else await ready;
     return port;
   }
   catch (error) {

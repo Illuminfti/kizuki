@@ -74,7 +74,7 @@ export function openConfiguredEmbedding(vaultPath: string): Promise<EmbeddingPor
 export async function openConfiguredRetrieval(
   vaultPath: string,
   selected?: string,
-  options: { embedding?: EmbeddingPort } = {},
+  options: { embedding?: EmbeddingPort; backgroundStartup?: (ready: Promise<void>) => void } = {},
 ): Promise<RetrievalPort | undefined> {
   const configured = loadConfiguredRetrieval(vaultPath);
   const id = selected ?? configured.id;
@@ -85,10 +85,13 @@ export async function openConfiguredRetrieval(
   // caller brings its own.
   const embedding = options.embedding ?? (id === "kizuki.retrieval.embedded-pg" ? await openConfiguredEmbedding(vaultPath) : undefined);
   const owned = options.embedding === undefined;
-  if (embedding !== undefined) {
+  if (embedding !== undefined || options.backgroundStartup !== undefined) {
     registry.registerPort(
       EMBEDDED_RETRIEVAL_DESCRIPTOR,
-      (ctx) => createEmbeddedRetrievalPort(ctx, { embedding, own_embedding: owned }),
+      (ctx) => createEmbeddedRetrievalPort(ctx, {
+        ...(embedding === undefined ? {} : { embedding, own_embedding: owned }),
+        ...(options.backgroundStartup === undefined ? {} : { backgroundStartup: options.backgroundStartup }),
+      }),
     );
   } else {
     registerEmbeddedRetrieval(registry);
