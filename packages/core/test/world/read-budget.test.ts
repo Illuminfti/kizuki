@@ -40,15 +40,8 @@ test("one request shares its candidate limit across discovery, cards and compose
     const composed = collectReadFrames(() => serveWorldView(scene.reader, { operation: "atlas", panel: "stale", ...when }));
     expect(composed.frames.length).toBeGreaterThan(1);
     expect(composed.frames.reduce((n, frame) => n + frame.stats.claimsVerified, 0)).toBeLessThanOrEqual(129);
-    // Fixture handles sort randomly. When the oversized card is read first nothing was served and the
-    // request is over budget; otherwise the cards already read stay served and the cut is a stated gap.
-    const outcome = (composed.result.data as { result: { status: string; reason?: string } }).result;
-    if (outcome.status === "unavailable") {
-      expect(outcome).toEqual({ status: "unavailable", reason: "budget" });
-      expect(composed.result.quoted).toEqual([]);
-    } else expect(outcome).toMatchObject({ status: "incomplete", reasons: expect.arrayContaining(["traversal_limit"]),
-      data: { panels: [{ panel: "stale", status: "partial", reason: null }] } });
-    expect(JSON.stringify(composed.result)).not.toContain("Bounded example");
+    expect(composed.result.data).toMatchObject({ result: { status: "unavailable", reason: "budget" } });
+    expect(composed.result.quoted).toEqual([]);
     expect(composed.result.canon).toEqual([]);
   } finally { scene.dispose(); }
 }, 120_000);

@@ -58,8 +58,6 @@ export function compileAtlas(frame: WorldFrame, query: AtlasQuery, when: WorldWh
     if (data.matches.length > 4 || data.cursor !== null) gaps.add("traversal_limit");
     for (const match of data.matches.slice(0, 4)) {
       const card = body({ operation, [operation]: match.ref, ...(operation === "situation" ? { card: "kizuki.situation-card/v2" } : {}) });
-      // Cards already read stay served; the cut is stated as a traversal limit.
-      if (card.reason === "budget") { gaps.add("traversal_limit"); break; }
       card.coverage.gaps.forEach(gap => gaps.add(gap));
       if (card.reason) return panel(name, cov(when, [...gaps, "coverage"]), [], card.reason);
       if (!card.data) continue;

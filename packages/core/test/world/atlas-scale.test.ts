@@ -89,3 +89,31 @@ test("a multi-thousand-object vault serves the Atlas home browse panels and cons
     expect(home.panels.filter(panel => panel.reason === "budget")).toEqual([]);
   } finally { db.close(); }
 }, 600_000);
+
+test("a browse panel that spends the allowance before serving a card is unavailable for budget, never an empty partial", async () => {
+  const db = openLedger(":memory:");
+  try {
+    const small = await worldSeed(db, { kind: "person", subject: "person:n0", label: "Person 0", discover: false,
+      predicates: [{ predicate: "person.role", object: { kind: "literal", value: "Reviewer" } }] });
+    const ctx = small.ctx;
+    const people = () => serveWorldView(ctx, { operation: "atlas", panel: "people", ...when });
+    expect(atlas(people()).panels[0]).toMatchObject({ reason: null, entries: [{ title: "Person 0" }] });
+
+    // One card larger than the whole read allowance, beside the card that fits.
+    await worldSeed(db, { sourceKey: small.sourceKey, kind: "person", subject: "person:n1", label: "Person 1", discover: false,
+      predicates: Array.from({ length: 160 }, (_, i) => ({ predicate: "person.role", object: { kind: "literal" as const, value: `Synthetic role ${i}` } })) });
+    // Asked for alone, the panel has nothing but spent allowance: the request is over budget whichever card sorts first.
+    const alone = people();
+    expect(alone.data).toMatchObject({ result: { status: "unavailable", reason: "budget" } });
+    expect(alone.quoted).toEqual([]);
+    expect(JSON.stringify(alone)).not.toContain("Synthetic role");
+
+    // On home the same panel states its cause and the other panels still compose.
+    const home = atlas(serveWorldView(ctx, { operation: "atlas", panel: "home", ...when }));
+    const panel = home.panels.find(one => one.panel === "people")!;
+    expect(panel).toMatchObject({ status: "unavailable", reason: "budget", entries: [] });
+    expect(panel.coverage).toMatchObject({ status: "partial", gaps: expect.arrayContaining(["coverage"]) });
+    expect(home.panels.find(one => one.panel === "changed")).toMatchObject({ status: "unavailable", reason: "baseline_required" });
+    expect(JSON.stringify(home)).not.toContain("Synthetic role");
+  } finally { db.close(); }
+});

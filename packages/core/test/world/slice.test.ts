@@ -1,4 +1,4 @@
-import { expect, test, setDefaultTimeout } from "bun:test";
+import { expect, test } from "bun:test";
 import { serveWorldView } from "../../src/serving/world-view";
 import { packetTokens } from "../../src/serving/packet-tokenizer";
 import { verificationScene } from "../helpers/world-verification";
@@ -7,9 +7,6 @@ import { completeEmptyWorldSummaries, EMPTY_SUMMARY_MODEL } from "../helpers/wor
 import { addAgent, authenticate, OWNER_AGENT_GRANT } from "../../src/agents";
 import { revokeSourceGrant } from "../../src/ledger/source-grants";
 import { validateWorldSlice, type WorldSlice } from "../../src/contracts/world-slice";
-
-// Matches the repository gate (bun test --timeout 120000); two scenes here take about five seconds.
-setDefaultTimeout(120_000);
 
 const when = { valid: { kind: "all" }, knownAt: { kind: "current" } } as const;
 test("slice projects authorized evidence without quoted text and fits its whole world response", async () => {

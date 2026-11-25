@@ -1,4 +1,4 @@
-import { expect, test, setDefaultTimeout } from "bun:test";
+import { expect, test } from "bun:test";
 import { OWNER_AGENT_GRANT, addAgent, authenticate } from "../../src/agents";
 import type { ConceptCard } from "../../src/contracts/concept-card";
 import type { SituationCard } from "../../src/contracts/situation-card";
@@ -8,9 +8,6 @@ import { readWorldView } from "../../src/serving/world-view";
 import type { ServeContext } from "../../src/serving/types";
 import { collectReadFrames } from "../../src/world/pipeline/frame";
 import { cardFixture } from "./card-fixture";
-
-// Matches the repository gate (bun test --timeout 120000); both alias-bound scenes exceed five seconds on a loaded host.
-setDefaultTimeout(120_000);
 
 const FROM = "2026-02-01T00:00:00.000Z";
 const INSIDE = "2026-03-01T00:00:00.000Z";
