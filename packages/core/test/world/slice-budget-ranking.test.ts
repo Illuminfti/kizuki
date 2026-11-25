@@ -70,9 +70,10 @@ test("sliceItemRelevance scores visible terms and ignores redacted text", () => 
   const terms = queryTerms("the Harbor culvert drainage");
   expect(terms).toEqual(["harbor", "culvert", "drainage"]);
   const plain = createRedactor(OWNER, []);
-  expect(sliceItemRelevance(item, terms, plain, ["Harbor"])).toBe(3);
+  // Direct matches on the item's object/predicate score 2; inherited card-label matches score 1.
+  expect(sliceItemRelevance(item, terms, plain, ["Harbor"])).toBe(5);
   const redacted = createRedactor(OWNER, ["culvert", "Harbor"]);
-  expect(sliceItemRelevance(item, terms, redacted, ["Harbor"])).toBe(1);
+  expect(sliceItemRelevance(item, terms, redacted, ["Harbor"])).toBe(2);
 });
 
 test("recall ranks query-matching required relations first and reserves packet room for captures", async () => {

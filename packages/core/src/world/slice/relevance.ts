@@ -38,8 +38,8 @@ export function sliceItemRelevance(
   for (const label of labels) add(inherited, redactor.text(label));
   let score = 0;
   for (const term of terms) {
-    if (direct.has(term)) score += 4;
-    if (inherited.has(term)) score += 1;
+    if (direct.has(term)) score += 2;
+    else if (inherited.has(term)) score += 1;
   }
   return score;
 }
