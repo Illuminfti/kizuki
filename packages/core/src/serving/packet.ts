@@ -246,6 +246,20 @@ function sectionList(
 }
 
 /**
+ * In cl100k_base, a newline-terminated prefix followed by non-whitespace starts
+ * a fresh pre-tokenizer boundary so `tokens(base + addition) === baseTokens + tokens(addition)`.
+ * Falls back to full tokenization on any other boundary.
+ */
+function appendTokens(base: string, baseTokens: number, addition: string): number {
+  if (addition.length === 0) return baseTokens;
+  if (base.length === 0) return tokens(addition);
+  if (base.endsWith("\n") && !/^\s/.test(addition)) {
+    return baseTokens + tokens(addition);
+  }
+  return tokens(`${base}${addition}`);
+}
+
+/**
  * Cap a dense canon atom at the code-point/4 size the excerpt limit assumed,
  * then at the remaining legal budget, so the packer can keep later pieces
  * without skipping this one.
@@ -253,17 +267,17 @@ function sectionList(
 function boundOverflowingCanon(
   piece: Piece,
   soFar: string,
+  soFarTokens: number,
   prefix: string,
   budget: number,
   redactor: Redactor,
 ): Piece | null {
-  const fairLimit = Math.min(budget, tokens(soFar) + CANON_ATOM_FAIR_TOKENS);
+  const fairLimit = Math.min(budget, soFarTokens + CANON_ATOM_FAIR_TOKENS);
   const within = (limit: number) => (block: string) =>
-    tokens(`${soFar}${prefix}${block}`) <= limit;
-  return (
-    boundCanonAtom(piece, within(fairLimit), redactor) ??
-    boundCanonAtom(piece, within(budget), redactor)
-  );
+    appendTokens(soFar, soFarTokens, `${prefix}${block}`) <= limit;
+  const fair = boundCanonAtom(piece, within(fairLimit), redactor);
+  if (fair !== null || fairLimit >= budget) return fair;
+  return boundCanonAtom(piece, within(budget), redactor);
 }
 
 /**
@@ -543,6 +557,8 @@ async function servePacket(
       const skipped = new Set<SessionSection>();
       const stateRoom = Math.floor((budget - headerTokens) * SESSION_STATE_SHARE);
       let stateBody = "";
+      let stateTokens = 0;
+      let soFarTokens = headerTokens;
       let heading = "";
       let noted = false;
       let truncated = stateTruncated;
@@ -560,35 +576,48 @@ async function servePacket(
         const isState = (SESSION_SECTIONS as readonly string[]).includes(piece.section);
         const note = isState && piece.placeholder !== true && !noted ? SESSION_STATE_NOTE : "";
         const prefix = `${note}${piece.heading === heading ? "" : `${piece.heading}\n`}`;
+        const rendered = `${prefix}${piece.block}`;
+        if (soFarTokens >= budget && rendered.length > 0) {
+          if (isState && piece.placeholder === true) {
+            skipped.add(piece.section as SessionSection);
+          } else {
+            truncated = true;
+            if (isState) skipped.add(piece.section as SessionSection);
+          }
+          continue;
+        }
+        const soFar = body.length === 0 ? header : `${header}${body}`;
         if (isState && piece.placeholder === true) {
           // A placeholder is one compact line that says why a section is empty, so it
           // is not held to the state share: only the whole budget can drop it, and
           // then the section reports `budget` rather than a reason the reader never saw.
-          if (tokens(`${header}${body}${prefix}${piece.block}`) > budget) {
+          if (appendTokens(soFar, soFarTokens, rendered) > budget) {
             skipped.add(piece.section as SessionSection);
             continue;
           }
-        } else if (isState && !v2 && tokens(`${stateBody}${prefix}${piece.block}`) > stateRoom) {
+        } else if (isState && !v2 && appendTokens(stateBody, stateTokens, rendered) > stateRoom) {
           // The session sections yield to canon and capture instead of ending the packet.
           truncated = true;
           skipped.add(piece.section as SessionSection);
           continue;
         }
         let chosen = piece;
-        const rendered = `${prefix}${chosen.block}`;
-        const candidateTokens = tokens(`${header}${body}${rendered}`);
+        let chosenRendered = rendered;
+        let chosenTokens = appendTokens(soFar, soFarTokens, rendered);
         // A canon atom may shrink its excerpt (and title projection) to fit.
         // An oversized piece yields to later units that can still fit.
-        if (candidateTokens > budget) {
+        if (chosenTokens > budget) {
           truncated = true;
           if (chosen.canon === undefined) {
             continue;
           }
-          const bounded = boundOverflowingCanon(chosen, `${header}${body}`, prefix, budget, redactor);
+          const bounded = boundOverflowingCanon(chosen, soFar, soFarTokens, prefix, budget, redactor);
           if (bounded === null) {
             continue;
           }
           chosen = bounded;
+          chosenRendered = `${prefix}${chosen.block}`;
+          chosenTokens = appendTokens(soFar, soFarTokens, chosenRendered);
         }
         const freshAudit = (chosen.audit ?? []).filter((item) => !audit.has(item.id));
         const chunkCount = Number(chosen.canon !== undefined) + Number(chosen.quoted !== undefined);
@@ -598,10 +627,13 @@ async function servePacket(
           truncated = true;
           continue;
         }
+        const prevBody = body;
         body = redactor.join([body, prefix, chosen.block]);
+        soFarTokens = body === `${prevBody}${chosenRendered}` ? chosenTokens : tokens(`${header}${body}`);
         heading = chosen.heading;
         if (isState) {
-          stateBody += `${prefix}${chosen.block}`;
+          stateTokens = appendTokens(stateBody, stateTokens, chosenRendered);
+          stateBody += chosenRendered;
           if (chosen.placeholder !== true) noted = true;
           if (chosen.placeholder !== true) served[chosen.section as SessionSection] += 1;
         } else {
@@ -641,15 +673,21 @@ async function servePacket(
       if (epoch === undefined) {
         // Keep the longer warning reserved until all packing is final. A text-only
         // consumer must not interpret dropped optional context as complete coverage.
+        let headerReplaced = false;
         if (degraded.length === 0 && !truncated && task?.status !== "incomplete" && task?.status !== "unavailable") {
           header = header.replace(incompleteNotice, "coverage=complete_for_query\n");
+          headerReplaced = true;
         }
         const packetMd = redactor.join([header, body]);
+        const packetTokenCount =
+          !headerReplaced && taskArgs === undefined && packetMd === `${header}${body}`
+            ? soFarTokens
+            : tokens(packetMd);
         const content: PacketContentV2 = {
           packetMd,
           servedUnits: Object.values(sections).reduce((total, count) => total + count, 0) +
             Object.values(served).reduce((total, count) => total + count, 0) + taskUnits,
-          tokens: tokens(packetMd),
+          tokens: packetTokenCount,
           budgetTokens: budget,
           tokenizer: PACKET_TOKENIZER_ID,
           purpose,
@@ -704,6 +742,10 @@ async function servePacket(
         status === "current" &&
         tokens(`${header}UNCHANGED\n`) <= budget;
       const packet = redactor.join([header, unchanged ? "UNCHANGED\n" : body]);
+      const finalTokens =
+        !unchanged && taskArgs === undefined && packet === `${header}${body}`
+          ? soFarTokens
+          : tokens(packet);
 
       return {
         canon: unchanged ? [] : canon,
@@ -716,7 +758,7 @@ async function servePacket(
         data: {
           packet_md: packet,
           retrieval_degraded: degraded,
-          tokens_estimate: tokens(packet),
+          tokens_estimate: finalTokens,
           budget_tokens: budget,
           sections: unchanged ? emptySections : sections,
           ...(session === undefined || unchanged ? {} : { session }),

@@ -2,7 +2,9 @@ import { selectedPage } from "../query/selection";
 import { boundScrubText } from "../producer/scrub";
 import { resolve } from "node:path";
 import type { Database } from "bun:sqlite";
-import { sourceEventsAllowed, sourceSensitivity, sourceServingSql, type SourceGrantLookup } from "../ledger/source-grants";
+import { inspectSourceGrant, sourceEventsAllowed, sourceSensitivity, sourceServingSql, type SourceGrant, type SourceGrantLookup } from "../ledger/source-grants";
+import { readLiveEvent } from "../ledger/ledger";
+import { CanonAuthorityResolver, canonAuthorities } from "../canon/authority";
 import { classesOfEvents } from "../ledger/event-classes";
 import { classesOfPage } from "../canon/page-classes";
 import { compareRfc3339 } from "../agents/time";
@@ -12,7 +14,6 @@ import { ceilingSql, requireCeiling, instantPairSql, instantBoundPair } from "..
 import { authorize, sensitivity, denyClassesOf } from "../agents";
 import type { DenyReason, Grant, Sensitivity, Servable } from "../agents";
 import type { AuthorityTier } from "../contracts/proposal";
-import { canonAuthorities } from "../canon/authority";
 import { getWorldCanonReceipt } from "../canon/receipts";
 import { purgeDiscoveryPending } from "../derived-holds";
 import { eventIdFromReference } from "../retrieval/ids";
@@ -30,6 +31,9 @@ import type { CanonPage, SkippedPage } from "../vault/pages";
 import { assessLivePageEvidence, type LivePageEvidence, type PageEvidenceReader } from "../vault/provenance";
 import { PAGE_TAINTS } from "../vault/schema";
 import type { PageTaint } from "../vault/schema";
+import { purgeReadEpoch } from "../derived-holds";
+import { sourcePolicyEpoch } from "../ledger/source-grants";
+import { claimsEpoch } from "./epoch";
 import { redactorOf } from "./redact";
 import { ServeError } from "./types";
 import type { CanonChunk, ServeContext } from "./types";
@@ -103,7 +107,9 @@ const MAX_MEMO_PAGES = 16_384;
 const MAX_MEMO_BODY_BYTES = 32 * 1024 * 1024;
 const MAX_SINGLE_CACHED_BODY_BYTES = 131_072;
 const MEMO_IDLE_TTL_MS = 120_000;
+const MAX_OWNER_DECISION_CACHE = 512;
 const memos = new Map<string, VaultMemo>();
+const ownerDecisionCache = new Map<string, ReturnType<typeof pageSnapshotDecision>>();
 const servingCacheTrimmers: (() => void)[] = [];
 let memoIdleTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -116,6 +122,7 @@ function scheduleMemoIdleTrim(): void {
   memoIdleTimer = setTimeout(() => {
     memoIdleTimer = null;
     memos.clear();
+    ownerDecisionCache.clear();
     for (const trimmer of servingCacheTrimmers) trimmer();
   }, MEMO_IDLE_TTL_MS);
   memoIdleTimer.unref?.();
@@ -127,6 +134,7 @@ export function trimServingCaches(): void {
     memoIdleTimer = null;
   }
   memos.clear();
+  ownerDecisionCache.clear();
   for (const trimmer of servingCacheTrimmers) trimmer();
 }
 
@@ -427,9 +435,208 @@ function sourceSpan(db: Database, ids: readonly string[]): { from: string; to: s
 }
 
 /** Internal phase readers; omitted for every final publication/writer check. */
-interface CanonReadAccess {
+export interface CanonReadAccess {
   evidence: PageEvidenceReader;
   grantOf: SourceGrantLookup;
+  /** Optional owner-only DB stamp memoized for one synchronous call. */
+  ownerStamp?: () => string | null;
+  /** Opt in to the owner-only cross-call page-decision cache (never set by CanonAccessPhase). */
+  allowOwnerDecisionCache?: boolean;
+}
+
+/**
+ * Synchronous single-call read acceleration: shares one authority resolver,
+ * live-event check cache, and source-grant lookup across pages without global
+ * DB counter queries. Must never outlive a synchronous call phase.
+ */
+export function createPageReadAccess(
+  index: CanonIndex,
+  grant: Grant,
+  grantOf?: SourceGrantLookup,
+): CanonReadAccess {
+  const ctx = index.sourceContext;
+  const db = ctx.db;
+  let resolver: CanonAuthorityResolver | undefined;
+  let resolverPaths: Set<string> | undefined;
+  let cachedOwnerStamp: string | null | undefined;
+  const liveEvents = new Map<string, boolean>();
+  const sourceGrants = new Map<string, SourceGrant | null>();
+  const lookupGrant: SourceGrantLookup = grantOf ?? ((sourceKey: string): SourceGrant | null => {
+    if (sourceGrants.has(sourceKey)) return sourceGrants.get(sourceKey)!;
+    const loaded = inspectSourceGrant(db, sourceKey);
+    sourceGrants.set(sourceKey, loaded);
+    return loaded;
+  });
+  const liveExternalEvent = (id: string): boolean => {
+    const cached = liveEvents.get(id);
+    if (cached !== undefined) return cached;
+    const ok = readLiveEvent(db, id)?.origin === "external";
+    if (liveEvents.size < 65_536) liveEvents.set(id, ok);
+    return ok;
+  };
+  return {
+    grantOf: lookupGrant,
+    allowOwnerDecisionCache: true,
+    ownerStamp() {
+      if (ctx.principal.kind !== "owner") return null;
+      if (cachedOwnerStamp === undefined) cachedOwnerStamp = ownerPageDecisionStamp(db);
+      return cachedOwnerStamp;
+    },
+    evidence(page, context, historical) {
+      if (resolver === undefined) {
+        const eligiblePaths = index.pages
+          .filter((candidate) => !index.deniedPaths.has(candidate.relPath) && eligible(candidate) && authorize(grant, pageScope(ctx, candidate, grant)).allow)
+          .map((candidate) => candidate.relPath);
+        resolver = new CanonAuthorityResolver(db, eligiblePaths);
+        resolverPaths = new Set(eligiblePaths);
+      }
+      return assessLivePageEvidence(
+        db,
+        page,
+        resolverPaths!.has(page.relPath) ? resolver : undefined,
+        context,
+        historical,
+        liveExternalEvent,
+      );
+    },
+  };
+}
+
+/** Owner-only cache of table presence for page-decision DB stamping. */
+const ownerPageStampTableCache = new WeakMap<Database, { schema: number; sql: string | null }>();
+
+/**
+ * Owner-only comprehensive DB stamp covering all tables read by page/evidence
+ * authorization (including typed world-canon support), while ignoring
+ * `agent_audit` writes. Never used for scoped agents.
+ */
+function ownerPageDecisionStamp(db: Database): string | null {
+  if (db.inTransaction) return null;
+  const ver = db.query<{ data_version: number; schema_version: number }, []>(
+    "SELECT (SELECT data_version FROM pragma_data_version) AS data_version, (SELECT schema_version FROM pragma_schema_version) AS schema_version",
+  ).get();
+  const schema = ver?.schema_version ?? -1;
+  let cached = ownerPageStampTableCache.get(db);
+  if (cached === undefined || cached.schema !== schema) {
+    const parts: string[] = [];
+    if (tableExists(db, "events")) {
+      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) || ':' || COALESCE(SUM(deleted = 1), 0) || ':' || COALESCE(SUM(origin <> 'external'), 0) || ':' || COALESCE(SUM(sensitivity_hint = 'private'), 0) || ':' || COALESCE(SUM(sensitivity_hint = 'personal'), 0) || ':' || COALESCE(SUM(sensitivity_hint IS NULL OR sensitivity_hint NOT IN ('public', 'personal', 'private')), 0) FROM events) AS ev_agg");
+    }
+    if (tableExists(db, "canon_receipts")) {
+      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) || ':' || COALESCE(SUM(reverted_by IS NOT NULL), 0) FROM canon_receipts) AS cr_agg");
+    }
+    if (tableExists(db, "canon_source_survivor_lineage")) {
+      parts.push("(SELECT COUNT(*) FROM canon_source_survivor_lineage) AS sl_cnt");
+    }
+    if (tableExists(db, "canon_holds")) {
+      parts.push("(SELECT COUNT(*) FROM canon_holds) AS ch_cnt");
+    }
+    if (tableExists(db, "canon_write_intents")) {
+      parts.push("(SELECT COUNT(*) FROM canon_write_intents) AS cwi_cnt");
+    }
+    if (tableExists(db, "canon_projection_obligations")) {
+      parts.push("(SELECT COUNT(*) FROM canon_projection_obligations) AS cpo_cnt");
+    }
+    if (tableExists(db, "purge_batches")) {
+      parts.push("(SELECT COUNT(*) FROM purge_batches WHERE state <> 'ready') AS pb_cnt");
+    }
+    if (tableExists(db, "event_purges")) {
+      parts.push("(SELECT COUNT(*) FROM event_purges) AS ep_cnt");
+    }
+    if (tableExists(db, "event_classes")) {
+      parts.push("(SELECT COUNT(*) FROM event_classes) AS ec_cnt");
+    }
+    if (tableExists(db, "canon_page_classes")) {
+      parts.push("(SELECT COUNT(*) FROM canon_page_classes) AS cpc_cnt");
+    }
+    if (tableExists(db, "source_grants")) {
+      parts.push("(SELECT COALESCE(group_concat(source_key || ':' || revision || ':' || status || ':' || length(policy)), '') FROM source_grants) AS sg_agg");
+    }
+    if (tableExists(db, "source_store_inventory")) {
+      parts.push("(SELECT COALESCE(group_concat(source_key || ':' || COALESCE(erasure_report, '') || ':' || payload_complete), '') FROM source_store_inventory) AS ssi_agg");
+    }
+    if (tableExists(db, "source_event_bindings")) {
+      parts.push("(SELECT COUNT(*) FROM source_event_bindings) AS seb_cnt");
+    }
+    if (tableExists(db, "claims")) {
+      parts.push("(SELECT COUNT(*) || ':' || COALESCE(SUM(status = 'live'), 0) FROM claims) AS cl_agg");
+    }
+    if (tableExists(db, "claim_v2_support")) {
+      parts.push("(SELECT COUNT(*) || ':' || COALESCE(SUM(length(admission)), 0) FROM claim_v2_support) AS c2s_agg");
+    }
+    if (tableExists(db, "claim_v2_support_events")) {
+      parts.push("(SELECT COUNT(*) FROM claim_v2_support_events) AS c2se_cnt");
+    }
+    if (tableExists(db, "claim_v2_semantics")) {
+      parts.push("(SELECT COUNT(*) FROM claim_v2_semantics) AS c2m_cnt");
+    }
+    if (tableExists(db, "semantic_bindings")) {
+      parts.push("(SELECT COUNT(*) FROM semantic_bindings) AS sb_cnt");
+    }
+    if (tableExists(db, "semantic_allocations")) {
+      parts.push("(SELECT COUNT(*) FROM semantic_allocations) AS sa_cnt");
+    }
+    cached = { schema, sql: parts.length === 0 ? null : `SELECT ${parts.join(", ")}` };
+    ownerPageStampTableCache.set(db, cached);
+  }
+  const counts = cached.sql === null
+    ? ""
+    : Object.values(db.query<Record<string, number | string>, []>(cached.sql).get() ?? {}).join(":");
+  return `${ver?.data_version ?? 0}:${schema}:${canonReadGeneration(db)}:${sourcePolicyEpoch(db)}:${purgeReadEpoch(db)}:${claimsEpoch(db)}:${counts}`;
+}
+
+function ownerDecisionCacheKey(
+  sourceCtx: ServeContext,
+  grant: Grant,
+  page: CanonPage,
+  read?: CanonReadAccess,
+): string | null {
+  if (
+    read?.allowOwnerDecisionCache !== true ||
+    sourceCtx.principal.kind !== "owner" ||
+    sourceCtx.selection !== undefined ||
+    sourceCtx.db.inTransaction ||
+    denyClassesOf(grant).length > 0
+  ) {
+    return null;
+  }
+  const stamp = read?.ownerStamp !== undefined ? read.ownerStamp() : ownerPageDecisionStamp(sourceCtx.db);
+  if (stamp === null) return null;
+  return JSON.stringify([
+    resolve(sourceCtx.vaultPath),
+    stamp,
+    sourceCtx.sourcePurpose ?? "recall",
+    grant.ceiling,
+    grant.types,
+    grant.subjects,
+    grant.since,
+    grant.until,
+    denyClassesOf(grant),
+    grant.relay_owner_corrections,
+    page.relPath,
+    page.id,
+    page.contentHash,
+    page.data["status"] ?? null,
+    page.data["sensitivity"] ?? null,
+    page.data["taint"] ?? null,
+    page.data["type"] ?? null,
+    page.data["subjects"] ?? null,
+    page.data["sources"] ?? null,
+  ]);
+}
+
+function cloneDecision(decision: ReturnType<typeof pageSnapshotDecision>): ReturnType<typeof pageSnapshotDecision> {
+  if (!decision.allow) return { allow: false, reason: decision.reason };
+  return {
+    allow: true,
+    sensitivity: decision.sensitivity,
+    taint: decision.taint,
+    evidence: {
+      admitted: true,
+      sourceIds: [...decision.evidence.sourceIds],
+      revision: { ...decision.evidence.revision },
+    },
+  };
 }
 
 export function pageDecision(
@@ -453,24 +660,38 @@ export function pageSnapshotDecision(
 ):
   | { allow: true; sensitivity: Sensitivity; taint: PageTaint; evidence: Extract<LivePageEvidence, { admitted: true }> }
   | { allow: false; reason: DenyReason } {
+  const cacheKey = historicalSnapshot ? null : ownerDecisionCacheKey(sourceCtx, grant, page, read);
+  if (cacheKey !== null) {
+    const cached = ownerDecisionCache.get(cacheKey);
+    if (cached !== undefined) return cloneDecision(cached);
+  }
   // Both labels are read first so the served chunk carries narrowed types
   // instead of casts. A page missing either is withheld from everyone, the
   // owner included: an unstamped page may be verbatim capture, and serving
   // it as canon would hand a reader capture dressed as produced prose.
+  const store = (result: ReturnType<typeof pageSnapshotDecision>): ReturnType<typeof pageSnapshotDecision> => {
+    if (cacheKey !== null) {
+      if (ownerDecisionCache.size >= MAX_OWNER_DECISION_CACHE) {
+        ownerDecisionCache.delete(ownerDecisionCache.keys().next().value!);
+      }
+      ownerDecisionCache.set(cacheKey, cloneDecision(result));
+    }
+    return result;
+  };
   const scope = authorize(grant, pageScope(sourceCtx, page, grant));
-  if (!scope.allow) return scope;
-  if (canonReadHeld(sourceCtx, page)) return { allow: false, reason: "held" };
+  if (!scope.allow) return store(scope);
+  if (canonReadHeld(sourceCtx, page)) return store({ allow: false, reason: "held" });
   const context = {...sourceCtx,principal:{...sourceCtx.principal,grant}};
   const evidence = read === undefined
     ? assessLivePageEvidence(sourceCtx.db, page, undefined, context, historicalSnapshot)
     : read.evidence(page, context, historicalSnapshot);
-  if (!evidence.admitted) return { allow: false, reason: "held" };
-  if (!sourceEventsAllowed(sourceCtx.db, evidence.sourceIds, { owner: sourceCtx.principal.kind === "owner", purpose: sourceCtx.sourcePurpose ?? "recall", ...(read === undefined ? {} : { grantOf: read.grantOf }) })) return { allow: false, reason: "held" };
+  if (!evidence.admitted) return store({ allow: false, reason: "held" });
+  if (!sourceEventsAllowed(sourceCtx.db, evidence.sourceIds, { owner: sourceCtx.principal.kind === "owner", purpose: sourceCtx.sourcePurpose ?? "recall", ...(read === undefined ? {} : { grantOf: read.grantOf }) })) return store({ allow: false, reason: "held" });
   const original = sensitivity(page.data["sensitivity"]);
   const label = original === null ? null : sourceSensitivity(sourceCtx.db, evidence.sourceIds, original, read?.grantOf);
-  if (label === null) return { allow: false, reason: "missing_sensitivity" };
+  if (label === null) return store({ allow: false, reason: "missing_sensitivity" });
   const recordedTaint = asTaint(page.data["taint"]);
-  if (recordedTaint === null) return { allow: false, reason: "missing_taint" };
+  if (recordedTaint === null) return store({ allow: false, reason: "missing_taint" });
   // Earlier typed model pages may have a receipted clean stamp. Tighten their
   // served trust class without rewriting the immutable receipt or page image.
   const receipt = evidence.revision.authority === "model_inference"
@@ -481,29 +702,38 @@ export function pageSnapshotDecision(
     ...scopeForSources(sourceCtx, page, evidence.sourceIds, grant),
     sensitivity: label,
   });
-  return decision.allow
-    ? { allow: true, sensitivity: label, taint, evidence }
-    : { allow: false, reason: decision.reason };
+  return store(
+    decision.allow
+      ? { allow: true, sensitivity: label, taint, evidence }
+      : { allow: false, reason: decision.reason },
+  );
 }
 
 export function canonChunk(
   index: CanonIndex,
   page: CanonPage,
-  decision: { sensitivity: Sensitivity; taint: PageTaint },
+  decision: { sensitivity: Sensitivity; taint: PageTaint; evidence?: Extract<LivePageEvidence, { admitted: true }> },
   excerpt: string,
   truncated: boolean,
+  preverified = false,
 ): CanonChunk {
-  assertCanonReadAdmission(index.sourceContext, page);
-  if (index.generation !== canonReadGeneration(index.sourceContext.db)) throw new ServeError("held", "canon changed during request; retry");
-  const evidence = assessLivePageEvidence(index.sourceContext.db, page, undefined, index.sourceContext);
-  if (!evidence.admitted || !sourceEventsAllowed(index.sourceContext.db, evidence.sourceIds, {
-    owner: index.sourceContext.principal.kind === "owner",
-    purpose: index.sourceContext.sourcePurpose ?? "recall",
-  })) throw new ServeError("held", "canon evidence unavailable");
+  let evidence: LivePageEvidence;
+  if (preverified && decision.evidence !== undefined) {
+    evidence = decision.evidence;
+  } else {
+    assertCanonReadAdmission(index.sourceContext, page);
+    if (index.generation !== canonReadGeneration(index.sourceContext.db)) throw new ServeError("held", "canon changed during request; retry");
+    evidence = assessLivePageEvidence(index.sourceContext.db, page, undefined, index.sourceContext);
+    if (!evidence.admitted || !sourceEventsAllowed(index.sourceContext.db, evidence.sourceIds, {
+      owner: index.sourceContext.principal.kind === "owner",
+      purpose: index.sourceContext.sourcePurpose ?? "recall",
+    })) throw new ServeError("held", "canon evidence unavailable");
+  }
+  const redactor = redactorOf(index.sourceContext);
   return {
-    page_id: redactorOf(index.sourceContext).text(page.id),
-    path: redactorOf(index.sourceContext).text(page.relPath),
-    title: redactorOf(index.sourceContext).text(stringField(page, "title") ?? ""),
+    page_id: redactor.text(page.id),
+    path: redactor.text(page.relPath),
+    title: redactor.text(stringField(page, "title") ?? ""),
     type: stringField(page, "type") ?? "",
     sensitivity: decision.sensitivity,
     taint: decision.taint,

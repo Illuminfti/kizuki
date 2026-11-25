@@ -9,12 +9,13 @@ import type { AuditDenial, Grant } from "../agents";
 import { neighbors, neighborsForServing, wikilinks } from "../graph/graph";
 import type { GraphEdge, GraphEdgeKind } from "../graph/graph";
 import { enumOf, identifier } from "./arguments";
-import { eligible, loadCanon, pageDecision, pageScope } from "./canon";
-import type { CanonIndex } from "./canon";
+import { createPageReadAccess, eligible, loadCanon, pageDecision, pageScope } from "./canon";
+import type { CanonIndex, CanonReadAccess } from "./canon";
 import { auditArguments, gateAsync } from "./gate";
 import type { Served } from "./gate";
-import { eventDecision, readServableEvents } from "./ledger";
-import type { ServableEvent } from "./ledger";
+import { authorizeEventsBatch, createSourceGrantLookup, eventDecision, readServableEvents } from "./ledger";
+import type { EventDecisionResult, ServableEvent } from "./ledger";
+import type { SourceGrantLookup } from "../ledger/source-grants";
 import { retrievalGraphEdges } from "./retrieval";
 import { graphServingScope, requiresClassScopedGraph } from "./graph-scope";
 import { ServeError } from "./types";
@@ -88,13 +89,16 @@ function classifyGraph(
   collect: boolean,
   decisions: Map<string, PageDecision>,
   allowUnresolvedWikilink: boolean,
+  readAccess?: CanonReadAccess,
+  grantOf?: SourceGrantLookup,
+  eventDecisions?: Map<string, EventDecisionResult>,
 ): { kept: GraphEdge[]; withheld: AuditDenial[] } {
   const kept: GraphEdge[] = [];
   const withheld: AuditDenial[] = [];
   const decisionFor = (page: CanonIndex["pages"][number]): PageDecision => {
     const cached = decisions.get(page.id);
     if (cached !== undefined) return cached;
-    const resolved = pageDecision(index, grant, page);
+    const resolved = pageDecision(index, grant, page, readAccess);
     decisions.set(page.id, resolved);
     return resolved;
   };
@@ -141,7 +145,9 @@ function classifyGraph(
       case "source": {
         const event = facts.get(edge.dst);
         if (event === undefined) continue;
-        const eventAccess = eventDecision(grant, event, index.sourceContext);
+        const eventAccess =
+          eventDecisions?.get(event.event_id) ??
+          eventDecision(grant, event, index.sourceContext, grantOf);
         if (!eventAccess.allow) {
           withheld.push({ id: event.event_id, reason: eventAccess.reason });
           continue;
@@ -187,6 +193,9 @@ export async function serveGraph<C extends ResponseContract = typeof ENVELOPE_SC
           : { ok: false as const, edges: [], truncated: false, degraded: [] };
       // Re-read current canon only after the engine finishes.
       const index = loadCanon(ctx);
+      const grantOf = createSourceGrantLookup(ctx.db);
+      const readAccess = createPageReadAccess(index, grant, grantOf);
+      const decisions = new Map<string, PageDecision>();
       const root = index.byId.get(id);
       if (root !== undefined) {
         if (!eligible(root)) {
@@ -197,7 +206,8 @@ export async function serveGraph<C extends ResponseContract = typeof ENVELOPE_SC
             data: { ...(normalized.anchor === undefined ? {} : { anchor: normalized.anchor }), id, edges: [], truncated: false },
           };
         }
-        const decision = pageDecision(index, grant, root);
+        const decision = pageDecision(index, grant, root, readAccess);
+        decisions.set(root.id, decision);
         if (!decision.allow) {
           return {
             canon: [],
@@ -215,18 +225,24 @@ export async function serveGraph<C extends ResponseContract = typeof ENVELOPE_SC
         limit: MAX_EDGES,
         ...(kinds === undefined ? {} : { kinds }),
       };
-      const authorizedDecisions = new Map<string, PageDecision>();
+      const authorizedDecisions = new Map<string, PageDecision>(decisions);
       const authorizedDenials: AuditDenial[] = [];
       const accept = (edge: GraphEdge): boolean => {
         const facts = readServableEvents(ctx.db, edge.kind === "source" ? [edge.dst] : []);
-        const classified = classifyGraph([edge], index, grant, facts, new Set(), true, authorizedDecisions, true);
+        const classified = classifyGraph([edge], index, grant, facts, new Set(), true, authorizedDecisions, true, readAccess, grantOf);
         const allow = classified.kept.length > 0;
         if (authorizedDenials.length < MAX_EDGES) authorizedDenials.push(...classified.withheld);
         return allow;
       };
       let scopedTruncated = false;
       const scopedFloor = () => {
-        const result = neighborsForServing(ctx.db, id, { ...query, ceiling: grant.ceiling, filter: accept }, graphServingScope(index, grant));
+        const result = neighborsForServing(ctx.db, id, { ...query, ceiling: grant.ceiling, filter: accept }, graphServingScope(index, grant, page => {
+          const cached = authorizedDecisions.get(page.id);
+          if (cached !== undefined) return cached;
+          const resolved = pageDecision(index, grant, page, readAccess);
+          authorizedDecisions.set(page.id, resolved);
+          return resolved;
+        }));
         scopedTruncated ||= result.truncated;
         return result;
       };
@@ -248,14 +264,21 @@ export async function serveGraph<C extends ResponseContract = typeof ENVELOPE_SC
           : neighbors(ctx.db, id, query).edges.filter(
               (edge) => !foundKeys.has(edgeKey(edge)),
             );
-      const facts = readServableEvents(
-        ctx.db,
-        [...found.edges, ...auditEdges]
-          .filter((edge) => edge.kind === "source")
-          .map((edge) => edge.dst),
-      );
+      const sourceEdgeIds = [...found.edges, ...auditEdges]
+        .filter((edge) => edge.kind === "source")
+        .map((edge) => edge.dst);
+      const facts = readServableEvents(ctx.db, sourceEdgeIds);
+      const uniqueEvents: ServableEvent[] = [];
+      const seenEventIds = new Set<string>();
+      for (const dst of sourceEdgeIds) {
+        const ev = facts.get(dst);
+        if (ev !== undefined && !seenEventIds.has(ev.event_id)) {
+          seenEventIds.add(ev.event_id);
+          uniqueEvents.push(ev);
+        }
+      }
+      const eventDecisions = authorizeEventsBatch(index.sourceContext, grant, uniqueEvents, grantOf);
       const seen = new Set<string>();
-      const decisions = new Map<string, PageDecision>();
       const served = classifyGraph(
         found.edges,
         index,
@@ -265,14 +288,16 @@ export async function serveGraph<C extends ResponseContract = typeof ENVELOPE_SC
         true,
         decisions,
         !walked.ok,
+        readAccess,
+        grantOf,
+        eventDecisions,
       );
       // Supplement every agent traversal, independently of the provider's raw
       // overflow flag. Only the scoped floor can prove authorized overflow.
       if (walked.ok && ctx.principal.kind !== "owner") {
         const floor = scopedFloor();
-        const extra = classifyGraph(floor.edges, index, grant,
-          readServableEvents(ctx.db, floor.edges.filter(edge => edge.kind === "source").map(edge => edge.dst)),
-          seen, true, decisions, true);
+        const extraFacts = readServableEvents(ctx.db, floor.edges.filter(edge => edge.kind === "source").map(edge => edge.dst));
+        const extra = classifyGraph(floor.edges, index, grant, extraFacts, seen, true, decisions, true, readAccess, grantOf);
         served.kept.push(...extra.kept);
         served.withheld.push(...extra.withheld);
       }
@@ -285,19 +310,26 @@ export async function serveGraph<C extends ResponseContract = typeof ENVELOPE_SC
         false,
         decisions,
         !walked.ok,
+        readAccess,
+        grantOf,
+        eventDecisions,
       );
 
       // Empty replies can still omit authorized subject, source or prose links.
-      // Select the root's permitted corpus before reconstructing its health.
-      const permitted = index.pages.filter(page => authorize(grant, pageScope(index.sourceContext, page, grant)).allow);
-      const links = linkIndexFromPages(permitted);
-      const related = root === undefined ? permitted.filter(page =>
-        ((kinds === undefined || kinds.includes("subject"))
-          && (grant.subjects === null || grant.subjects.includes(id)) && stringArray(page.data["subjects"]).includes(id))
-        || ((kinds === undefined || kinds.includes("source"))
-          && stringArray(page.data["sources"]).some(source => bareRetrievalId(source) === bareRetrievalId(id)))
-        || ((kinds === undefined || kinds.includes("wikilink"))
-          && wikilinks(page.body).some(target => (resolveWikilink(links, target) ?? target) === id))) : permitted;
+      // When root is present, `index.pages` is equivalent to `permitted` inside
+      // `visibleIndexDegraded` and hits the caller-visible index health cache.
+      let related: readonly CanonIndex["pages"][number][] = index.pages;
+      if (root === undefined) {
+        const permitted = index.pages.filter(page => authorize(grant, pageScope(index.sourceContext, page, grant)).allow);
+        const links = linkIndexFromPages(permitted);
+        related = permitted.filter(page =>
+          ((kinds === undefined || kinds.includes("subject"))
+            && (grant.subjects === null || grant.subjects.includes(id)) && stringArray(page.data["subjects"]).includes(id))
+          || ((kinds === undefined || kinds.includes("source"))
+            && stringArray(page.data["sources"]).some(source => bareRetrievalId(source) === bareRetrievalId(id)))
+          || ((kinds === undefined || kinds.includes("wikilink"))
+            && wikilinks(page.body).some(target => (resolveWikilink(links, target) ?? target) === id)));
+      }
       return {
         canon: [],
         quoted: [],
