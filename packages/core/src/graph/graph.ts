@@ -1034,8 +1034,8 @@ function incidentEdges(
         `SELECT src, dst, kind FROM graph_edges
          WHERE (src IN (${idSlots}) OR dst IN (${idSlots}))${extraSql}
            ${after === undefined ? "" : "AND (src,dst,kind) > (?,?,?)"}
-         ORDER BY src, dst, kind LIMIT ?`,
-      ).all(...bindings, ...(after === undefined ? [] : [after.src, after.dst, after.kind]), remaining);
+         ORDER BY src, dst, kind LIMIT ${remaining}`,
+      ).all(...bindings, ...(after === undefined ? [] : [after.src, after.dst, after.kind]));
       for (const edge of rows) {
         if (filter !== undefined && !filter(edge)) continue;
         collected.push(edge);

@@ -1,5 +1,5 @@
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, readdirSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { join } from "node:path";
 import { hashBytes } from "./write";
 import { parseFrontmatter } from "./frontmatter";
 import { validatePage } from "./schema";
@@ -113,16 +113,75 @@ function isCanonPagePath(relPath: string): boolean {
   return relPath.endsWith(".md") && relPath !== "CANON.md" && relPath !== "SCHEMA.md";
 }
 
+export interface ListCanonPagesOptions {
+  readonly include_archived?: boolean;
+  /**
+   * When false, skips decoding and retaining markdown bodies (`body: ""`) while
+   * still reading exact bytes for `contentHash`, size budgets, and frontmatter.
+   * Defaults to true.
+   */
+  readonly include_body?: boolean;
+  /**
+   * When false, skips registering process-local inotify watches for write
+   * capacity bounds. Defaults to true.
+   */
+  readonly track_capacity?: boolean;
+}
+
+/**
+ * Decodes only the frontmatter prefix of a UTF-8 markdown buffer. Because
+ * ASCII `-` (0x2d), `\r` (0x0d), and `\n` (0x0a) cannot appear as multi-byte
+ * UTF-8 continuation bytes, slicing through the first closing `\n---` line is
+ * guaranteed to contain the first closing delimiter `parseFrontmatter` would
+ * match, without decoding or retaining multi-kilobyte markdown bodies.
+ */
+function parseFrontmatterHeader(bytes: Buffer): Record<string, unknown> {
+  let start = -1;
+  if (bytes.length >= 4 && bytes[0] === 0x2d && bytes[1] === 0x2d && bytes[2] === 0x2d) {
+    if (bytes[3] === 0x0a) start = 4;
+    else if (bytes.length >= 5 && bytes[3] === 0x0d && bytes[4] === 0x0a) start = 5;
+  }
+  if (start < 0) {
+    throw new SyntaxError("frontmatter must begin with an exact --- line");
+  }
+  let lineStart = start;
+  while (lineStart <= bytes.length) {
+    if (
+      lineStart + 3 <= bytes.length &&
+      bytes[lineStart] === 0x2d &&
+      bytes[lineStart + 1] === 0x2d &&
+      bytes[lineStart + 2] === 0x2d
+    ) {
+      const after = lineStart + 3;
+      if (
+        after === bytes.length ||
+        bytes[after] === 0x0a ||
+        (bytes[after] === 0x0d && after + 1 < bytes.length && bytes[after + 1] === 0x0a)
+      ) {
+        const end = after === bytes.length ? after : bytes[after] === 0x0a ? after + 1 : after + 2;
+        return parseFrontmatter(bytes.subarray(0, end).toString("utf8")).data;
+      }
+    }
+    const nl = bytes.indexOf(0x0a, lineStart);
+    if (nl < 0) break;
+    lineStart = nl + 1;
+  }
+  return parseFrontmatter(bytes.toString("utf8")).data;
+}
+
 interface WalkState {
   capacity: CapacityInventory | null;
   pages: CanonPage[];
   skipped: SkippedPage[];
   /** First path that claimed this frontmatter id, valid or not. */
   seen: Map<string, string>;
+  /** Duplicate ids to filter out in a single pass at the end of the walk. */
+  duplicateIds: Set<string>;
   files: number;
   bytes: number;
   limits: CanonLimits;
   includeArchived: boolean;
+  includeBody: boolean;
   truncated: boolean;
   cache: CanonPageCache | null;
   excludedPaths: ReadonlySet<string>;
@@ -141,7 +200,7 @@ function withholdDuplicate(
   firstPath: string,
   relPath: string,
 ): void {
-  state.pages = state.pages.filter((entry) => entry.id !== id);
+  state.duplicateIds.add(id);
   state.skipped = state.skipped.filter(
     (entry) => !(entry.relPath === firstPath && entry.code === "invalid"),
   );
@@ -190,13 +249,13 @@ function hasArchivedHeader(path: string): boolean {
 
 function considerFile(state: WalkState, path: string, relPath: string): void {
   if (state.truncated) return;
-  state.capacity?.observe(path, false);
+  const observedStat = state.capacity?.observe(path, false, relPath) ?? null;
   if (state.includeArchived && !reserveFile(state)) return;
   let size: number;
   let signature: string;
   let changedMs: number;
   try {
-    const stat = lstatSync(path, { bigint: true });
+    const stat = observedStat ?? lstatSync(path, { bigint: true });
     if (stat.isSymbolicLink() || !stat.isFile()) {
       if (!state.includeArchived && !reserveFile(state)) return;
       state.skipped.push(skip(relPath, "unreadable", "unreadable: not a regular file"));
@@ -238,20 +297,31 @@ function considerFile(state: WalkState, path: string, relPath: string): void {
     file = remembered;
     if (state.includeArchived) state.bytes += size;
   } else {
-    const readAtMs = Date.now();
+    const readAtMs = state.cache !== null && state.includeBody ? Date.now() : 0;
     try {
       const bytes = readFileSync(path);
       if (state.includeArchived) state.bytes += bytes.byteLength;
       size = bytes.byteLength;
-      const parsed = parseFrontmatter(bytes.toString("utf8"));
-      file = {
-        // An empty signature never matches: see RACY_WINDOW_MS.
-        signature: changedMs + RACY_WINDOW_MS > readAtMs ? "" : signature,
-        contentHash: hashBytes(bytes),
-        data: parsed.data,
-        body: parsed.body,
-        invalid: validatePage(parsed.data)[0] ?? null,
-      };
+      if (state.includeBody) {
+        const parsed = parseFrontmatter(bytes.toString("utf8"));
+        file = {
+          // An empty signature never matches: see RACY_WINDOW_MS.
+          signature: state.cache !== null && changedMs + RACY_WINDOW_MS > readAtMs ? "" : signature,
+          contentHash: hashBytes(bytes),
+          data: parsed.data,
+          body: parsed.body,
+          invalid: validatePage(parsed.data)[0] ?? null,
+        };
+      } else {
+        const data = parseFrontmatterHeader(bytes);
+        file = {
+          signature: "",
+          contentHash: hashBytes(bytes),
+          data,
+          body: "",
+          invalid: validatePage(data)[0] ?? null,
+        };
+      }
     } catch (error) {
       if (!state.includeArchived && !reserveFile(state)) return;
       if (error instanceof SyntaxError) {
@@ -279,8 +349,8 @@ function considerFile(state: WalkState, path: string, relPath: string): void {
   // walk is given.
   const parsed = state.cache === null
     ? file
-    : { data: structuredClone(file.data), body: file.body };
-  if (state.cache !== null && file.signature !== "") state.remembered.set(path, file);
+    : { data: structuredClone(file.data), body: state.includeBody ? file.body : "" };
+  if (state.cache !== null && state.includeBody && file.signature !== "") state.remembered.set(path, file);
   const { contentHash } = file;
 
   const rawId = parsed.data["id"];
@@ -313,21 +383,20 @@ function considerFile(state: WalkState, path: string, relPath: string): void {
   });
 }
 
-function walk(state: WalkState, directory: string, vaultPath: string, depth: number): void {
+function walk(state: WalkState, directory: string, relDirectory: string, depth: number): void {
   if (state.truncated) return;
-  state.capacity?.observe(directory, true);
+  state.capacity?.observe(directory, true, relDirectory);
   let entries;
   try {
     entries = readdirSync(directory, { withFileTypes: true }).sort((a, b) =>
       compareName(a.name, b.name),
     );
   } catch (error) {
-    const relPath = relative(vaultPath, directory).split(sep).join("/") || ".";
+    const relPath = relDirectory || ".";
     state.skipped.push(skip(relPath, "unreadable", `unreadable: ${fsCode(error)}`));
     return;
   }
 
-  const relDirectory = relative(vaultPath, directory).split(sep).join("/");
   for (const entry of entries) {
     if (state.truncated) return;
     if (depth === 0 && (entry.name === ".kizuki" || entry.name === "archive")) continue;
@@ -353,7 +422,7 @@ function walk(state: WalkState, directory: string, vaultPath: string, depth: num
         );
         continue;
       }
-      walk(state, target, vaultPath, depth + 1);
+      walk(state, target, relPath, depth + 1);
       continue;
     }
     if (!entry.isFile() || !isCanonPagePath(relPath)) {
@@ -369,16 +438,18 @@ function walk(state: WalkState, directory: string, vaultPath: string, depth: num
   }
 }
 
-function newWalkState(vaultPath: string, cache: CanonPageCache | null, statOnly: boolean, excludedPaths: ReadonlySet<string> = new Set(), options: { readonly include_archived?: boolean } = {}): WalkState {
+function newWalkState(vaultPath: string, cache: CanonPageCache | null, statOnly: boolean, excludedPaths: ReadonlySet<string> = new Set(), options: ListCanonPagesOptions = {}): WalkState {
   return {
     capacity: null,
     pages: [],
     skipped: [],
     seen: new Map(),
+    duplicateIds: new Set(),
     files: 0,
     bytes: 0,
     limits: loadCanonLimits(vaultPath),
     includeArchived: options.include_archived !== false,
+    includeBody: options.include_body !== false,
     truncated: false,
     cache,
     excludedPaths,
@@ -393,13 +464,18 @@ export function listCanonPagesReport(
   vaultPath: string,
   cache?: CanonPageCache,
   excludedPaths: ReadonlySet<string> = new Set(),
-  options: { readonly include_archived?: boolean } = {},
+  options: ListCanonPagesOptions = {},
 ): CanonPageReport {
   const state = newWalkState(vaultPath, cache ?? null, false, excludedPaths, options);
-  if (excludedPaths.size === 0 && options.include_archived !== false) state.capacity = beginCapacityInventory(vaultPath);
-  walk(state, vaultPath, vaultPath, 0);
+  if (excludedPaths.size === 0 && options.include_archived !== false && options.track_capacity !== false) {
+    state.capacity = beginCapacityInventory(vaultPath);
+  }
+  walk(state, vaultPath, "", 0);
+  if (state.duplicateIds.size > 0) {
+    state.pages = state.pages.filter((entry) => !state.duplicateIds.has(entry.id));
+  }
   state.capacity?.finish(!state.truncated && fatalCanonSkips(state.skipped).length === 0);
-  if (cache !== undefined) cache.files = state.remembered;
+  if (cache !== undefined && state.includeBody) cache.files = state.remembered;
   state.skipped.sort((left, right) => compareName(left.relPath, right.relPath));
   return { pages: state.pages, skipped: state.skipped, truncated: state.truncated, signatures: state.signatures, scanned_files: state.files, scanned_bytes: state.bytes };
 }
@@ -410,7 +486,7 @@ export function listCanonPagesReport(
  */
 export function scanCanonSignatures(vaultPath: string): ReadonlyMap<string, string> {
   const state = newWalkState(vaultPath, null, true);
-  walk(state, vaultPath, vaultPath, 0);
+  walk(state, vaultPath, "", 0);
   return state.signatures;
 }
 
@@ -424,7 +500,7 @@ export function scanCanonSignatures(vaultPath: string): ReadonlyMap<string, stri
  */
 export function canonFilesStamp(vaultPath: string, now: number = Date.now()): string | null {
   const state = newWalkState(vaultPath, null, true);
-  walk(state, vaultPath, vaultPath, 0);
+  walk(state, vaultPath, "", 0);
   if (state.newestChangeMs + RACY_WINDOW_MS > now) return null;
   return JSON.stringify([state.limits, state.truncated, state.skipped, [...state.signatures]]);
 }

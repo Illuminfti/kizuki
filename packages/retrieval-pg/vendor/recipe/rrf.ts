@@ -40,12 +40,17 @@ export function rrfFusion(
         if (candidate.keyword_hit) existing.keywordHit = true;
         // Lexical recall can contribute a document-shaped row before vector
         // recall contributes the same chunk key. Keep the vector-bearing
-        // chunk text and vector while preserving authoritative document data.
-        if (existing.result.vector === null && candidate.vector !== null) {
+        // chunk text and vector/cosine while preserving authoritative document data.
+        if (
+          existing.result.vector === null &&
+          existing.result.cosine === undefined &&
+          (candidate.vector !== null || candidate.cosine !== undefined)
+        ) {
           existing.result = {
             ...existing.result,
             text: candidate.text,
             vector: candidate.vector,
+            ...(candidate.cosine === undefined ? {} : { cosine: candidate.cosine }),
           };
         }
         return;
@@ -112,7 +117,11 @@ export function cosineReScore(
   return results
     .map((row) => {
       const cosine =
-        row.vector === null ? 0 : cosineSimilarity(queryVector, row.vector);
+        row.cosine !== undefined
+          ? row.cosine
+          : row.vector === null
+            ? 0
+            : cosineSimilarity(queryVector, row.vector);
       const normRrf = maxRrf > 0 ? row.score / maxRrf : 0;
       return {
         ...row,

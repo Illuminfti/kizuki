@@ -5,8 +5,8 @@ import { compareRfc3339 } from "../../agents/time";
 import { semanticKey, supportKey } from "../../claims/claim-v2-keys";
 import { readClaimV2Semantic } from "../../claims/claim-v2-commit";
 import { isRegisteredPredicate } from "../../claims/predicates";
-import { getClaim } from "../../claims/store";
-import type { ClaimMeaning, ClaimV2Assertion } from "../../contracts/claim-v2";
+import { rawSubjectNamespace, type ClaimMeaning, type ClaimV2Assertion } from "../../contracts/claim-v2";
+import type { ClaimKind } from "../../contracts/proposal";
 import { isUtf16TextBoundary } from "../../contracts/producer-v2";
 import {
   completeWorldAnchors,
@@ -16,24 +16,72 @@ import {
 import { getWorldVocabularySpec } from "../../contracts/world-vocabulary";
 import { qualifiedPersonInterest } from "../../contracts/world-vocab/person";
 import { readEvent } from "../../ledger/ledger";
+import { tableExists } from "../../ledger/schema";
+import { inspectSourceGrant, type SourceGrant, type SourceGrantLookup } from "../../ledger/source-grants";
 import { eventDecision, readServableEvents } from "../../serving/ledger";
 import type { ServeContext } from "../../serving/types";
 import type { WorldValidQuery } from "../../serving/world-view";
 import { canonicalJson } from "../../util/hash";
 import { assertionEndpoints } from "../allocation";
-import { heldUntilCorroborated } from "../corroboration";
+import { AUTHORITY_CLAIM_MIN_ROOTS, hasAuthorityTerm, heldUntilCorroborated, IDENTITY_PREDICATES } from "../corroboration";
 import { knownState, knownSupportSql, type KnownCutoff } from "../known/cutoff";
-import { handleFor } from "../relation";
-import { charge, WORLD_CLAIM_VERIFICATION_LIMIT, WorldClaimBudgetError, WorldProjectionBudgetError, type ReadBudget } from "./frame";
+import { charge, chargeBytes, WORLD_CLAIM_VERIFICATION_LIMIT, WorldClaimBudgetError, WorldProjectionBudgetError, type ReadBudget } from "./frame";
 
 const MAX_SUPPORTS = 32;
+const OWNER_CACHE_MAX = 512;
+type SqlPredicate = { sql: string; bindings: (string | number)[] };
+type ReadReuse = {
+  readonly grantOf: SourceGrantLookup;
+  readonly supportSql: Map<string, SqlPredicate>;
+};
 const groundingReads = new WeakMap<ReadBudget, GroundingReadCache>();
+const txReadReuse = new WeakMap<ReadBudget, WeakMap<Database, ReadReuse>>();
+type OwnerCacheEntry = { readonly item: Eligible | null; readonly bytes: number };
+type OwnerSnapshotCache = {
+  version: number;
+  changes: number;
+  deriveMatchesRecall: boolean;
+  entries: Map<string, OwnerCacheEntry>;
+  reuse: ReadReuse;
+};
+const ownerEligibleCaches = new WeakMap<Database, OwnerSnapshotCache>();
+
+function activeGrantsMatchDeriveRecall(db: Database): boolean {
+  if (!tableExists(db, "source_grants")) return true;
+  return (
+    db
+      .query<{ diff: number }, []>(
+        `SELECT EXISTS (
+           SELECT 1 FROM source_grants
+           WHERE status = 'active'
+             AND (NOT json_valid(policy)
+               OR EXISTS (SELECT 1 FROM json_each(json_extract(policy, '$.purposes')) WHERE value = 'derive')
+               <> EXISTS (SELECT 1 FROM json_each(json_extract(policy, '$.purposes')) WHERE value = 'recall'))
+         ) AS diff`,
+      )
+      .get()!.diff === 0
+  );
+}
+
+function createReadReuse(db: Database): ReadReuse {
+  const grants = new Map<string, SourceGrant | null>();
+  return {
+    grantOf: (sourceKey) => {
+      if (grants.has(sourceKey)) return grants.get(sourceKey)!;
+      const grant = inspectSourceGrant(db, sourceKey);
+      grants.set(sourceKey, grant);
+      return grant;
+    },
+    supportSql: new Map(),
+  };
+}
 
 /** A new projection proves a new snapshot while retaining the request allowance. */
 export function beginWorldClaimProjection(budget: ReadBudget): void {
   budget.claimVerifications ??= 0;
   budget.verifiedClaims = new WeakMap();
   groundingReads.delete(budget);
+  txReadReuse.delete(budget);
 }
 
 type Support = {
@@ -113,10 +161,75 @@ export function eligibleWorldClaim(
     if (budget.claimVerifications >= WORLD_CLAIM_VERIFICATION_LIMIT) throw new WorldClaimBudgetError();
     budget.claimVerifications += 1;
   }
-  const item = readEligibleWorldClaim(ctx, claimId, valid, budget, options);
+  // Owner-only snapshot cache for repeated non-transactional canon evidence checks
+  // (e.g. visibleIndexDegraded). Invalidated on any local or external SQLite write.
+  if (
+    cache === undefined &&
+    ctx.principal.kind === "owner" &&
+    budget.claimVerifications === undefined &&
+    options.cutoff === undefined &&
+    ctx.selection === undefined
+  ) {
+    const snap = ctx.db
+      .query<{ changes: number; version: number }, []>(
+        "SELECT total_changes() AS changes, (SELECT data_version FROM pragma_data_version) AS version",
+      )
+      .get()!;
+    let ownerCache = ownerEligibleCaches.get(ctx.db);
+    if (ownerCache === undefined || ownerCache.version !== snap.version || ownerCache.changes !== snap.changes) {
+      ownerCache = {
+        version: snap.version,
+        changes: snap.changes,
+        deriveMatchesRecall: activeGrantsMatchDeriveRecall(ctx.db),
+        entries: new Map(),
+        reuse: createReadReuse(ctx.db),
+      };
+      ownerEligibleCaches.set(ctx.db, ownerCache);
+    }
+    const rawPurpose = ctx.sourcePurpose ?? "recall";
+    const cachePurpose = ownerCache.deriveMatchesRecall && rawPurpose === "derive" ? "recall" : rawPurpose;
+    const ownerKey = canonicalJson([claimId, ctx.principal.grant, cachePurpose, valid, options]);
+    const hit = ownerCache.entries.get(ownerKey);
+    if (hit !== undefined) {
+      chargeBytes(budget, hit.bytes);
+      return hit.item === null ? null : { ...hit.item, supports: [...hit.item.supports] };
+    }
+    const bytesBefore = budget.bytes;
+    const item = readEligibleWorldClaim(ctx, claimId, valid, budget, options, undefined, ownerCache.reuse);
+    if (ownerCache.entries.size >= OWNER_CACHE_MAX) {
+      ownerCache.entries.delete(ownerCache.entries.keys().next().value!);
+    }
+    ownerCache.entries.set(ownerKey, { item, bytes: budget.bytes - bytesBefore });
+    return item;
+  }
+  let reuse: ReadReuse | undefined;
+  if (cache !== undefined) {
+    let byDb = txReadReuse.get(budget);
+    if (byDb === undefined) {
+      byDb = new WeakMap();
+      txReadReuse.set(budget, byDb);
+    }
+    reuse = byDb.get(ctx.db);
+    if (reuse === undefined) {
+      reuse = createReadReuse(ctx.db);
+      byDb.set(ctx.db, reuse);
+    }
+  }
+  const item = readEligibleWorldClaim(ctx, claimId, valid, budget, options, undefined, reuse);
   // An exhausted budget never becomes a cached proof or a false absence.
   cache?.set(key, item);
   return item;
+}
+
+function cachedKnownSupportSql(ctx: ServeContext, cutoff: KnownCutoff | undefined, reuse: ReadReuse | undefined): SqlPredicate {
+  if (reuse === undefined) return knownSupportSql(ctx, cutoff);
+  const key = canonicalJson([ctx.principal, ctx.sourcePurpose ?? "recall", ctx.selection ?? null, cutoff ?? null]);
+  let cached = reuse.supportSql.get(key);
+  if (cached === undefined) {
+    cached = knownSupportSql(ctx, cutoff);
+    reuse.supportSql.set(key, cached);
+  }
+  return cached;
 }
 
 function readEligibleWorldClaim(
@@ -126,10 +239,23 @@ function readEligibleWorldClaim(
   budget: ReadBudget,
   options: EligibilityOptions,
   proof?: "receipt_custody",
+  reuse?: ReadReuse,
 ): Eligible | null {
-  const claim = getClaim(ctx.db, claimId);
-  if (claim === null || (options.cutoff !== undefined ? claim.status === "purged" : options.historical ? !["live", "superseded", "reverted"].includes(claim.status) : claim.status !== "live")) return null;
-  if (ctx.db.query("SELECT 1 FROM claims WHERE claim_id=? AND is_world_typed=1").get(claimId) === null) return null;
+  const claim = ctx.db
+    .query<{ status: string; kind: ClaimKind; asserted_at: string; is_world_typed: number }, [string]>(
+      "SELECT status, kind, asserted_at, is_world_typed FROM claims WHERE claim_id=?",
+    )
+    .get(claimId);
+  if (
+    claim === null ||
+    claim.is_world_typed !== 1 ||
+    (options.cutoff !== undefined
+      ? claim.status === "purged"
+      : options.historical
+        ? !["live", "superseded", "reverted"].includes(claim.status)
+        : claim.status !== "live")
+  )
+    return null;
   const semantic = readClaimV2Semantic(ctx.db, claimId);
   const state = options.cutoff === undefined ? null : knownState(ctx.db, claimId, options.cutoff);
   if (options.cutoff !== undefined && (state === null || (!options.includeInactive && state.after_status !== "live"))) return null;
@@ -164,15 +290,28 @@ function readEligibleWorldClaim(
     return null;
   const supports: EligibleSupport[] = [];
   let overflow = false;
+  const targetSemanticKey = semanticKey(semantic);
+  const isAuthoritySemantic =
+    (IDENTITY_PREDICATES as readonly string[]).includes(semantic.predicate) ||
+    (semantic.predicate.startsWith("decision.") &&
+      semantic.object.kind === "literal" &&
+      hasAuthorityTerm(semantic.object.value));
+  let rawHasNative = false;
+  let rawHasBodyTerm = false;
+  const rawSourceKeys = new Set<string>();
   // Custody selects only the receipt's exact bounded keys. The full admission,
   // immutable event identity and CURRENT source policy are still proved below.
-  const permitted = proof === "receipt_custody" ? { sql: "length(s.admission)<=524288", bindings: [] } : knownSupportSql(ctx, options.cutoff);
-  for (const row of ctx.db
+  const permitted = proof === "receipt_custody" ? { sql: "length(s.admission)<=524288", bindings: [] } : cachedKnownSupportSql(ctx, options.cutoff, reuse);
+  const grantOf = reuse?.grantOf ?? createReadReuse(ctx.db).grantOf;
+  const supportRows = ctx.db
     .query<
       Support,
       (string | number)[]
-    >(`SELECT s.* FROM claim_v2_support s WHERE claim_id=? AND ${permitted.sql}${options.supportKeys === undefined ? "" : " AND support_key IN (SELECT value FROM json_each(?))"} ORDER BY support_key LIMIT ?`)
-    .all(claimId, ...permitted.bindings, ...(options.supportKeys === undefined ? [] : [JSON.stringify(options.supportKeys)]), MAX_SUPPORTS + 1)) {
+    >(`SELECT s.* FROM claim_v2_support s WHERE claim_id=? AND ${permitted.sql}${options.supportKeys === undefined ? "" : " AND support_key IN (SELECT value FROM json_each(?))"} ORDER BY support_key LIMIT ${MAX_SUPPORTS + 1}`)
+    .all(claimId, ...permitted.bindings, ...(options.supportKeys === undefined ? [] : [JSON.stringify(options.supportKeys)]));
+  for (const row of supportRows) {
+    if (row.support_origin === "native_owner") rawHasNative = true;
+    rawSourceKeys.add(row.source_key);
     let parsed: unknown;
     charge(budget, row.admission);
     try {
@@ -180,10 +319,14 @@ function readEligibleWorldClaim(
     } catch {
       continue;
     }
+    if (!rawHasBodyTerm && parsed !== null && typeof parsed === "object" && "rendering" in parsed) {
+      const rendering = (parsed as { rendering?: { body?: unknown } }).rendering;
+      if (typeof rendering?.body === "string" && hasAuthorityTerm(rendering.body)) rawHasBodyTerm = true;
+    }
     const admission = parseWorldAdmission(parsed);
     if (
       admission === null ||
-      semanticKey(admission.semantic) !== semanticKey(semantic)
+      semanticKey(admission.semantic) !== targetSemanticKey
     )
       continue;
     // Registration must not turn an older, unqualified admission into a fact
@@ -218,6 +361,7 @@ function readEligibleWorldClaim(
       ctx.db,
       events.map((e) => e.event_id),
     );
+    const eventTexts = new Map<string, string>();
     if (
       !events.every((event) => {
         const stored = ctx.db
@@ -243,6 +387,7 @@ function readEligibleWorldClaim(
           return false;
         }
         if (eventIdentity === null || eventIdentity.deleted) return false;
+        eventTexts.set(event.event_id, eventIdentity.text);
         const fact = facts?.get(event.event_id) ?? (proof === "receipt_custody" ? {
           event_id: eventIdentity.event_id, kind: eventIdentity.kind,
           occurred_at: eventIdentity.occurred_at,
@@ -264,23 +409,16 @@ function readEligibleWorldClaim(
               row.source_key === "native-owner" &&
               row.grant_revision === 0
             : stored.source_key === row.source_key || grounding.some(e => e.event_id === event.event_id && e.event_content_hash === event.event_content_hash)) &&
-          eventDecision(ctx.principal.grant, fact, ctx).allow
+          eventDecision(ctx.principal.grant, fact, ctx, grantOf).allow
         );
       })
     )
       continue;
     const anchors = completeWorldAnchors(admission.semantic);
-    const allAnchors = anchors;
     if (
       anchors.length === 0 ||
-      !allAnchors.every((anchor) => {
-        if (!events.some((e) => e.event_id === anchor.event_id)) return false;
-        const text = ctx.db
-          .query<
-            { text: string },
-            [string]
-          >("SELECT text FROM events WHERE event_id=?")
-          .get(anchor.event_id)?.text;
+      !anchors.every((anchor) => {
+        const text = eventTexts.get(anchor.event_id);
         return (
           text !== undefined &&
           isUtf16TextBoundary(text, anchor.start_utf16) &&
@@ -289,18 +427,21 @@ function readEligibleWorldClaim(
       })
     )
       continue;
-    let storedAnchors: unknown;
-    try {
-      storedAnchors = JSON.parse(row.anchors);
-    } catch {
-      continue;
+    const anchorsCanonical = canonicalJson(anchors);
+    if (row.anchors !== anchorsCanonical) {
+      let storedAnchors: unknown;
+      try {
+        storedAnchors = JSON.parse(row.anchors);
+      } catch {
+        continue;
+      }
+      if (canonicalJson(storedAnchors) !== anchorsCanonical) continue;
     }
     if (
-      canonicalJson(storedAnchors) !== canonicalJson(anchors) ||
       supportKey({
         support_origin: row.support_origin,
         grounding_digest: groundingDigest(admission),
-        semantic_key: semanticKey(semantic),
+        semantic_key: targetSemanticKey,
         source_key: row.source_key,
         grant_revision: row.grant_revision,
         events,
@@ -309,17 +450,14 @@ function readEligibleWorldClaim(
     )
       continue;
     if (
-      !endpoints.every((ref) => {
-        const handle = handleFor(ctx.db, ref);
-        return (
-          handle !== null &&
+      !endpoints.every(
+        (ref) =>
           ctx.db
             .query(
-              "SELECT 1 FROM semantic_allocations WHERE handle_id=? AND support_key=?",
+              "SELECT 1 FROM semantic_bindings b JOIN semantic_allocations a USING(handle_id) WHERE b.raw_kind=? AND b.raw_namespace=? AND b.raw_id=? AND a.support_key=?",
             )
-            .get(handle, row.support_key) !== null
-        );
-      })
+            .get(ref.kind, rawSubjectNamespace(ref), ref.id, row.support_key) !== null,
+      )
     )
       continue;
     if (supports.length === MAX_SUPPORTS) {
@@ -330,9 +468,15 @@ function readEligibleWorldClaim(
   }
   // Current reads hold model authority claims until their permitted support
   // corroborates them. Historical validation still verifies the recorded basis.
-  if (!options.historical && supports.length > 0 &&
-      (heldUntilCorroborated(ctx.db, claimId, permitted) ||
-       (options.cutoff !== undefined && heldUntilCorroborated(ctx.db, claimId, knownSupportSql(ctx))))) return null;
+  if (!options.historical && supports.length > 0) {
+    if (options.supportKeys === undefined && options.cutoff === undefined && supportRows.length <= MAX_SUPPORTS) {
+      if (!rawHasNative && rawSourceKeys.size < AUTHORITY_CLAIM_MIN_ROOTS && (rawHasBodyTerm || isAuthoritySemantic)) return null;
+    } else if (options.cutoff !== undefined) {
+      if (heldUntilCorroborated(ctx.db, claimId, permitted) || heldUntilCorroborated(ctx.db, claimId, cachedKnownSupportSql(ctx, undefined, reuse))) return null;
+    } else if (!rawHasNative && rawSourceKeys.size < AUTHORITY_CLAIM_MIN_ROOTS && heldUntilCorroborated(ctx.db, claimId, permitted)) {
+      return null;
+    }
+  }
   return supports.length === 0
     ? null
     : {

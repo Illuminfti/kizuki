@@ -1,4 +1,4 @@
-import { heldClaimSql } from "../corroboration";
+import { heldClaimSql, permittedAndUnheldSql } from "../corroboration";
 import type { Database } from "bun:sqlite";
 import { instantBoundPair, instantPairSql } from "../../query/sql";
 import type { ServeContext } from "../../serving/types";
@@ -64,4 +64,12 @@ export function knownHeldSql(ctx: ServeContext, alias: string, cutoff?: KnownCut
   if (cutoff === undefined) return current;
   const historical = heldClaimSql(alias, knownSupportSql(ctx, cutoff));
   return { sql: `(${current.sql} OR ${historical.sql})`, bindings: [...current.bindings, ...historical.bindings] };
+}
+
+/** Combined support-existence and corroboration-hold predicate over `claims` aliased `alias`. */
+export function knownPermittedAndUnheldSql(ctx: ServeContext, alias: string, cutoff?: KnownCutoff) {
+  if (cutoff === undefined) return permittedAndUnheldSql(alias, knownSupportSql(ctx));
+  const historical = permittedAndUnheldSql(alias, knownSupportSql(ctx, cutoff));
+  const currentHeld = heldClaimSql(alias, knownSupportSql(ctx));
+  return { sql: `(${historical.sql} AND NOT ${currentHeld.sql})`, bindings: [...historical.bindings, ...currentHeld.bindings] };
 }

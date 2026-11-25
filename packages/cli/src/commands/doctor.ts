@@ -1,3 +1,4 @@
+import type { Database } from "bun:sqlite";
 import { inspectSourceCoverage, type SourceCoverageReport } from "@kizuki/core/world";
 import { sourceCoverageLines } from "../source-coverage";
 import { closeHostConnector } from "../connections";
@@ -8,27 +9,19 @@ import {
   PURGE_SLA_SECONDS,
   PortError,
   count,
-  countCaptureFanout,
-  countClaims,
-  countUnwrittenLiveClaims,
-  countLiveClaimsByProducer,
-  countWrittenLiveClaims,
   doctorVault,
-  getCanonReceiptRecord,
   getCheckpoint,
   massWithdrawalHoldOf,
   inspectLedgerHealth,
   inspectCanonRecoveryDetail,
   inspectPurgeHealth,
   inspectServeDoctor,
-  isCaptureFanoutSkip,
   latestReceiptForPage,
-  listClaims,
   listCanonPagesReport,
   readHolds,
   readVaultId,
 } from "@kizuki/core";
-import type { CaptureFanoutCounts, ClaimStatus, LiveClaimProducers, MassWithdrawalHold } from "@kizuki/core";
+import type { CanonPageReport, CaptureFanoutCounts, ClaimStatus, LiveClaimProducers, MassWithdrawalHold } from "@kizuki/core";
 import { readSqliteRuntime } from "@kizuki/core/internal";
 import type { SqliteRuntime } from "@kizuki/core/internal";
 import { UsageError, parseArguments } from "../args";
@@ -37,7 +30,7 @@ import { sourceConsentPurged } from "../source-consent";
 import { INVOCATION } from "../runtime";
 import { withReadVault } from "../context";
 import type { ReadVaultContext } from "../context";
-import { countCanonReceiptRows, indexFreshness, walkCanonReceipts } from "../derived";
+import { indexFreshness } from "../derived";
 import { RETENTION_MEANING } from "../egress-view";
 import { configuredJudgeDestination } from "../judge-destination";
 import { clean, errorText, jsonEnvelope } from "../output";
@@ -49,6 +42,7 @@ import { serveSupervisorHost } from "../service-host";
 import { withdrawalHoldLine } from "../withdrawal-hold";
 import { supervisorFailureLine } from "../service-custody";
 import { nextStep } from "./doctor-next";
+import { inspectMemtForDoctor, type DoctorMemtReport } from "./memt";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 
 const HEALTH_DEADLINE_MS = 3_000;
@@ -132,6 +126,7 @@ interface DoctorReport {
   ledger: ReturnType<typeof inspectLedgerHealth>;
   runtime: SqliteRuntime;
   canon_recovery: ReturnType<typeof inspectCanonRecoveryDetail>;
+  memt: DoctorMemtReport;
   ok: boolean;
 }
 
@@ -205,48 +200,194 @@ async function withDeadline<T>(ms: number, work: () => Promise<T>, label = "heal
   }
 }
 
-function reconcileReceipts(vaultPath: string, ctx: ReadVaultContext): string[] {
-  const orphans: string[] = [];
-  const path = join(vaultPath, ".kizuki", "receipts", "promotions.jsonl");
-  const seen = new Set<string>();
-  if (existsSync(path)) {
-    const lines = readFileSync(path, "utf8").split("\n");
-    for (const [index, line] of lines.entries()) {
-      if (line.length === 0) continue;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(line) as unknown;
-      } catch {
-        orphans.push(`torn JSONL line ${index + 1}`);
-        continue;
+const CAPTURE_FANOUT_SKIP_REASON = "message_capture_fanout";
+const UNWRITTEN_CAPTURE_NOTE_WHERE = `status = 'live' AND receipt_id IS NULL
+  AND kind = 'claim' AND producer = 'deterministic'
+  AND json_extract(frontmatter, '$.type') = 'source'
+  AND json_type(frontmatter, '$."x-source-record-id"') IS NULL
+  AND json_extract(frontmatter, '$."x-capture-kind"') IN ('message','email')
+  AND target GLOB 'captures/[^/]*' AND target NOT GLOB 'captures/*/*/*'
+  AND (target NOT GLOB 'captures/*/*'
+       OR target GLOB 'captures/*/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')`;
+
+function hasTable(db: Database, name: string): boolean {
+  return (
+    db
+      .query<{ name: string }, [string]>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+      )
+      .get(name) !== null
+  );
+}
+
+/** Single-pass aggregate over `claims`, replacing ~12 separate full table scans. */
+function readDoctorClaimSummary(db: Database): DoctorReport["claims"] {
+  const counts = Object.fromEntries(
+    CLAIM_STATUSES.map((status) => [status, 0]),
+  ) as Record<ClaimStatus, number>;
+  let written = 0;
+  let unwritten = 0;
+  let fanoutPending = 0;
+  let fanoutSkipped = 0;
+  const producers = { model: 0, deterministic: 0, owner: 0, agent: 0 };
+
+  if (hasTable(db, "claims")) {
+    const typedClause = hasTable(db, "claim_v2_semantics")
+      ? "AND NOT EXISTS (SELECT 1 FROM claim_v2_semantics v2 WHERE v2.claim_id = claims.claim_id)"
+      : "";
+    const rows = db
+      .query<
+        {
+          status: string;
+          total: number;
+          written: number;
+          unwritten: number;
+          fanout_pending: number;
+          fanout_skipped: number;
+          prod_model: number;
+          prod_deterministic: number;
+          prod_owner: number;
+          prod_agent: number;
+        },
+        [string]
+      >(
+        `SELECT
+           status,
+           COUNT(*) AS total,
+           SUM(CASE WHEN status = 'live' AND receipt_id IS NOT NULL THEN 1 ELSE 0 END) AS written,
+           SUM(CASE WHEN status = 'live' AND receipt_id IS NULL AND kind <> 'purge_review'
+                     AND NOT COALESCE((${UNWRITTEN_CAPTURE_NOTE_WHERE}), 0) ${typedClause}
+                    THEN 1 ELSE 0 END) AS unwritten,
+           SUM(CASE WHEN ${UNWRITTEN_CAPTURE_NOTE_WHERE} THEN 1 ELSE 0 END) AS fanout_pending,
+           SUM(CASE WHEN status = 'skipped' AND json_extract(frontmatter, '$."x-skip-reason"') = ?
+                    THEN 1 ELSE 0 END) AS fanout_skipped,
+           SUM(CASE WHEN status = 'live' AND producer = 'model' THEN 1 ELSE 0 END) AS prod_model,
+           SUM(CASE WHEN status = 'live' AND producer = 'deterministic' THEN 1 ELSE 0 END) AS prod_deterministic,
+           SUM(CASE WHEN status = 'live' AND producer = 'owner' THEN 1 ELSE 0 END) AS prod_owner,
+           SUM(CASE WHEN status = 'live' AND substr(producer, 1, 6) = 'agent:' THEN 1 ELSE 0 END) AS prod_agent
+         FROM claims
+         GROUP BY status`,
+      )
+      .all(CAPTURE_FANOUT_SKIP_REASON);
+
+    for (const row of rows) {
+      if ((CLAIM_STATUSES as readonly string[]).includes(row.status)) {
+        counts[row.status as ClaimStatus] = row.total;
       }
-      if (typeof parsed !== "object" || parsed === null || !("receipt_id" in parsed)) {
-        orphans.push(`invalid JSONL line ${index + 1}`);
-        continue;
-      }
-      const receiptId = (parsed as { receipt_id: unknown }).receipt_id;
-      if (typeof receiptId !== "string" || receiptId.length === 0) {
-        orphans.push(`invalid JSONL line ${index + 1}`);
-        continue;
-      }
-      if (seen.has(receiptId)) {
-        orphans.push(`duplicate receipt ${receiptId}`);
-        continue;
-      }
-      seen.add(receiptId);
-      // A purge leaves an erased record for each typed receipt it removes; the row still exists.
-      if (getCanonReceiptRecord(ctx.db, receiptId) === null) {
-        orphans.push(`orphan receipt ${receiptId} (no canon_receipts row)`);
-      }
+      written += row.written ?? 0;
+      unwritten += row.unwritten ?? 0;
+      fanoutPending += row.fanout_pending ?? 0;
+      fanoutSkipped += row.fanout_skipped ?? 0;
+      producers.model += row.prod_model ?? 0;
+      producers.deterministic += row.prod_deterministic ?? 0;
+      producers.owner += row.prod_owner ?? 0;
+      producers.agent += row.prod_agent ?? 0;
     }
   }
 
-  for (const row of walkCanonReceipts(ctx.db)) {
-    if (!seen.has(row.receipt_id)) {
-      orphans.push(`orphan row ${row.receipt_id} (no JSONL line)`);
+  return {
+    ...counts,
+    filed: counts.skipped,
+    written,
+    unwritten,
+    capture_fanout: { pending: fanoutPending, skipped: fanoutSkipped },
+    by_producer: producers,
+  };
+}
+
+function readDoctorSampleClaims(db: Database): {
+  live: DoctorClaim[];
+  filed: DoctorClaim[];
+} {
+  if (!hasTable(db, "claims")) return { live: [], filed: [] };
+  const live = db
+    .query<DoctorClaim, []>(
+      `SELECT claim_id, target, predicate FROM claims
+        WHERE status = 'live'
+        ORDER BY created_at, claim_id
+        LIMIT 8`,
+    )
+    .all();
+  const filed = db
+    .query<DoctorClaim, [string]>(
+      `SELECT claim_id, target, predicate FROM claims
+        WHERE status = 'skipped'
+          AND json_extract(frontmatter, '$."x-skip-reason"') IS NOT ?
+        ORDER BY created_at, claim_id
+        LIMIT 8`,
+    )
+    .all(CAPTURE_FANOUT_SKIP_REASON);
+  return { live, filed };
+}
+
+function reconcileReceipts(
+  vaultPath: string,
+  ctx: ReadVaultContext,
+): { orphans: string[]; count: number } {
+  const orphans: string[] = [];
+  const allReceiptIds = new Set<string>();
+  const retainedReceiptIds: string[] = [];
+  if (hasTable(ctx.db, "canon_receipts")) {
+    for (const row of ctx.db
+      .query<{ receipt_id: string; page_path: string | null }, []>(
+        "SELECT receipt_id, page_path FROM canon_receipts ORDER BY at, receipt_id",
+      )
+      .iterate()) {
+      allReceiptIds.add(row.receipt_id);
+      if (row.page_path !== null) retainedReceiptIds.push(row.receipt_id);
     }
   }
-  return orphans;
+
+  const path = join(vaultPath, ".kizuki", "receipts", "promotions.jsonl");
+  const seen = new Set<string>();
+  if (existsSync(path)) {
+    const content = readFileSync(path, "utf8");
+    let lineStart = 0;
+    let lineNumber = 0;
+    while (lineStart <= content.length) {
+      const nl = content.indexOf("\n", lineStart);
+      const lineEnd = nl === -1 ? content.length : nl;
+      lineNumber += 1;
+      if (lineEnd > lineStart) {
+        const line = content.slice(lineStart, lineEnd);
+        let parsed: unknown;
+        let ok = true;
+        try {
+          parsed = JSON.parse(line) as unknown;
+        } catch {
+          orphans.push(`torn JSONL line ${lineNumber}`);
+          ok = false;
+        }
+        if (ok) {
+          if (typeof parsed !== "object" || parsed === null || !("receipt_id" in parsed)) {
+            orphans.push(`invalid JSONL line ${lineNumber}`);
+          } else {
+            const receiptId = (parsed as { receipt_id: unknown }).receipt_id;
+            if (typeof receiptId !== "string" || receiptId.length === 0) {
+              orphans.push(`invalid JSONL line ${lineNumber}`);
+            } else if (seen.has(receiptId)) {
+              orphans.push(`duplicate receipt ${receiptId}`);
+            } else {
+              seen.add(receiptId);
+              // A purge leaves an erased record for each typed receipt it removes; the row still exists.
+              if (!allReceiptIds.has(receiptId)) {
+                orphans.push(`orphan receipt ${receiptId} (no canon_receipts row)`);
+              }
+            }
+          }
+        }
+      }
+      if (nl === -1) break;
+      lineStart = nl + 1;
+    }
+  }
+
+  for (const receiptId of retainedReceiptIds) {
+    if (!seen.has(receiptId)) {
+      orphans.push(`orphan row ${receiptId} (no JSONL line)`);
+    }
+  }
+  return { orphans, count: allReceiptIds.size };
 }
 
 function hashDriftCoverageLine(coverage: HashDriftCoverage): string {
@@ -254,10 +395,9 @@ function hashDriftCoverageLine(coverage: HashDriftCoverage): string {
 }
 
 function hashDrift(
-  vaultPath: string,
   ctx: ReadVaultContext,
+  report: CanonPageReport,
 ): { problems: { page: string; error: string }[]; coverage: HashDriftCoverage } {
-  const report = listCanonPagesReport(vaultPath);
   const selected = report.pages.slice(0, HASH_DRIFT_CAP);
   const problems: { page: string; error: string }[] = [];
   let checked = 0;
@@ -269,18 +409,7 @@ function hashDrift(
       continue;
     }
     checked += 1;
-    const absolute = join(vaultPath, page.relPath);
-    if (!existsSync(absolute)) {
-      problems.push({
-        page: page.relPath,
-        error: `hash drift: live page missing (receipt ${latest.receipt_id})`,
-      });
-      continue;
-    }
-    const actual = new Bun.CryptoHasher("sha256")
-      .update(readFileSync(absolute))
-      .digest("hex");
-    if (actual !== latest.after_hash) {
+    if (page.contentHash !== latest.after_hash) {
       problems.push({
         page: page.relPath,
         error: `hash drift: file disagrees with receipt ${latest.receipt_id}`,
@@ -310,12 +439,7 @@ async function collect(
   env: Record<string, string | undefined>,
   fullIntegrity = false,
 ): Promise<DoctorReport> {
-  const claims = Object.fromEntries(
-    CLAIM_STATUSES.map((status) => [
-      status,
-      countClaims(ctx.db, { status }),
-    ]),
-  ) as Record<ClaimStatus, number>;
+  const claimSummary = readDoctorClaimSummary(ctx.db);
 
   const connections: DoctorConnection[] = [];
   const coverage = new Map(inspectSourceCoverage(ctx.db).map(report => [report.source_key, report]));
@@ -383,13 +507,19 @@ async function collect(
     }
   }
 
-  const orphans = reconcileReceipts(vaultPath, ctx);
+  const { orphans, count: receiptCount } = reconcileReceipts(vaultPath, ctx);
   const holds = readHolds(ctx.db).map((hold) => ({
     page_path: hold.page_path,
     id: hold.proposal_id,
   }));
 
-  const vault = doctorVault(vaultPath, ctx.db);
+  // Walk canon once without decoding bodies or registering inotify watches;
+  // doctorVault, hashDrift, and inspectServeDoctor all consume this snapshot.
+  const pageReport = listCanonPagesReport(vaultPath, undefined, undefined, {
+    include_body: false,
+    track_capacity: false,
+  });
+  const vault = doctorVault(vaultPath, ctx.db, pageReport);
   const ledger = inspectLedgerHealth(ctx.db, { full: fullIntegrity });
   const problems = vault.pages.flatMap((page) =>
     page.errors.map((error) => ({ page: page.page, error })),
@@ -429,7 +559,7 @@ async function collect(
           : `canon hold ${failure.id} pending for ${failure.age_s}s (SLA ${PURGE_SLA_SECONDS}s)`,
     });
   }
-  const hashDriftResult = hashDrift(vaultPath, ctx);
+  const hashDriftResult = hashDrift(ctx, pageReport);
   problems.push(...hashDriftResult.problems);
 
   const freshness = indexFreshness(ctx.db, vaultPath);
@@ -472,6 +602,7 @@ async function collect(
     reasoning_effort: boundModel?.reasoning_effort ?? null,
     embedding_configured: embeddingConfigured(vaultPath),
     judge: configuredJudgeDestination(vaultPath),
+    pages: pageReport,
     ...(configuredModel === null ? {} : { configured_model_ref: configuredModel.model_ref }),
   });
   const ok =
@@ -483,21 +614,8 @@ async function collect(
     freshness.fresh &&
     problems.length === 0;
 
-  const toDoctorClaim = (claim: {
-    claim_id: string;
-    target: string | null;
-    predicate: string | null;
-  }): DoctorClaim => ({
-    claim_id: claim.claim_id,
-    target: claim.target,
-    predicate: claim.predicate,
-  });
-  const liveClaims = listClaims(ctx.db, { status: "live", limit: 8 }).map(
-    toDoctorClaim,
-  );
-  const filedClaims = listClaims(ctx.db, { status: "skipped", limit: 8, filter: (claim) => !isCaptureFanoutSkip(claim) }).map(
-    toDoctorClaim,
-  );
+  const { live: liveClaims, filed: filedClaims } = readDoctorSampleClaims(ctx.db);
+  const memt = await inspectMemtForDoctor(vaultPath, env);
 
   return {
     config,
@@ -505,18 +623,11 @@ async function collect(
     vault_id: readVaultId(vaultPath),
     effective_config: effective,
     events: count(ctx.db),
-    claims: {
-      ...claims,
-      filed: countClaims(ctx.db, { status: "skipped" }),
-      written: countWrittenLiveClaims(ctx.db),
-      unwritten: countUnwrittenLiveClaims(ctx.db),
-      capture_fanout: countCaptureFanout(ctx.db),
-      by_producer: countLiveClaimsByProducer(ctx.db),
-    },
+    claims: claimSummary,
     live_claims: liveClaims,
     filed_claims: filedClaims,
     connections,
-    receipts: countCanonReceiptRows(ctx.db),
+    receipts: receiptCount,
     orphans,
     holds,
     problems,
@@ -527,6 +638,7 @@ async function collect(
     ledger,
     runtime: readSqliteRuntime(ctx.db),
     canon_recovery: canonRecovery,
+    memt,
     ok: ok && ledger.ok,
   };
 }
@@ -555,6 +667,7 @@ function printHuman(io: CliIo, report: DoctorReport): void {
     `derived search=${derived.search.rebuilt_at ?? "never"} docs=${derived.search.doc_count} watermark=${clean(derived.search.ledger_watermark ?? "none")} graph=${derived.graph.rebuilt_at ?? "never"} docs=${derived.graph.doc_count} watermark=${clean(derived.graph.ledger_watermark ?? "none")}`,
   );
   io.out(report.serve.stores.vector_layer.detail);
+  io.out(report.memt.detail);
   const stores = report.serve.stores;
   if (stores.skipped_pages_total > 0) {
     io.out(`index-degraded: ${stores.skipped_pages_total} canon file(s) cannot be indexed`);

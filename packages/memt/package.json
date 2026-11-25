@@ -1,0 +1,10 @@
+{
+  "name": "@kizuki/memt",
+  "version": "1.0.0",
+  "type": "module",
+  "module": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {}
+}

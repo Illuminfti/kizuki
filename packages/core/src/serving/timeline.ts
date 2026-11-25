@@ -16,8 +16,10 @@ import type { Served } from "./gate";
 import { expandTimelineDetail, wantsTimelineExpansion } from "./expand";
 import type { TimelineExpandData } from "./expand";
 import {
+  authorizeEventsBatch,
   collectAuthorizedTimeline,
-  eventDecision,
+  createSourceGrantLookup,
+  ownerCannotHaveDeniedEvents,
   readServableEvents,
 } from "./ledger";
 import type { ServeContext, ResponseContract, ResponseEnvelope } from "./types";
@@ -88,16 +90,25 @@ export function serveTimeline<C extends ResponseContract = typeof ENVELOPE_SCHEM
 
     // Privileged denial enumeration belongs to the owner's audit read. A
     // scoped response must never materialize candidates outside its grant.
-    const auditIds = ctx.principal.kind === "owner"
-      ? timelineAuditCandidates(ctx.db, { ...base, limit: rows }) : [];
-    const auditFacts = readServableEvents(ctx.db, auditIds);
-    for (const id of auditIds) {
-      if (seen.has(id)) continue;
-      seen.add(id);
-      const facts = auditFacts.get(id);
-      if (facts === undefined) continue;
-      const decision = eventDecision(grant, facts, ctx);
-      if (!decision.allow) withheld.push({ id, reason: decision.reason });
+    if (ctx.principal.kind === "owner") {
+      const grantOf = createSourceGrantLookup(ctx.db);
+      if (!ownerCannotHaveDeniedEvents(ctx, grant, grantOf)) {
+        const auditIds = timelineAuditCandidates(ctx.db, { ...base, limit: rows });
+        const unseenIds = auditIds.filter((id) => !seen.has(id));
+        if (unseenIds.length > 0) {
+          const auditFacts = readServableEvents(ctx.db, unseenIds);
+          const unseenEvents = unseenIds
+            .map((id) => auditFacts.get(id))
+            .filter((facts): facts is NonNullable<typeof facts> => facts !== undefined);
+          const decisions = authorizeEventsBatch(ctx, grant, unseenEvents, grantOf);
+          for (const id of unseenIds) {
+            if (seen.has(id)) continue;
+            seen.add(id);
+            const decision = decisions.get(id);
+            if (decision !== undefined && !decision.allow) withheld.push({ id, reason: decision.reason });
+          }
+        }
+      }
     }
 
     return { canon: [], quoted, withheld };

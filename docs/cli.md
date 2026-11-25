@@ -1052,6 +1052,11 @@ synthetic paraphrases that lexical retrieval misses. It does not measure the
 quality of any real model. Embeddings remain off by default; enabling them and
 pinning an immutable model id on the local server are owner choices.
 
+For a zero-API-cost local CPU server that implements both the OpenAI and Ollama
+wire contracts above with strict loopback binding and no query logging, see
+[`deploy/local-embed/README.md`](../deploy/local-embed/README.md)
+(`BAAI/bge-small-en-v1.5`, 384 dims).
+
 Restart the daemon and MCP sessions after changing embedding configuration;
 their engine and embedder are bound for the process lifetime. The backfill rail
 rechecks the configured on/off state and schedule on each pass.
@@ -1298,7 +1303,7 @@ extracted in segments and the receipts of skipped records.
 ## recover
 
 ```text
-usage: kizuki recover [--json]
+usage: kizuki recover [--resolve-stale-hold [--dry-run | --apply]] [--json]
 ```
 
 Resumes interrupted memory writes, their retrieval updates and interrupted
@@ -1314,16 +1319,17 @@ place until their purge finishes.
 ## rebuild
 
 ```text
-usage: kizuki rebuild [--layer all|search|graph] [--port ID] [--prune-old] [--confirm] [--max-records N] [--max-entries N] [--max-source-bytes N] [--json]
+usage: kizuki rebuild [--layer all|search|graph|world] [--port ID] [--prune-old] [--confirm] [--max-records N] [--max-entries N] [--max-source-bytes N] [--json]
 ```
 
 Reconstructs derived retrieval from the vault. `--layer all` rebuilds the
 configured retrieval store and the SQLite search/graph floor. `--layer search`
 rebuilds only the SQLite lexical floor and does not refresh graph; `--layer graph`
-rebuilds only the SQLite graph floor and does not refresh search. Those partial
-layers rebuild the SQLite floor even when an engine is configured; they do not
-open that engine. `--port` with a partial layer is refused before initialization
-and exits 1. `--prune-old` removes
+rebuilds only the SQLite graph floor and does not refresh search; `--layer world`
+rebuilds derived world-model projections without changing retrieval port selection.
+Those partial layers rebuild only their selected layer even when an engine is
+configured; they do not open that engine. `--port` with a partial layer is refused
+before initialization and exits 1. `--prune-old` removes
 inactive owned retrieval generations under `.kizuki/retrieval/` and leaves the
 currently configured engine, or the SQLite floor when no engine is bound.
 `--port ID` selects an installed engine for this invocation
@@ -1487,8 +1493,15 @@ startup wait or fail. A ledger that needs repair is repaired on open, as
 before. A session ends when stdin closes.
 
 `tools/list` names only the tools the principal's current grant allows (the
-owner sees all ten), read from the store on every listing, and stays under
-40 KB. A call to a tool the grant excludes still reaches the engine, which
+owner sees all 14: the 10 core tools `search`, `get_page`, `query_entities`,
+`timeline`, `context_packet`, `graph_neighbors`, `system_health`, `world_view`,
+`propose`, `correct`, plus the 4 MemT procedural-memory tools `memt_status`,
+`memt_recall`, `memt_experience`, `memt_snapshot`), read from the store on every
+listing, and stays under 40 KB. Agent visibility of the 4 MemT tools derives
+from existing core tool grants (`memt_status`: `system_health`; `memt_recall`:
+`search` + `context_packet`; `memt_experience`: `propose`, or `search` +
+`context_packet` for read-only search; `memt_snapshot`: `system_health` +
+`propose`) under the same sensitivity ceiling. A call to a tool the grant excludes still reaches the engine, which
 refuses and audits it. `world_view` advertises one object: `operation`
 (`find_concepts`, `find_situations`, `concept` or `situation`), `label`
 (default empty), the `concept` or `situation` object token, `valid` (default
@@ -1662,3 +1675,31 @@ Doctor and connection status include per-source scan and ledger coverage,
 backfill state, occurrence bounds, successful-pass time, and blind spots with
 next steps. See [source coverage](source-coverage.md) for unknown-count and
 excluded-directory semantics.
+
+## memt
+
+```text
+usage: kizuki memt <status|recall|experience|sync|snapshot|deploy-check> [options] [--json]
+```
+
+Dual-system procedural memory (`@kizuki/memt`):
+
+- `memt status [--json]`: strictly read-only inspection of mode (`local-hybrid`
+  or `native-gpu`), GPU backend status, experience counts, and snapshot custody
+  state. Never creates `.kizuki/memt/registry.sqlite` on an untouched vault.
+- `memt recall "<query>" [--domain D] [--scope-key K] [--partition P] [--ceiling public|work|personal|private] [--limit 1..50] [--no-synthesis] [--json]`:
+  fuses authorized System 2 search hits with System 1 procedural experiences
+  under the caller's sensitivity ceiling.
+- `memt experience <add|list|search|verify> ...`: records, lists, searches, or
+  verifies procedural experiences (`--domain`, `--condition`, `--recommendation`,
+  `--sensitivity`, `--outcome verified|observed|failed|superseded`,
+  `--confidence 0..1`, `--citation`).
+- `memt sync [--domain D] [--partition P] [--dry-run] [--include-canon-summaries] [--json]`:
+  internalizes uninternalized experiences into MemT-1.0 KV snapshots when the
+  optional GPU backend is online; remains safe and non-destructive offline.
+- `memt snapshot <list|verify|export> ...`: lists stored partitions, validates
+  `memt-memory-v1` `.safetensors` custody and purge taint state, or exports a
+  verified snapshot.
+- `memt deploy-check [--url URL] [--model memt-nano|memt-flash|memt-pro] [--require-online] [--json]`:
+  checks optional RunPod/SGLang GPU tunnel readiness while preserving automatic
+  `local-hybrid` fallback when offline.

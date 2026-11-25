@@ -181,3 +181,25 @@ test('Gmail empty, unknown or malformed field selections refuse before provider 
         }
     } finally { await host.close(); }
 });
+
+test('service_status exposes read-only local capabilities without leaking paths, URLs or secrets', async () => {
+    const f = fixture(true);
+    f.env.KIZUKI_MEMT_URL = 'http://127.0.0.1:9999/memt-secret-path';
+    f.env.KIZUKI_MEMT_API_KEY = 'must-never-appear-in-service-status';
+    f.env.KIZUKI_MEMT_MODEL = 'memt-flash';
+    const host = f.open();
+    try {
+        expect((await done(host, 'initialize')).state).toBe('succeeded');
+        const status = (await call(host, 'service_status')).data;
+        expect(status.local_capabilities).toEqual({
+            retrieval: 'fts5',
+            embedding: 'none',
+            memt: 'gpu_configured',
+            memt_model: 'memt-flash',
+        });
+        const serialized = JSON.stringify(status);
+        expect(serialized).not.toContain('must-never-appear-in-service-status');
+        expect(serialized).not.toContain('memt-secret-path');
+        expect(serialized).not.toContain(f.env.HOME!);
+    } finally { await host.close(); }
+});

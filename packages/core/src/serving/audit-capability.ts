@@ -1,9 +1,10 @@
 import type { Database } from "bun:sqlite";
-import { reserveAudit, updateAudit } from "../agents/audit";
+import { recordImmediateAudit, reserveAudit, updateAudit } from "../agents/audit";
 
 interface AuditCapability {
   reserve: (...args: Tail<Parameters<typeof reserveAudit>>) => ReturnType<typeof reserveAudit>;
   update: (...args: Tail<Parameters<typeof updateAudit>>) => void;
+  record: (...args: Tail<Parameters<typeof recordImmediateAudit>>) => string;
 }
 type Tail<T extends unknown[]> = T extends [unknown, ...infer R] ? R : never;
 const bound = new WeakMap<Database, AuditCapability>();
@@ -35,7 +36,24 @@ export function bindServingAudit(reader: Database, writer: Database, assertCurre
         assertCurrent();
       }).immediate();
     },
+    record(principal, tool, args, served, denied, at, options) {
+      assertCurrent();
+      const id = recordImmediateAudit(writer, principal, tool, args, served, denied, at, {
+        ...options,
+        beforeCommit: () => {
+          options?.beforeCommit?.();
+          assertCurrent();
+        },
+      });
+      assertCurrent();
+      owned.add(id);
+      return id;
+    },
   });
+}
+
+export function hasBoundServingAudit(db: Database): boolean {
+  return bound.has(db);
 }
 
 export function reserveServingAudit(db: Database, ...args: Tail<Parameters<typeof reserveAudit>>): ReturnType<typeof reserveAudit> {
@@ -46,4 +64,8 @@ export function updateServingAudit(db: Database, ...args: Tail<Parameters<typeof
   const capability = bound.get(db);
   if (capability === undefined) updateAudit(db, ...args);
   else capability.update(...args);
+}
+
+export function recordServingAudit(db: Database, ...args: Tail<Parameters<typeof recordImmediateAudit>>): string {
+  return bound.get(db)?.record(...args) ?? recordImmediateAudit(db, ...args);
 }

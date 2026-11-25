@@ -567,3 +567,102 @@ describe("authority is re-read on every served call", () => {
     expect(encoded).not.toContain("private-canary");
   });
 });
+
+describe("single-transaction owner read audit", () => {
+  test("owner read-only gate and gateAsync commit one durable audit row at exit without mid-call reservation", async () => {
+    const ownerCtx = fixture.owner();
+    const countOwnerAudit = () =>
+      fixture.db.query<{ n: number }, []>("SELECT count(*) AS n FROM agent_audit WHERE agent_id = 'owner'").get()!.n;
+
+    const beforeSync = countOwnerAudit();
+    let seenDuringSync = -1;
+    const syncEnvelope = gate(ownerCtx, "get_page", { id: "person:ada" }, () => {
+      seenDuringSync = countOwnerAudit();
+      return { canon: [CANON], quoted: [], withheld: [] };
+    });
+    expect(seenDuringSync).toBe(beforeSync);
+    expect(countOwnerAudit()).toBe(beforeSync + 1);
+    const syncRow = listAudit(fixture.db, "owner", { kind: "access", limit: 1 })[0];
+    expect(syncRow?.tool).toBe("get_page");
+    expect(syncRow?.at).toBe(syncEnvelope.at);
+    expect(syncRow?.grant_epoch).toBeNull();
+    expect(syncRow?.served).toHaveLength(1);
+    expect(syncRow?.denied).toEqual([]);
+
+    const beforeAsync = countOwnerAudit();
+    let seenDuringAsync = -1;
+    const asyncEnvelope = await gateAsync(ownerCtx, "search", { query: "kettle", limit: 5 }, async () => {
+      seenDuringAsync = countOwnerAudit();
+      return { canon: [CANON], quoted: [QUOTED], withheld: [{ id: "page:hidden", reason: "above_ceiling" }] };
+    });
+    expect(seenDuringAsync).toBe(beforeAsync);
+    expect(countOwnerAudit()).toBe(beforeAsync + 1);
+    const asyncRow = listAudit(fixture.db, "owner", { kind: "access", limit: 1 })[0];
+    expect(asyncRow?.tool).toBe("search");
+    expect(asyncRow?.at).toBe(asyncEnvelope.at);
+    expect(asyncRow?.grant_epoch).toBeNull();
+    expect(asyncRow?.served).toHaveLength(2);
+    expect(asyncRow?.denied).toHaveLength(1);
+    expect(asyncRow?.query_shape["limit"]).toBe(5);
+  });
+
+  test("owner read-only failures still persist the exact refusal audit row", async () => {
+    const ownerCtx = fixture.owner();
+    expect(
+      refusal(() =>
+        gate(ownerCtx, "get_page", { id: "person:missing" }, () => {
+          throw new ServeError("not_found", "not found");
+        }),
+      ).code,
+    ).toBe("not_found");
+    expect(listAudit(fixture.db, "owner", { kind: "access", limit: 1 })[0]?.denied).toEqual([
+      { id: "tool:get_page", reason: "not_found" },
+    ]);
+
+    expect(
+      refusal(() =>
+        gate(ownerCtx, "timeline", {}, () => {
+          throw new RangeError("bad date");
+        }),
+      ).code,
+    ).toBe("invalid_arguments");
+    expect(listAudit(fixture.db, "owner", { kind: "access", limit: 1 })[0]?.denied).toEqual([
+      { id: "tool:timeline", reason: "invalid_arguments" },
+    ]);
+
+    await expect(
+      gateAsync(ownerCtx, "search", { query: "kettle" }, async () => {
+        throw new Error("boom");
+      }),
+    ).rejects.toMatchObject({ code: "error", message: "serving failed" });
+    expect(listAudit(fixture.db, "owner", { kind: "access", limit: 1 })[0]?.denied).toEqual([
+      { id: "tool:search", reason: "error" },
+    ]);
+  });
+
+  test("scoped agent reads and owner mutating calls still reserve an audit row before run executes", () => {
+    const agentCtx = fixture.agent("reader-private");
+    const countAgentAudit = () =>
+      fixture.db
+        .query<{ n: number }, [string]>("SELECT count(*) AS n FROM agent_audit WHERE agent_id = ?")
+        .get(agentCtx.principal.kind === "agent" ? agentCtx.principal.agent.agent_id : "")!.n;
+    const beforeAgent = countAgentAudit();
+    let seenDuringAgent = -1;
+    gate(agentCtx, "get_page", { id: "person:ada" }, () => {
+      seenDuringAgent = countAgentAudit();
+      return emptyRun();
+    });
+    expect(seenDuringAgent).toBe(beforeAgent + 1);
+
+    const ownerCtx = fixture.owner();
+    const countOwnerAudit = () =>
+      fixture.db.query<{ n: number }, []>("SELECT count(*) AS n FROM agent_audit WHERE agent_id = 'owner'").get()!.n;
+    const beforeCorrect = countOwnerAudit();
+    let seenDuringCorrect = -1;
+    gate(ownerCtx, "correct", { statement: "test" }, () => {
+      seenDuringCorrect = countOwnerAudit();
+      return emptyRun();
+    });
+    expect(seenDuringCorrect).toBe(beforeCorrect + 1);
+  });
+});

@@ -7,6 +7,7 @@ import { issuePageRef } from "../../world/ref-kinds/page";
 import type { CorrectData } from "../correct";
 import type { GraphData } from "../graph";
 import { loadCanon } from "../canon";
+import type { HealthV2Data } from "../health-v2";
 import type { ProposeData } from "../propose";
 import type { SearchData } from "../search";
 import { ServeError } from "../types";
@@ -68,6 +69,22 @@ export function projectToolData(scope: RefScope, tool: Tool, data: unknown, mess
     }
     case "correct": return correction(scope, data as CorrectData, message);
     case "context_packet": case "world_view": return data;
-    case "system_health": throw new ServeError("unsupported_contract", "requested contract unavailable");
+    case "system_health": {
+      const health = data as HealthV2Data | undefined;
+      if (health === undefined || typeof health !== "object" || health === null || !("vault_ready" in health)) {
+        throw new ServeError("error", "serving failed");
+      }
+      return {
+        vault_ready: health.vault_ready,
+        principal: health.principal,
+        counts: health.counts,
+        backlog: health.backlog,
+        last_extracted_at: health.last_extracted_at,
+        rails: health.rails,
+        vector_layer: health.vector_layer,
+        memt: health.memt,
+        degraded: health.degraded,
+      } satisfies HealthV2Data;
+    }
   }
 }

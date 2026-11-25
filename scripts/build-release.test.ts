@@ -191,3 +191,14 @@ test("build metadata refuses a partial revision and an invalid time", () => {
   expect(() => buildMetadataDefines("abc123", new Date())).toThrow("full source revision");
   expect(() => buildMetadataDefines("a".repeat(40), new Date(Number.NaN))).toThrow("valid build time");
 });
+
+test("packagedQuickStart includes local PATH symlinks, 14-tool MCP note, and upgrade/integration links", () => {
+  const sha = "c".repeat(40);
+  const text = packagedQuickStart({ version: "1.0.2", target: selectedReleaseTarget(), sourceSha: sha });
+  expect(text).toContain('ln -sf "$PWD/kizuki" "$HOME/.local/bin/kizuki"');
+  expect(text).toContain('ln -sf "$PWD/kizuki-mcp" "$HOME/.local/bin/kizuki-mcp"');
+  expect(text).toContain("14 scoped tools");
+  expect(text).toContain(`https://github.com/Illuminfti/kizuki/blob/${sha}/docs/integrations.md`);
+  expect(text).toContain(`https://github.com/Illuminfti/kizuki/blob/${sha}/docs/upgrade.md`);
+  expect(text).not.toMatch(/\/home\/|\/Users\/|\/data\//);
+});

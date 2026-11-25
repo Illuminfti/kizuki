@@ -1,14 +1,15 @@
 import { TOOLS } from "@kizuki/core";
+import { trimServingCaches } from "@kizuki/core/internal";
 import type { ServeContext } from "@kizuki/core";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createServer } from "./server";
 
 function isRequest(message: object): boolean {
-  return "method" in message && "id" in message;
+  return "method" in message && "id" in message && (message as { id: unknown }).id !== undefined;
 }
 
 function isAnswer(message: object): boolean {
-  return "id" in message && !("method" in message);
+  return "id" in message && (message as { id: unknown }).id !== undefined && !("method" in message);
 }
 
 function isCancelled(message: object): boolean {
@@ -26,13 +27,6 @@ function requestKey(id: unknown): string {
   return JSON.stringify(id);
 }
 
-/** Resolves once the pipe has taken everything already handed to it. */
-async function drained(): Promise<void> {
-  await new Promise<void>((resolve) => {
-    process.stdout.write("", () => resolve());
-  });
-}
-
 /**
  * stdout is the protocol channel and nothing else writes to it. The one
  * readiness line goes to stderr, where a harness can see it without
@@ -46,18 +40,56 @@ export async function runStdio(ctx: ServeContext): Promise<void> {
   // turn is the normal case, not an edge one. Counting requests against the
   // answers the transport has sent is what makes the shutdown wait for the
   // work rather than for a fixed number of turns.
+  const IDLE_TRIM_MS = 60_000;
+  let idleTrimTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearIdleTrim = (): void => {
+    if (idleTrimTimer !== null) {
+      clearTimeout(idleTrimTimer);
+      idleTrimTimer = null;
+    }
+  };
+  const scheduleIdleTrim = (): void => {
+    clearIdleTrim();
+    idleTrimTimer = setTimeout(() => {
+      idleTrimTimer = null;
+      if (inFlight === 0) {
+        trimServingCaches();
+        (globalThis as { Bun?: { gc?: (force?: boolean) => void } }).Bun?.gc?.(false);
+      }
+    }, IDLE_TRIM_MS);
+    idleTrimTimer.unref?.();
+  };
   let inFlight = 0;
   const outstanding = new Set<string>();
   let ended = false;
+  let stdoutBroken = process.stdout.destroyed || process.stdout.writableEnded;
   let close: (() => void) | null = null;
+  let signalStdoutClosed: (() => void) | null = null;
+  const stdoutClosed = new Promise<void>((resolve) => {
+    if (stdoutBroken) {
+      resolve();
+      return;
+    }
+    signalStdoutClosed = resolve;
+  });
+
   const settle = (): void => {
     if (!ended || inFlight > 0 || close === null) return;
+    clearIdleTrim();
+    const stop = close;
+    close = null;
+    stop();
+  };
+  const forceClose = (): void => {
+    if (close === null) return;
+    clearIdleTrim();
     const stop = close;
     close = null;
     stop();
   };
   const begin = (id: unknown): void => {
     if (id === undefined) return;
+    clearIdleTrim();
     const key = requestKey(id);
     if (outstanding.has(key)) return;
     outstanding.add(key);
@@ -69,31 +101,82 @@ export async function runStdio(ctx: ServeContext): Promise<void> {
     if (!outstanding.has(key)) return;
     outstanding.delete(key);
     inFlight -= 1;
+    if (inFlight === 0 && !ended) scheduleIdleTrim();
     settle();
   };
-
-  const deliver = transport.onmessage?.bind(transport);
-  const send = transport.send.bind(transport);
-  transport.send = async (message) => {
-    try {
-      await send(message);
-    } finally {
-      // A write that fails still ends the request it was answering; leaving
-      // the count up would wedge the shutdown on work that cannot finish.
-      // Cancellation can also settle a request when the SDK suppresses the
-      // answer; only an id still in outstanding moves the count.
-      if (isAnswer(message)) end((message as { id: unknown }).id);
-    }
+  const markEnded = (): void => {
+    if (ended) return;
+    ended = true;
+    settle();
+  };
+  const onStdoutBroken = (): void => {
+    if (stdoutBroken) return;
+    stdoutBroken = true;
+    signalStdoutClosed?.();
+    signalStdoutClosed = null;
+    ended = true;
+    // A dead stdout pipe can no longer deliver answers; close immediately so
+    // SDK abort controllers cancel in-flight work and resources release cleanly.
+    forceClose();
   };
 
-  await server.connect(transport);
+  process.stdout.on("error", onStdoutBroken);
+  process.stdout.once("close", onStdoutBroken);
 
-  const handle = transport.onmessage?.bind(transport) ?? deliver;
+  // Serialize only stdout frame emission so concurrent tool calls execute in
+  // parallel without stacking duplicate `drain` listeners or interleaving writes.
+  const send = transport.send.bind(transport);
+  let writeQueue: Promise<void> = Promise.resolve();
+  transport.send = (message) => {
+    const step = writeQueue.then(async () => {
+      try {
+        if (stdoutBroken || process.stdout.destroyed || process.stdout.writableEnded) {
+          throw new Error("stdout closed");
+        }
+        await Promise.race([
+          send(message),
+          stdoutClosed.then(() => {
+            throw new Error("stdout closed");
+          }),
+        ]);
+      } finally {
+        // A write that fails still ends the request it was answering; leaving
+        // the count up would wedge the shutdown on work that cannot finish.
+        // Cancellation can also settle a request when the SDK suppresses the
+        // answer; only an id still in outstanding moves the count.
+        if (isAnswer(message)) end((message as { id: unknown }).id);
+      }
+    });
+    writeQueue = step.catch(() => undefined);
+    return step;
+  };
+
+  // Register before `server.connect` so Protocol.connect chains our counter
+  // ahead of request dispatch with no race window against buffered stdin data.
+  const priorOnMessage = transport.onmessage?.bind(transport);
   transport.onmessage = (message) => {
     if (isRequest(message)) begin((message as { id: unknown }).id);
     else if (isCancelled(message)) end(cancelledRequestId(message));
-    handle?.(message);
+    priorOnMessage?.(message);
   };
+
+  /** Resolves once queued protocol frames and stdout have flushed, or stdout breaks. */
+  const drained = async (): Promise<void> => {
+    await writeQueue;
+    if (stdoutBroken || process.stdout.destroyed || process.stdout.writableEnded) return;
+    await Promise.race([
+      stdoutClosed,
+      new Promise<void>((resolve) => {
+        try {
+          process.stdout.write("", () => resolve());
+        } catch {
+          resolve();
+        }
+      }),
+    ]);
+  };
+
+  await server.connect(transport);
 
   const name =
     ctx.principal.kind === "owner" ? "owner" : ctx.principal.agent.name;
@@ -106,13 +189,32 @@ export async function runStdio(ctx: ServeContext): Promise<void> {
   // and errors but not for end of input, so a harness closing the pipe has to
   // be turned into a close here or the process would outlive its client.
   await new Promise<void>((resolve) => {
-    server.server.onclose = () => resolve();
-    close = () => {
-      void drained().then(() => server.close());
+    const cleanup = (): void => {
+      clearIdleTrim();
+      process.stdin.off("end", markEnded);
+      process.stdin.off("close", markEnded);
+      process.stdout.off("error", onStdoutBroken);
+      process.stdout.off("close", onStdoutBroken);
     };
-    process.stdin.once("end", () => {
-      ended = true;
-      settle();
-    });
+    server.server.onclose = () => {
+      cleanup();
+      resolve();
+    };
+    close = () => {
+      clearIdleTrim();
+      void drained().finally(() => {
+        void server.close().catch(() => {
+          cleanup();
+          resolve();
+        });
+      });
+    };
+    process.stdin.once("end", markEnded);
+    process.stdin.once("close", markEnded);
+    if (stdoutBroken) {
+      forceClose();
+    } else if (process.stdin.readableEnded || process.stdin.destroyed) {
+      markEnded();
+    }
   });
 }

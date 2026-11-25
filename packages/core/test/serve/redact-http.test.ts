@@ -61,11 +61,10 @@ test("loopback HTTP serves an agent redacted v2 text and the owner raw v1 text",
   expect(raw.text).toContain(SECRET_FRAGMENTS[0]!);
 });
 
-test("loopback HTTP system_health refuses scoped clients before reporting vault-wide state", async () => {
-  const agent = await post(fixture.tokens["reader-public"]!, "system_health", {}, 400);
-  expect(agent.body).toEqual({ ok: false, error: {
-    code: "unsupported_contract", message: "requested contract unavailable", retryable: false,
-  } });
+test("loopback HTTP system_health serves redacted v2 summary to scoped clients without leaking vault-wide state", async () => {
+  const agent = await post(fixture.tokens["reader-public"]!, "system_health", {}, 200);
+  expect(agent.value["schema"]).toBe("kizuki.envelope/v2");
+  expect((agent.value["data"] as { vault_ready?: boolean })?.vault_ready).toBe(true);
   expect(agent.text).not.toContain("hidden-connector");
   const owner = (await post(OWNER_TOKEN, "system_health", {})).value["data"] as Record<string, unknown>;
   expect(JSON.stringify(owner)).toContain("hidden-connector");

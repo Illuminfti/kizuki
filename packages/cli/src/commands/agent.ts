@@ -1,9 +1,11 @@
 import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import {
   AgentEnrollmentError,
+  LedgerLeaseHeldError,
   amendAgentGrant,
   enrollAgent,
   inspectAgents,
+  isLedgerBusy,
   previewAgentEnrollment,
   revokeAgentEnrollment,
   type AgentEnrollmentErrorCode,
@@ -64,7 +66,9 @@ function readGrant(path: string): Grant {
     if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size ||
         before.mode !== after.mode || before.nlink !== after.nlink || before.uid !== after.uid ||
         before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs) throw new Error("changed grant file");
-    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as Grant;
+    const parsed: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid grant object");
+    return parsed as Grant;
   } catch {
     throw new AgentEnrollmentError("invalid_grant");
   } finally { if (fd !== undefined) closeSync(fd); }
@@ -106,7 +110,11 @@ function summaryRow(agent: AgentInventoryEntry): string[] {
 async function listAgents(io: CliIo, json: boolean): Promise<number> {
   let agents: AgentInventoryEntry[];
   try { agents = await withReadVault(io, async ctx => inspectAgents(ctx.db)); }
-  catch { throw new AgentEnrollmentError("vault_unavailable"); }
+  catch (error) {
+    throw new AgentEnrollmentError(
+      error instanceof LedgerLeaseHeldError || isLedgerBusy(error) ? "enrollment_busy" : "vault_unavailable",
+    );
+  }
   if (json) io.out(jsonEnvelope("agent", "ok", { agents }));
   else io.out(agents.length === 0 ? "No agents are enrolled." : table(agents.map(summaryRow)).join("\n"));
   return 0;

@@ -5,6 +5,14 @@ import type { SliceCandidates } from "./providers";
 
 /** Covers the closed WorldView wrapper, its largest opaque token and expiry. */
 const VIEW_WRAPPER_TOKENS = 200;
+/** Share of post-header packet room reserved for typed slice units so canon and capture still fit. */
+export const PACKET_SLICE_SHARE = 0.6;
+
+export function packetSliceBudget(headerTokens: number, budgetTokens: number, reservedTokens?: number): number {
+  const base = headerTokens + Math.floor(Math.max(0, budgetTokens - headerTokens) * PACKET_SLICE_SHARE);
+  if (reservedTokens === undefined) return base;
+  return Math.max(base, Math.min(budgetTokens, budgetTokens - Math.max(0, reservedTokens)));
+}
 
 function counted(data: WorldSlice, project: (value: WorldSlice) => WorldSlice): WorldSlice {
   let result = data;
@@ -27,6 +35,31 @@ export function compileUnits<T>(constraints: readonly T[], detail: readonly T[],
     selected.push(unit);
   }
   return { constraints, detail: selected as readonly T[], overflow: false, truncated };
+}
+
+/** Compile packet slice units within the shared slice budget so canon and capture still fit.
+ * Allows the highest-priority required unit up to the full packet budget when the share alone is narrower. */
+export function compilePacketUnits<T>(
+  required: readonly T[],
+  detail: readonly T[],
+  within: (constraints: readonly T[], detail: readonly T[], limit: number) => boolean,
+  shareLimit: number,
+  fullLimit: number,
+) {
+  const fitsShare = (constraints: readonly T[], details: readonly T[]) => within(constraints, details, shareLimit);
+  const compiled = compileUnits(required, detail, fitsShare);
+  if (!compiled.overflow) return compiled;
+  const prefix: T[] = [];
+  for (const unit of required) {
+    const limit = prefix.length === 0 ? fullLimit : shareLimit;
+    if (!within([...prefix, unit], [], limit)) break;
+    prefix.push(unit);
+  }
+  const overflow = prefix.length < required.length;
+  if (!fitsShare(prefix, [])) {
+    return { constraints: prefix as readonly T[], detail: [] as readonly T[], overflow, truncated: true };
+  }
+  return { ...compileUnits(prefix, detail, fitsShare), overflow, truncated: true };
 }
 
 /** Keep whole qualifications and evidence. No claim is shortened to win a budget. */

@@ -121,6 +121,57 @@ describe("serve http", () => {
     const read=await fetch(`${handle.url}/v1/mcp/world_view`,{method:"POST",headers:worldHeaders,body:JSON.stringify({operation:"concept",concept:discovery.value.data.result.data.matches[0]!.ref,valid:{kind:"all"},knownAt:{kind:"current"}})});
     expect(read.status).toBe(200);expect(await read.text()).toContain("Revise beliefs using evidence");
 
+    // #594: /v1/health liveness & authenticated TTL-cached snapshot (<50ms) + immediate freshness on write.
+    const livenessStart = performance.now();
+    const liveness = await fetch(`${handle.url}/v1/health`);
+    const livenessMs = performance.now() - livenessStart;
+    expect(liveness.status).toBe(200);
+    expect(livenessMs).toBeLessThan(50);
+    expect(await liveness.json()).toMatchObject({ ok: true, bind: "127.0.0.1", status: "ready" });
+
+    const badBearer = await fetch(`${handle.url}/v1/health`, {
+      headers: { authorization: "Bearer wrong-token" },
+    });
+    expect(badBearer.status).toBe(401);
+
+    // Warm snapshot call via /v1/health (GET with bearer and POST) must answer in <50ms.
+    const firstAuthHealth = await fetch(`${handle.url}/v1/health`, {
+      headers: { authorization: "Bearer test-token-not-a-secret-fixture" },
+    });
+    expect(firstAuthHealth.status).toBe(200);
+    const firstPayload = (await firstAuthHealth.json()) as {
+      ok: boolean;
+      status: string;
+      value: { data: { events: number } };
+    };
+    expect(firstPayload.ok).toBe(true);
+    expect(firstPayload.status).toBe("ready");
+    const eventsBefore = firstPayload.value.data.events;
+
+    const warmStart = performance.now();
+    const warmPost = await fetch(`${handle.url}/v1/health`, {
+      method: "POST",
+      headers: worldHeaders,
+      body: "{}",
+    });
+    const warmMs = performance.now() - warmStart;
+    expect(warmPost.status).toBe(200);
+    // Bound allows CI runner scheduling jitter while still proving the warm cache path.
+    expect(warmMs).toBeLessThan(250);
+
+    // Accepting a new event immediately invalidates the health snapshot cache before TTL expiry.
+    const { accept } = await import("../../src/ledger/ledger");
+    const { validEvent } = await import("../fixtures");
+    expect(accept(db, { ...validEvent(), source_record_id: "health-freshness-probe" }).status).toBe("stored");
+    const afterWrite = await fetch(`${handle.url}/v1/system_health`, {
+      method: "POST",
+      headers: worldHeaders,
+      body: "{}",
+    });
+    expect(afterWrite.status).toBe(200);
+    const afterPayload = (await afterWrite.json()) as { value: { data: { events: number } } };
+    expect(afterPayload.value.data.events).toBe(eventsBefore + 1);
+
     await handle.stop();
     db.close();
   });

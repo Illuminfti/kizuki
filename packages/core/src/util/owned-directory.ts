@@ -24,10 +24,26 @@ function childFd(parent: number, name: string | Buffer, directory = false): numb
   fail();
 }
 function openPath(path: string): number {
-  let fd = openSync("/", constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  const closeOnExec = process.platform === "darwin" ? 0x1000000 : 0x80000;
+  const components = resolve(path).split("/").filter(Boolean);
+  // Ancestors confer traversal only; Linux O_PATH avoids requesting directory
+  // listing on confined roots under systemd ProtectSystem=strict.
+  const access = process.platform === "linux" && components.length > 0 ? 0x200000 /* O_PATH */ : constants.O_RDONLY;
+  let fd = openSync("/", access | constants.O_DIRECTORY | constants.O_NOFOLLOW | closeOnExec);
   try {
-    for (const component of resolve(path).split("/").filter(Boolean)) {
-      const next = childFd(fd, component, true); if (next === null) fail("identity_changed");
+    for (const [index, component] of components.entries()) {
+      let next: number | null;
+      if (index < components.length - 1) {
+        const bytes = nameBytes(component);
+        const opened = api().symbols.openAncestorChild(fd, ptr(bytes));
+        if (typeof opened !== "number" || !Number.isSafeInteger(opened) || opened > 0x7fffffff) fail("abi_invalid");
+        if (opened === -2) fail("identity_changed");
+        if (opened < 0) fail();
+        next = opened;
+      } else {
+        next = childFd(fd, component, true);
+      }
+      if (next === null) fail("identity_changed");
       closeSync(fd); fd = next;
     }
     return fd;

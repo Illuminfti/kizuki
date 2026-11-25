@@ -1,3 +1,4 @@
+import type { Database } from "bun:sqlite";
 import { isLedgerBusy } from "../ledger/busy";
 import { purgeReadEpoch } from "../derived-holds";
 import { canonReadGeneration } from "../canon/write-intent";
@@ -7,7 +8,12 @@ import {
   denyClassesOf,
   toolAllowed,
 } from "../agents";
-import { reserveServingAudit as reserveAudit, updateServingAudit as updateAudit } from "./audit-capability";
+import {
+  hasBoundServingAudit,
+  recordServingAudit as recordAudit,
+  reserveServingAudit as reserveAudit,
+  updateServingAudit as updateAudit,
+} from "./audit-capability";
 import type {
   AuditDenial,
   AuditItem,
@@ -264,7 +270,119 @@ function servedItems(canon: CanonChunk[], quoted: QuotedChunk[]): AuditItem[] {
 
 interface Entered {
   live: ServeContext;
-  audit_id: string;
+  /** `null` when an unbound writable owner read defers its single-tx audit write to exit. */
+  audit_id: string | null;
+}
+
+interface GateEpochs {
+  sourceEpoch: number;
+  purgeEpoch: number;
+  canonGeneration: number | null;
+  claimsEpoch: number | null;
+}
+
+function isReadOnlyTool(tool: Tool): boolean {
+  return tool !== "propose" && tool !== "correct";
+}
+
+function canDeferOwnerReadAudit(
+  ctx: ServeContext,
+  tool: Tool,
+  refusal: ServeError | undefined,
+): boolean {
+  if (refusal !== undefined) return false;
+  if (ctx.principal.kind !== "owner") return false;
+  if (!isReadOnlyTool(tool)) return false;
+  if (!toolAllowed(ctx.principal.grant, tool)) return false;
+  // Bound query-only audit handles enforce a two-phase reservation contract
+  // across a separate private writer with mid-call custody checks.
+  if (hasBoundServingAudit(ctx.db)) return false;
+  // Query-only handles without a bound audit writer must fail before `run()`.
+  if (ctx.db.query<{ query_only: number }, []>("PRAGMA query_only").get()?.query_only !== 0) {
+    return false;
+  }
+  return true;
+}
+
+function readGateEpochs(
+  db: Database,
+  options: { includeClaims: boolean; includeCanon: boolean },
+): GateEpochs {
+  try {
+    if (options.includeClaims && options.includeCanon) {
+      const row = db
+        .query<
+          { source_epoch: number; purge_epoch: number; canon_generation: number | null; claims_delta: number },
+          []
+        >(
+          `SELECT
+             (SELECT coalesce(max(sequence), 0) FROM source_grant_receipts) AS source_epoch,
+             (SELECT count(*) FROM purge_batches) AS purge_epoch,
+             (SELECT generation FROM canon_read_generation WHERE singleton = 1) AS canon_generation,
+             (SELECT count(*) FROM claims WHERE authority = 'owner_correction')
+               + (SELECT count(*) FROM claim_supersessions) AS claims_delta`,
+        )
+        .get();
+      if (row !== null) {
+        const canonGeneration =
+          row.canon_generation !== null && Number.isSafeInteger(row.canon_generation) && row.canon_generation >= 0
+            ? row.canon_generation
+            : canonReadGeneration(db);
+        return {
+          sourceEpoch: row.source_epoch,
+          purgeEpoch: row.purge_epoch,
+          canonGeneration,
+          claimsEpoch: row.source_epoch + row.claims_delta,
+        };
+      }
+    } else if (!options.includeClaims && options.includeCanon) {
+      const row = db
+        .query<{ source_epoch: number; purge_epoch: number; canon_generation: number | null }, []>(
+          `SELECT
+             (SELECT coalesce(max(sequence), 0) FROM source_grant_receipts) AS source_epoch,
+             (SELECT count(*) FROM purge_batches) AS purge_epoch,
+             (SELECT generation FROM canon_read_generation WHERE singleton = 1) AS canon_generation`,
+        )
+        .get();
+      if (row !== null) {
+        const canonGeneration =
+          row.canon_generation !== null && Number.isSafeInteger(row.canon_generation) && row.canon_generation >= 0
+            ? row.canon_generation
+            : canonReadGeneration(db);
+        return {
+          sourceEpoch: row.source_epoch,
+          purgeEpoch: row.purge_epoch,
+          canonGeneration,
+          claimsEpoch: null,
+        };
+      }
+    } else if (!options.includeClaims && !options.includeCanon) {
+      const row = db
+        .query<{ source_epoch: number; purge_epoch: number }, []>(
+          `SELECT
+             (SELECT coalesce(max(sequence), 0) FROM source_grant_receipts) AS source_epoch,
+             (SELECT count(*) FROM purge_batches) AS purge_epoch`,
+        )
+        .get();
+      if (row !== null) {
+        return {
+          sourceEpoch: row.source_epoch,
+          purgeEpoch: row.purge_epoch,
+          canonGeneration: null,
+          claimsEpoch: null,
+        };
+      }
+    }
+  } catch (error) {
+    // Minimal test ledgers without optional tables fall back to table-checked helpers.
+    if (!(error instanceof Error) || !error.message.includes("no such table")) throw error;
+  }
+  return {
+    sourceEpoch: sourcePolicyEpoch(db),
+    purgeEpoch: purgeReadEpoch(db),
+    canonGeneration: options.includeCanon ? canonReadGeneration(db) : null,
+    claimsEpoch: options.includeClaims ? claimsEpoch(db) : null,
+  };
 }
 
 /**
@@ -280,6 +398,18 @@ function enter(
   at: string,
   refusal?: ServeError,
 ): Entered {
+  if (canDeferOwnerReadAudit(ctx, tool, refusal)) {
+    const live = liveContext(ctx)!;
+    return {
+      live: {
+        ...live,
+        requestCanon: live.requestCanon ?? new Map(),
+        sourcePurpose: live.sourcePurpose ?? "recall",
+        redactor: createRedactor(live.principal, live.servingSecrets),
+      },
+      audit_id: null,
+    };
+  }
   const bag = boundedArguments(args);
   const live = liveContext(ctx);
   const reserved = reserveAudit(
@@ -315,7 +445,7 @@ function enter(
     ]);
     throw new ServeError("tool_not_granted", "tool not granted");
   }
-  return { live: { ...live, sourcePurpose: tool === "correct" ? "correction" : tool === "propose" ? "derive" : live.sourcePurpose ?? "recall", redactor: createRedactor(live.principal, live.servingSecrets) }, audit_id: reserved.audit_id };
+  return { live: { ...live, requestCanon: live.requestCanon ?? new Map(), sourcePurpose: tool === "correct" ? "correction" : tool === "propose" ? "derive" : live.sourcePurpose ?? "recall", redactor: createRedactor(live.principal, live.servingSecrets) }, audit_id: reserved.audit_id };
 }
 
 /**
@@ -352,12 +482,27 @@ function failed(
   live: ServeContext,
   tool: Tool,
   args: Record<string, unknown>,
-  auditId: string,
+  at: string,
+  auditId: string | null,
   error: unknown,
 ): never {
   const bag = boundedArguments(args);
-  const record = (reason: DenyReason, extra: AuditDenial[] = []): void => {
-    updateAudit(live.db, auditId, bag, [], boundedForAudit([{ id: `tool:${tool}`, reason }, ...extra]));
+  const record = (reason: DenyReason, extra: AuditDenial[] = [], attempts?: number): void => {
+    const denied = boundedForAudit([{ id: `tool:${tool}`, reason }, ...extra]);
+    if (auditId === null) {
+      recordAudit(
+        live.db,
+        live.principal,
+        tool,
+        bag,
+        [],
+        denied,
+        at,
+        attempts === undefined ? undefined : { attempts },
+      );
+    } else {
+      updateAudit(live.db, auditId, bag, [], denied);
+    }
   };
   if (error instanceof ServeError) {
     record(error.code, error.denials);
@@ -366,7 +511,7 @@ function failed(
   if (isLedgerBusy(error)) {
     // The audit row is itself a write; a busy ledger may refuse it too. The
     // caller still gets the typed refusal rather than a raw lock failure.
-    try { record("busy"); } catch { /* recorded when the ledger frees up */ }
+    try { record("busy", [], 1); } catch { /* recorded when the ledger frees up */ }
     throw ledgerBusyServeError(error);
   }
   if (error instanceof RangeError) {
@@ -386,17 +531,21 @@ function envelopeOf<T, C extends ResponseContract, V = T | null, Q extends reado
   tool: Tool,
   args: Record<string, unknown>,
   at: string,
-  auditId: string,
+  auditId: string | null,
   served: Served<T>,
   contract: C,
+  knownPolicyEpoch?: number,
 ): ResponseEnvelope<T, C, V, Q> {
-  updateAudit(
-    live.db,
-    auditId,
-    boundedArguments({ ...args, ...served.audit_ids }),
-    [...servedItems(served.canon, served.quoted), ...(served.audit_served ?? [])],
-    boundedForAudit(served.withheld),
+  const auditArgs = boundedArguments(
+    served.audit_ids === undefined ? args : { ...args, ...served.audit_ids },
   );
+  const auditServed = [...servedItems(served.canon, served.quoted), ...(served.audit_served ?? [])];
+  const auditDenied = boundedForAudit(served.withheld);
+  if (auditId === null) {
+    recordAudit(live.db, live.principal, tool, auditArgs, auditServed, auditDenied, at);
+  } else {
+    updateAudit(live.db, auditId, auditArgs, auditServed, auditDenied);
+  }
 
   // The one serving-output seam: sources redact before they truncate or pack,
   // and this pass covers every string that reaches the caller, whatever built it.
@@ -410,7 +559,7 @@ function envelopeOf<T, C extends ResponseContract, V = T | null, Q extends reado
   const { canon, quoted, data } = redactValue(redactor, { canon: served.canon, quoted: served.quoted, data: served.data });
   // Read once: conditional extra queries would expose the first hidden source
   // through work counters even when the v2 projector omits policy metadata.
-  const policyEpoch = sourcePolicyEpoch(live.db);
+  const policyEpoch = knownPolicyEpoch ?? sourcePolicyEpoch(live.db);
   return {
     schema: ENVELOPE_SCHEMA,
     tool,
@@ -454,54 +603,77 @@ function gated<T, C extends ResponseContract, V = T | null, Q extends readonly u
 ): ResponseEnvelope<T, C, V, Q> {
   const at = new Date().toISOString();
   const { live, audit_id } = enter(ctx, tool, args, at);
-  if (recheck !== undefined) {
-    try {
-      const served = run({ ctx: live, at });
-      return live.db.transaction(() => {
-        const current = liveContext(live);
-        if (current === null) throw new ServeError("unknown_agent", "unknown agent");
-        if (!toolAllowed(current.principal.grant, tool)) throw new ServeError("tool_not_granted", "tool not granted");
-        const fresh = { ...current, redactor: createRedactor(current.principal, current.servingSecrets) };
-        const final = recheck({ ctx: fresh, at }, served);
-        validatePublication(fresh, tool, final);
-        return envelopeOf<T, C, V, Q>(fresh, tool, args, at, audit_id, final, contract);
-      }).immediate();
-    } catch (error) {
-      failed(live, tool, args, audit_id, error);
-    }
-  }
-  if (contract === ENVELOPE_V2_SCHEMA) {
-    try {
-      return live.db.transaction(() => {
-        assertPublicationAuthority(ctx, live);
-        const served = run({ ctx: live, at });
-        return envelopeOf<T, C, V, Q>(live, tool, args, at, audit_id, served, contract);
-      }).immediate();
-    } catch (error) {
-      failed(live, tool, args, audit_id, error);
-    }
-  }
-  const sourceEpoch = sourcePolicyEpoch(live.db);
-  const purgeEpoch = purgeReadEpoch(live.db);
-  const readEpoch = tool === "query_entities" ? claimsEpoch(live.db) : null;
-  const canonGeneration = tool === "propose" || tool === "correct" ? null : canonReadGeneration(live.db);
-  let served: Served<T>;
   try {
-    served = run({ ctx: live, at });
-    if (purgeReadEpoch(live.db) !== purgeEpoch) throw new ServeError("held", "canon unavailable during purge recovery");
-    if (canonGeneration !== null && canonReadGeneration(live.db) !== canonGeneration) throw new ServeError("held", "canon changed during request; retry");
-    if (sourcePolicyEpoch(live.db) !== sourceEpoch) throw new ServeError("error", "source authorization changed during serving");
-    if (readEpoch !== null) {
-      if (readEpoch !== claimsEpoch(live.db)) throw new ServeError("error", "memory changed during request; retry");
-      const current = liveContext(ctx);
-      if (current === null) throw new ServeError("unknown_agent", "unknown agent");
-      if (live.principal.kind === "agent" && current.principal.kind === "agent" &&
-          live.principal.grant_epoch !== current.principal.grant_epoch) throw new ServeError("error", "authority changed during request; retry");
+    if (recheck !== undefined) {
+      try {
+        const served = run({ ctx: live, at });
+        return live.db.transaction(() => {
+          const current = liveContext(live);
+          if (current === null) throw new ServeError("unknown_agent", "unknown agent");
+          if (!toolAllowed(current.principal.grant, tool)) throw new ServeError("tool_not_granted", "tool not granted");
+          const fresh = { ...current, redactor: createRedactor(current.principal, current.servingSecrets) };
+          const final = recheck({ ctx: fresh, at }, served);
+          validatePublication(fresh, tool, final);
+          return envelopeOf<T, C, V, Q>(fresh, tool, args, at, audit_id, final, contract);
+        }).immediate();
+      } catch (error) {
+        failed(live, tool, args, at, audit_id, error);
+      }
     }
-  } catch (error) {
-    failed(live, tool, args, audit_id, error);
+    if (contract === ENVELOPE_V2_SCHEMA) {
+      const writesDb = !isReadOnlyTool(tool);
+      try {
+        if (writesDb) {
+          return live.db.transaction(() => {
+            assertPublicationAuthority(ctx, live);
+            const served = run({ ctx: live, at });
+            return envelopeOf<T, C, V, Q>(live, tool, args, at, audit_id, served, contract);
+          }).immediate();
+        }
+        const epochOpts = { includeClaims: tool === "query_entities", includeCanon: true };
+        const before = readGateEpochs(live.db, epochOpts);
+        const served = live.db.transaction(() => {
+          assertPublicationAuthority(ctx, live);
+          return run({ ctx: live, at });
+        }).deferred();
+        return live.db.transaction(() => {
+          const after = readGateEpochs(live.db, epochOpts);
+          if (after.purgeEpoch !== before.purgeEpoch) throw new ServeError("held", "canon unavailable during purge recovery");
+          if (after.canonGeneration !== before.canonGeneration) throw new ServeError("held", "canon changed during request; retry");
+          if (after.sourceEpoch !== before.sourceEpoch) throw new ServeError("error", "source authorization changed during serving");
+          if (before.claimsEpoch !== null && after.claimsEpoch !== before.claimsEpoch) throw new ServeError("error", "memory changed during request; retry");
+          assertPublicationAuthority(ctx, live);
+          return envelopeOf<T, C, V, Q>(live, tool, args, at, audit_id, served, contract);
+        }).immediate();
+      } catch (error) {
+        failed(live, tool, args, at, audit_id, error);
+      }
+    }
+    const epochOpts = { includeClaims: tool === "query_entities", includeCanon: isReadOnlyTool(tool) };
+    const before = readGateEpochs(live.db, epochOpts);
+    let served: Served<T>;
+    let postSourceEpoch: number;
+    try {
+      served = run({ ctx: live, at });
+      const after = readGateEpochs(live.db, epochOpts);
+      if (after.purgeEpoch !== before.purgeEpoch) throw new ServeError("held", "canon unavailable during purge recovery");
+      if (before.canonGeneration !== null && after.canonGeneration !== before.canonGeneration) throw new ServeError("held", "canon changed during request; retry");
+      if (after.sourceEpoch !== before.sourceEpoch) throw new ServeError("error", "source authorization changed during serving");
+      if (before.claimsEpoch !== null) {
+        if (after.claimsEpoch !== before.claimsEpoch) throw new ServeError("error", "memory changed during request; retry");
+        const current = liveContext(ctx);
+        if (current === null) throw new ServeError("unknown_agent", "unknown agent");
+        if (live.principal.kind === "agent" && current.principal.kind === "agent" &&
+            live.principal.grant_epoch !== current.principal.grant_epoch) throw new ServeError("error", "authority changed during request; retry");
+      }
+      postSourceEpoch = after.sourceEpoch;
+    } catch (error) {
+      failed(live, tool, args, at, audit_id, error);
+    }
+    return envelopeOf<T, C, V, Q>(live, tool, args, at, audit_id, served, contract, postSourceEpoch);
+  } finally {
+    live.requestCanon?.clear();
   }
-  return envelopeOf<T, C, V, Q>(live, tool, args, at, audit_id, served, contract);
 }
 
 /**
@@ -533,6 +705,7 @@ async function gatedAsync<T, C extends ResponseContract, V = T | null, Q extends
 ): Promise<ResponseEnvelope<T, C, V, Q>> {
   const at = new Date().toISOString();
   const { live, audit_id } = enter(ctx, tool, args, at);
+  try {
   if (contract === ENVELOPE_V2_SCHEMA) {
     try {
       const served = await run({ ctx: live, at });
@@ -542,22 +715,25 @@ async function gatedAsync<T, C extends ResponseContract, V = T | null, Q extends
         return envelopeOf<T, C, V, Q>(live, tool, args, at, audit_id, served, contract);
       }).immediate();
     } catch (error) {
-      failed(live, tool, args, audit_id, error);
+      failed(live, tool, args, at, audit_id, error);
     }
   }
-  const sourceEpoch = sourcePolicyEpoch(live.db);
-  const purgeEpoch = purgeReadEpoch(live.db);
-  const readEpoch = tool === "search" || tool === "context_packet" ? claimsEpoch(live.db) : null;
-  const canonGeneration = tool === "propose" || tool === "correct" ? null : canonReadGeneration(live.db);
+  const epochOpts = {
+    includeClaims: tool === "search" || tool === "context_packet",
+    includeCanon: isReadOnlyTool(tool),
+  };
+  const before = readGateEpochs(live.db, epochOpts);
   let served: Served<T>;
+  let postSourceEpoch: number;
   try {
     served = await run({ ctx: live, at });
-    if (purgeReadEpoch(live.db) !== purgeEpoch) throw new ServeError("held", "canon unavailable during purge recovery");
-    if (canonGeneration !== null && canonReadGeneration(live.db) !== canonGeneration) throw new ServeError("held", "canon changed during request; retry");
-    if (sourceEpoch !== sourcePolicyEpoch(live.db)) throw new ServeError("error", "source authorization changed during request; retry");
+    const after = readGateEpochs(live.db, epochOpts);
+    if (after.purgeEpoch !== before.purgeEpoch) throw new ServeError("held", "canon unavailable during purge recovery");
+    if (before.canonGeneration !== null && after.canonGeneration !== before.canonGeneration) throw new ServeError("held", "canon changed during request; retry");
+    if (before.sourceEpoch !== after.sourceEpoch) throw new ServeError("error", "source authorization changed during request; retry");
     // Async reads may overlap grant changes. Refuse the entire result rather
     // than returning a packet assembled under withdrawn authority.
-    if (readEpoch !== null && readEpoch !== claimsEpoch(live.db)) {
+    if (before.claimsEpoch !== null && after.claimsEpoch !== before.claimsEpoch) {
       throw new ServeError("error", "memory changed during request; retry");
     }
     const current = liveContext(ctx);
@@ -566,8 +742,12 @@ async function gatedAsync<T, C extends ResponseContract, V = T | null, Q extends
         live.principal.grant_epoch !== current.principal.grant_epoch) {
       throw new ServeError("error", "authority changed during request; retry");
     }
+    postSourceEpoch = after.sourceEpoch;
   } catch (error) {
-    failed(live, tool, args, audit_id, error);
+    failed(live, tool, args, at, audit_id, error);
   }
-  return envelopeOf<T, C, V, Q>(live, tool, args, at, audit_id, served, contract);
+  return envelopeOf<T, C, V, Q>(live, tool, args, at, audit_id, served, contract, postSourceEpoch);
+  } finally {
+    live.requestCanon?.clear();
+  }
 }

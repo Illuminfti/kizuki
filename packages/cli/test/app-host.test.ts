@@ -363,3 +363,51 @@ test('app agent onboarding stores the world_view and relay choices and the launc
         } finally { await blocked.close(); }
     } finally { await session?.close(); await host.close(); }
 }, 30_000);
+
+test('app host rejects wrong API prefixes and non-POST methods and batches source checkpoints accurately', async () => {
+    const setup = h.tempVault();
+    const notesA = join(setup.vault, '..', 'notes-a'), notesB = join(setup.vault, '..', 'notes-b');
+    mkdirSync(notesA); mkdirSync(notesB);
+    writeFileSync(join(notesA, 'a.md'), '# Alpha\n\nAlpha synthetic note.\n');
+    writeFileSync(join(notesB, 'b1.md'), '# Beta 1\n\nBeta first note.\n');
+    writeFileSync(join(notesB, 'b2.md'), '# Beta 2\n\nBeta second note.\n');
+    const io: CliIo = { env: setup.env, vaultOverride: setup.vault, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false, out() {}, err() {}, prompt: async () => '' };
+    const host = createAppHost(io);
+    const call = async (route: string, body: unknown = {}) => (await host.handle(new Request('http://127.0.0.1/app/v1/' + route, { method: 'POST', body: JSON.stringify(body) }))).json() as Promise<any>;
+    const done = async (id: string) => {
+        for (let i = 0; i < 200; i++) {
+            const value = (await call('operation', { id })).data;
+            if (value.state !== 'running') return value;
+            await Bun.sleep(10);
+        }
+        throw Error('synthetic job did not finish');
+    };
+    try {
+        const wrongPrefix = await host.handle(new Request('http://127.0.0.1/other000status', { method: 'POST', body: '{}' }));
+        expect(wrongPrefix.status).toBe(400);
+        expect(await wrongPrefix.json()).toEqual({ ok: false, error: { code: 'invalid_request', retryable: false } });
+        const wrongMethod = await host.handle(new Request('http://127.0.0.1/app/v1/status', { method: 'GET' }));
+        expect(wrongMethod.status).toBe(400);
+        expect(await wrongMethod.json()).toEqual({ ok: false, error: { code: 'invalid_request', retryable: false } });
+
+        const keyA = (await done((await call('enroll', { provider: 'markdown', path: notesA })).data.operation_id)).result.source_key;
+        const keyB = (await done((await call('enroll', { provider: 'markdown', path: notesB })).data.operation_id)).result.source_key;
+        expect((await call('consent', { source_key: keyA, expected_revision: 0, operation_id: 'grant-a', policy })).ok).toBe(true);
+        expect((await call('consent', { source_key: keyB, expected_revision: 0, operation_id: 'grant-b', policy })).ok).toBe(true);
+        expect((await done((await call('capture', { source_key: keyA, mode: 'backfill' })).data.operation_id)).counts.stored).toBe(1);
+        const midSources = (await call('sources')).data.sources as { source_key: string; last_run: string | null; backfill_complete: boolean | null }[];
+        expect(midSources).toHaveLength(2);
+        expect(midSources.find(s => s.source_key === keyA)?.backfill_complete).toBe(true);
+        expect(midSources.find(s => s.source_key === keyA)?.last_run).toBeString();
+        expect(midSources.find(s => s.source_key === keyB)).toMatchObject({ last_run: null, backfill_complete: null });
+
+        expect((await done((await call('capture', { source_key: keyB, mode: 'backfill' })).data.operation_id)).counts.stored).toBe(2);
+        const sources = (await call('sources')).data.sources as { source_key: string; last_run: string | null; backfill_complete: boolean | null }[];
+        expect(sources).toHaveLength(2);
+        expect(sources.find(s => s.source_key === keyA)?.backfill_complete).toBe(true);
+        expect(sources.find(s => s.source_key === keyB)?.backfill_complete).toBe(true);
+        expect(sources.find(s => s.source_key === keyB)?.last_run).toBeString();
+    } finally {
+        await host.close();
+    }
+});

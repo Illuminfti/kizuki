@@ -109,6 +109,10 @@ describe("the stdio process entry", () => {
       "world_view",
       "propose",
       "correct",
+      "memt_status",
+      "memt_recall",
+      "memt_experience",
+      "memt_snapshot",
     ]);
     expect(result.stderr.trim()).toBe(
       "kizuki-mcp ready principal=owner tools=10",
@@ -345,5 +349,44 @@ describe("the stdio process entry", () => {
     const ids = result.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line).id as number);
     expect(ids).toContain(1);
     expect(ids.every((id) => id === 1 || id === 2)).toBe(true);
+  });
+
+  test("concurrent pipelined tool calls over stdio all answer cleanly with zero stderr warnings", async () => {
+    const running = live();
+    const calls = Array.from({ length: 12 }, (_, index) => {
+      const id = index + 3;
+      const tool = index % 3 === 0 ? "search" : index % 3 === 1 ? "system_health" : "timeline";
+      const args = tool === "search" ? { query: "kettle" } : tool === "timeline" ? { day: "2026-02-28" } : {};
+      return JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params: { name: tool, arguments: args } });
+    });
+    const input = HANDSHAKE + calls.join("\n") + "\n";
+    const result = await run(["--vault", running.vaultPath, "--owner"], input);
+    expect(result.code).toBe(0);
+    const messages = result.stdout.trim().split("\n").map((line) => JSON.parse(line) as { id?: number; jsonrpc: string; result?: { isError?: boolean } });
+    expect(messages).toHaveLength(14);
+    expect(messages.every((message) => message.jsonrpc === "2.0")).toBe(true);
+    expect(messages.map((message) => message.id).sort((a, b) => (a ?? 0) - (b ?? 0))).toEqual(
+      Array.from({ length: 14 }, (_, i) => i + 1),
+    );
+    expect(messages.filter((message) => (message.id ?? 0) >= 3).every((message) => message.result?.isError === undefined)).toBe(true);
+    expect(result.stderr.trim()).toBe("kizuki-mcp ready principal=owner tools=10");
+  });
+
+  test("concurrent burst with mid-flight cancellation including requestId 0 exits cleanly on EOF", async () => {
+    const running = live();
+    const input = [
+      JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "cancel-zero", version: "0" } } }),
+      JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+      JSON.stringify({ jsonrpc: "2.0", id: 0, method: "tools/call", params: { name: "search", arguments: { query: "kettle" } } }),
+      JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 0, reason: "cancel-zero" } }),
+      JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "system_health", arguments: {} } }),
+      "",
+    ].join("\n");
+    const result = await run(["--vault", running.vaultPath, "--owner"], input);
+    expect(result.code).toBe(0);
+    const ids = result.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line).id as number);
+    expect(ids).toContain(1);
+    expect(ids).toContain(2);
+    expect(ids.every((id) => id === 0 || id === 1 || id === 2)).toBe(true);
   });
 });

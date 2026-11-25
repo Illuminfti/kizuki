@@ -14,6 +14,13 @@ export type ResponseContract = typeof ENVELOPE_SCHEMA | typeof ENVELOPE_V2_SCHEM
 export type ResponseEnvelope<T, C extends ResponseContract, V = T | null, Q extends readonly unknown[] = readonly QuotedChunkV2[]> = C extends typeof ENVELOPE_V2_SCHEMA
   ? EnvelopeV2<V, Tool, readonly CanonChunkV2[], Q> : Envelope<T>;
 
+export interface MemtHealthSnapshot {
+  enabled: boolean;
+  mode: "native-gpu" | "local-hybrid" | "disabled" | "unavailable";
+  status: "ready" | "degraded" | "disabled" | "unavailable";
+  experience_count?: number;
+}
+
 export interface ServeContext {
   /**
    * Authoritative ledger and agent schemas are already initialized. Missing
@@ -39,6 +46,10 @@ export interface ServeContext {
   redactor?: Redactor;
   /** Daemon-owned credentials, never serialized or persisted. */
   servingSecrets?: readonly string[];
+  /** Internal per-call memoized canon index map; never a caller-supplied argument. */
+  requestCanon?: Map<string, import("./canon").CanonIndex>;
+  /** Host-supplied MemT-1.0 operational status hook for scoped/owner health checks. */
+  memtHealth?: (ctx: ServeContext) => MemtHealthSnapshot;
 }
 
 export interface CanonChunk {

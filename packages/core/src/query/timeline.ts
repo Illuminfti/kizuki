@@ -59,6 +59,24 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const OCCURRED_AT_PAIR = instantPairSql("events.occurred_at");
 const OCCURRED_AT_ORDER = `${instantSecondSql("events.occurred_at")}, ${instantNanoSql("events.occurred_at")}`;
 export const PREVIEW_CODE_POINTS = 160;
+const MIN_SAFE_LEXICAL_SECOND = Date.parse("0001-01-02T00:00:00Z") / 1000;
+const MAX_SAFE_LEXICAL_SECOND = Date.parse("9999-12-30T00:00:00Z") / 1000;
+
+/**
+ * Lower/upper lexical bounds on `occurred_at` accounting for the widest
+ * accepted RFC3339 timezone offset (`±23:59`, rounded to `±1` day), allowing
+ * SQLite to range-scan `events_occurred_idx` before applying exact instant checks.
+ */
+function minLexicalOccurredAt(epochSecond: number): string | null {
+  if (epochSecond < MIN_SAFE_LEXICAL_SECOND || epochSecond > MAX_SAFE_LEXICAL_SECOND) return null;
+  return new Date((epochSecond - 86_400) * 1000).toISOString().slice(0, 19);
+}
+
+function maxLexicalOccurredAt(epochSecond: number): string | null {
+  if (epochSecond < MIN_SAFE_LEXICAL_SECOND || epochSecond > MAX_SAFE_LEXICAL_SECOND) return null;
+  // `'z'` sorts above both `'T'` and `'t'`, so any RFC3339 string up through this date matches.
+  return `${new Date((epochSecond + 86_400) * 1000).toISOString().slice(0, 10)}z`;
+}
 
 function dayWindow(day: string): { since: string; until: string } {
   if (!DAY.test(day)) {
@@ -134,27 +152,42 @@ function timelinePlan(
   const bindings: (string | number)[] = [...selected.bindings];
   if (opts.day !== undefined) {
     const window = dayWindow(opts.day);
+    const startPair = instantBoundPair(window.since, "timeline day start");
+    const endPair = instantBoundPair(window.until, "timeline day end");
+    const minLex = minLexicalOccurredAt(startPair[0]);
+    const maxLex = maxLexicalOccurredAt(endPair[0]);
+    if (minLex !== null) { clauses.push("events.occurred_at >= ?"); bindings.push(minLex); }
+    if (maxLex !== null) { clauses.push("events.occurred_at <= ?"); bindings.push(maxLex); }
     clauses.push(
       `${OCCURRED_AT_PAIR} >= (?, ?)`,
       `${OCCURRED_AT_PAIR} < (?, ?)`,
     );
-    bindings.push(...instantBoundPair(window.since, "timeline day start"), ...instantBoundPair(window.until, "timeline day end"));
+    bindings.push(...startPair, ...endPair);
   }
   if (opts.since !== undefined) {
+    const startPair = instantBoundPair(opts.since, "timeline since");
+    const minLex = minLexicalOccurredAt(startPair[0]);
+    if (minLex !== null) { clauses.push("events.occurred_at >= ?"); bindings.push(minLex); }
     clauses.push(`${OCCURRED_AT_PAIR} >= (?, ?)`);
-    bindings.push(...instantBoundPair(opts.since, "timeline since"));
+    bindings.push(...startPair);
   }
   if (opts.until !== undefined) {
+    const endPair = instantBoundPair(opts.until, "timeline until");
+    const maxLex = maxLexicalOccurredAt(endPair[0]);
+    if (maxLex !== null) { clauses.push("events.occurred_at <= ?"); bindings.push(maxLex); }
     clauses.push(`${OCCURRED_AT_PAIR} < (?, ?)`);
-    bindings.push(...instantBoundPair(opts.until, "timeline until"));
+    bindings.push(...endPair);
   }
   if (opts.after !== undefined) {
     if (typeof opts.after.event_id !== "string" || opts.after.event_id.length === 0) {
       throw new RangeError("timeline cursor event_id is invalid");
     }
+    const cursorPair = instantBoundPair(opts.after.occurred_at, "timeline cursor");
+    const minLex = minLexicalOccurredAt(cursorPair[0]);
+    if (minLex !== null) { clauses.push("events.occurred_at >= ?"); bindings.push(minLex); }
     clauses.push(`(${OCCURRED_AT_ORDER}, events.event_id) > (?, ?, ?)`);
     bindings.push(
-      ...instantBoundPair(opts.after.occurred_at, "timeline cursor"),
+      ...cursorPair,
       opts.after.event_id,
     );
   }

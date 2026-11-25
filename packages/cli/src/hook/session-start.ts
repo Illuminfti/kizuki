@@ -13,6 +13,7 @@ import {
   readServeEndpoint,
   readServeProcessMarker,
   dispatchServeTool,
+  ServeError,
 } from "@kizuki/core";
 import type { Principal } from "@kizuki/core";
 import { ENVELOPE_V2_SCHEMA, PACKET_V2_SCHEMA } from "@kizuki/core/world";
@@ -120,28 +121,45 @@ export function usableContext(data: unknown): string | null {
   return served ? packet.packetMd : null;
 }
 
-function sleep(ms: number): Promise<"timeout"> {
-  return new Promise((resolve) => setTimeout(() => resolve("timeout"), Math.max(0, ms)));
+async function raceTimeout<T>(promise: Promise<T>, ms: number): Promise<T | "timeout"> {
+  if (ms <= 0) {
+    void promise.catch(() => undefined);
+    return "timeout";
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<"timeout">((resolve) => {
+        timer = setTimeout(() => resolve("timeout"), ms);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
-type Wire = { kind: "packet"; context: string } | { kind: "empty" | "refused" | "timeout" | "unreachable" | "unsupported_contract" };
+type Wire = { kind: "packet"; context: string } | { kind: "empty" | "refused" | "timeout" | "unavailable" | "unreachable" | "unsupported_contract" };
 
 /** Direct loopback HTTP; Bun also needs NO_PROXY because its HTTP implementation uses fetch. */
 async function callDaemon(url: string, bearer: string, body: object, ms: number): Promise<Wire> {
   if (ms <= 0) return { kind: "timeout" };
   return new Promise((resolve) => {
     let settled = false;
-    const finish = (wire: Wire): void => {
+    const finish = (wire: Wire, completed = false): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      request.destroy();
+      if (!completed) request.destroy();
       resolve(wire);
     };
     const request = httpRequest(`${url}/v1/context_packet`, {
       method: "POST",
-      headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
+      agent: false,
+      headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json", connection: "close" },
     }, (response) => {
+      if (response.statusCode === 503) { finish({ kind: "unavailable" }); return; }
       if (response.statusCode !== 200 && response.statusCode !== 400) { finish({ kind: "refused" }); return; }
       const chunks: Buffer[] = [];
       let size = 0;
@@ -156,15 +174,20 @@ async function callDaemon(url: string, bearer: string, body: object, ms: number)
         if (settled) return;
         try {
           const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { ok?: unknown; error?: { code?: unknown }; value?: { schema?: unknown; data?: unknown } };
-          if (parsed.ok !== true) { finish({ kind: parsed.error?.code === "unsupported_contract" ? "unsupported_contract" : "refused" }); return; }
-          if (response.statusCode !== 200) { finish({ kind: "refused" }); return; }
-          if (parsed.value?.schema !== ENVELOPE_V2_SCHEMA) { finish({ kind: "unsupported_contract" }); return; }
+          if (parsed.ok !== true) {
+            const code = parsed.error?.code;
+            finish({ kind: code === "unsupported_contract" ? "unsupported_contract" : code === "busy" ? "unavailable" : "refused" }, true);
+            return;
+          }
+          if (response.statusCode !== 200) { finish({ kind: "refused" }, true); return; }
+          if (parsed.value?.schema !== ENVELOPE_V2_SCHEMA) { finish({ kind: "unsupported_contract" }, true); return; }
           const context = usableContext(parsed.value?.data);
-          finish(context === null ? { kind: "empty" } : { kind: "packet", context });
-        } catch { finish({ kind: "refused" }); }
+          finish(context === null ? { kind: "empty" } : { kind: "packet", context }, true);
+        } catch { finish({ kind: "refused" }, true); }
       });
     });
     const timer = setTimeout(() => finish({ kind: "timeout" }), Math.max(1, ms));
+    timer.unref?.();
     request.on("error", () => finish({ kind: "unreachable" }));
     request.end(JSON.stringify({ response_contract: ENVELOPE_V2_SCHEMA, args: body }));
   });
@@ -194,17 +217,23 @@ async function readInProcess(io: CliIo, options: SessionStartOptions, request: R
     const principal = principalFor(io, ctx.db, options.tokenRef);
     if (principal === null) return "denied" as const;
     const standing = await bearerFor(io, ctx.vaultPath, undefined);
-    const envelope = await dispatchServeTool(
-      {
-        db: ctx.db,
-        vaultPath: ctx.vaultPath,
-        principal,
-        ...(standing === null ? {} : { servingSecrets: [standing] }),
-        ...(ctx.retrievalUnavailable ? { retrievalUnavailable: ctx.retrievalUnavailable } : {}),
-      },
-      "context_packet", request, { response_contract: ENVELOPE_V2_SCHEMA },
-    );
-    return usableContext(envelope.data);
+    try {
+      const envelope = await dispatchServeTool(
+        {
+          db: ctx.db,
+          vaultPath: ctx.vaultPath,
+          principal,
+          ...(standing === null ? {} : { servingSecrets: [standing] }),
+          ...(ctx.retrievalUnavailable ? { retrievalUnavailable: ctx.retrievalUnavailable } : {}),
+        },
+        "context_packet", request, { response_contract: ENVELOPE_V2_SCHEMA },
+      );
+      return usableContext(envelope.data);
+    } catch (error) {
+      // A budget below the packet's mandatory header leaves no room for context; the header size varies per run.
+      if (error instanceof ServeError && error.code === "invalid_arguments") return null;
+      throw error;
+    }
   }, { retrieval: "none" });
   if (context === "denied") return { skip: "denied" };
   return context === null ? { skip: "empty" } : outputFor(options.harness, context);
@@ -234,10 +263,12 @@ async function readInChild(io: CliIo, options: SessionStartOptions, vault: strin
     ]),
     { env, stdin: "pipe", stdout: "pipe", stderr: "pipe" },
   );
-  child.stdin.write(input);
-  void child.stdin.end();
+  try {
+    child.stdin.write(input);
+    void child.stdin.end();
+  } catch { /* Child exited before reading stdin. */ }
   const done = Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-  const outcome = await Promise.race([done, sleep(ms)]);
+  const outcome = await raceTimeout(done, ms);
   if (outcome === "timeout") {
     child.kill("SIGKILL");
     await done;
@@ -270,10 +301,10 @@ export async function runSessionStart(io: CliIo, options: SessionStartOptions): 
     // A harness that leaves stdin open must not spend the whole deadline: the query is a nicety, the packet is the point.
     let raw: string | "timeout" = "";
     if (io.readStdin !== undefined) {
-      const pending = io.readStdin(MAX_STDIN_BYTES);
-      raw = await Promise.race([pending, sleep(Math.min(MAX_STDIN_WAIT_MS, remaining() / 4))]);
+      const pending = io.readStdin(MAX_STDIN_BYTES).catch(() => "");
+      raw = await raceTimeout(pending, Math.min(MAX_STDIN_WAIT_MS, remaining() / 4));
       // A stalled host fires the timer in the same turn that delivers the bytes; one more turn lets ready input win.
-      if (raw === "timeout") raw = await Promise.race([pending, sleep(0)]);
+      if (raw === "timeout") raw = await raceTimeout(pending, 1);
     }
     const input = raw === "timeout" ? "" : raw;
     const query = projectQuery(input);
@@ -285,17 +316,26 @@ export async function runSessionStart(io: CliIo, options: SessionStartOptions): 
     } catch { return { skip: "no_vault" }; }
     if (!existsSync(join(vault, ".kizuki"))) return { skip: "no_vault" };
 
-    if (options.direct) return await Promise.race([readInProcess(io, options, request), sleep(remaining()).then((): HookResult => ({ skip: "timeout" }))]);
+    if (options.direct) {
+      const directResult = await raceTimeout(readInProcess(io, options, request), remaining());
+      return directResult === "timeout" ? { skip: "timeout" } : directResult;
+    }
+
+    // Fail closed immediately when an explicit agent credential cannot be read,
+    // avoiding a wasted fallback subprocess spawn during harness startup.
+    const agentBearer = options.tokenRef === undefined ? undefined : await bearerFor(io, vault, options.tokenRef);
+    if (options.tokenRef !== undefined && agentBearer === null) return { skip: "denied" };
 
     let marker = null;
     try { marker = readServeProcessMarker(vault); } catch { /* No readable marker means no daemon. */ }
     const endpoint = readServeEndpoint(vault, marker);
-    const bearer = endpoint === null ? null : await bearerFor(io, vault, options.tokenRef);
+    const bearer = endpoint === null ? null : (agentBearer ?? await bearerFor(io, vault, undefined));
     if (endpoint !== null && bearer !== null) {
       const wire = await callDaemon(endpoint.url, bearer, request, remaining());
       if (wire.kind === "packet") return outputFor(options.harness, wire.context, [bearer]);
       if (wire.kind === "empty") return { skip: "empty" };
       if (wire.kind === "timeout") return { skip: "timeout" };
+      if (wire.kind === "unavailable") return { skip: "unavailable" };
       if (wire.kind === "refused") return { skip: "denied" };
       if (wire.kind === "unsupported_contract") return { skip: "unsupported_contract" };
     }

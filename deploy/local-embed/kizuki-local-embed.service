@@ -1,0 +1,21 @@
+[Unit]
+Description=Kizuki Local Loopback CPU Semantic Embedding Service (BAAI/bge-small-en-v1.5)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/.local/lib/kizuki-local-embed/server.py --host 127.0.0.1 --port 8789 --model BAAI/bge-small-en-v1.5 --backend onnx --threads 6 --batch-size 32
+Environment=HF_HUB_OFFLINE=1
+Environment=TRANSFORMERS_OFFLINE=1
+Environment=TOKENIZERS_PARALLELISM=false
+Restart=on-failure
+RestartSec=2
+Nice=10
+CPUQuota=400%
+MemoryHigh=1200M
+MemoryMax=1536M
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

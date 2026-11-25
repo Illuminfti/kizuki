@@ -25,6 +25,7 @@
         "@kizuki/embed-gguf": "workspace:*",
         "@kizuki/embed-local-http": "workspace:*",
         "@kizuki/llm": "workspace:*",
+        "@kizuki/memt": "workspace:*",
         "@kizuki/retrieval-pg": "workspace:*",
         "@kizuki/tui": "workspace:*",
       },
@@ -137,10 +138,15 @@
         "@kizuki/core": "workspace:*",
         "@kizuki/embed-gguf": "workspace:*",
         "@kizuki/embed-local-http": "workspace:*",
+        "@kizuki/memt": "workspace:*",
         "@kizuki/retrieval-pg": "workspace:*",
         "@modelcontextprotocol/sdk": "1.30.0",
         "zod": "4.5.4",
       },
+    },
+    "packages/memt": {
+      "name": "@kizuki/memt",
+      "version": "1.0.0",
     },
     "packages/reflex": {
       "name": "@kizuki/reflex",
@@ -206,6 +212,8 @@
     "@kizuki/llm": ["@kizuki/llm@workspace:packages/llm"],
 
     "@kizuki/mcp": ["@kizuki/mcp@workspace:packages/mcp"],
+
+    "@kizuki/memt": ["@kizuki/memt@workspace:packages/memt"],
 
     "@kizuki/reflex": ["@kizuki/reflex@workspace:packages/reflex"],
 

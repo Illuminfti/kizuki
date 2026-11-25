@@ -1,0 +1,37 @@
+[Unit]
+Description=Kizuki MemT-1.0 SGLang SSH Tunnel (127.0.0.1:30000)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Create ~/.config/kizuki/memt-tunnel.env (chmod 600) with:
+#   MEMT_SSH_TARGET=root@<runpod-host>
+#   MEMT_SSH_PORT=<runpod-ssh-port>
+#   MEMT_SSH_KEY=%h/.ssh/id_ed25519
+#   MEMT_LOCAL_PORT=30000
+#   MEMT_REMOTE_PORT=30000
+Environment=MEMT_LOCAL_PORT=30000
+Environment=MEMT_REMOTE_PORT=30000
+Environment=MEMT_SSH_PORT=22
+EnvironmentFile=%h/.config/kizuki/memt-tunnel.env
+
+ExecStart=/usr/bin/ssh \
+  -N \
+  -o BatchMode=yes \
+  -o ExitOnForwardFailure=yes \
+  -o ServerAliveInterval=30 \
+  -o ServerAliveCountMax=3 \
+  -o StrictHostKeyChecking=accept-new \
+  -i ${MEMT_SSH_KEY} \
+  -p ${MEMT_SSH_PORT} \
+  -L 127.0.0.1:${MEMT_LOCAL_PORT}:127.0.0.1:${MEMT_REMOTE_PORT} \
+  ${MEMT_SSH_TARGET}
+
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

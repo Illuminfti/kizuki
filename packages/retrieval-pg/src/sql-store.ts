@@ -51,14 +51,19 @@ CREATE INDEX IF NOT EXISTS retrieval_docs_fts_gin ON retrieval_docs USING gin(se
 CREATE INDEX IF NOT EXISTS retrieval_docs_title_trgm ON retrieval_docs USING gin(title gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS retrieval_docs_scope ON retrieval_docs(sensitivity,kind,occurred_at,updated_at);
 CREATE INDEX IF NOT EXISTS retrieval_docs_subjects ON retrieval_docs USING gin(subjects);
+CREATE INDEX IF NOT EXISTS retrieval_docs_updated_at ON retrieval_docs(updated_at DESC NULLS LAST, doc_id);
+CREATE INDEX IF NOT EXISTS retrieval_chunks_pending ON retrieval_chunks(doc_id, chunk_index) WHERE embedding IS NULL;
+CREATE INDEX IF NOT EXISTS retrieval_chunks_space ON retrieval_chunks(space, doc_id) WHERE embedding IS NOT NULL;
 CREATE INDEX IF NOT EXISTS entity_edges_target ON entity_edges(target);
 INSERT INTO retrieval_meta VALUES ('schema', '1') ON CONFLICT DO NOTHING;
 `;
+const CHUNK_INSERT_BATCH = 500;
 /** One FIFO serializes complete interactions; model calls never enter it. */
 export class SqlStore {
   private tail: Promise<unknown> = Promise.resolve();
   private terminal = false;
   private active = 0;
+  private cleanSpaceKey: string | null = null;
   private constructor(readonly db: PGlite, private readonly dispose: () => void) { }
   static async open(dataDir: string): Promise<SqlStore> {
     const resource = await openDatabase(dataDir);
@@ -70,6 +75,7 @@ export class SqlStore {
         if(versions.some(row=>row.version!==1 && row.version!==2 && row.version!==3))throw new PortError("config_invalid","unsupported retrieval SQL schema version",false);
       }
       await resource.db.exec(SCHEMA);
+      await resource.db.exec("SET pg_trgm.similarity_threshold = 0.2");
       await resource.db.transaction(async tx => {
         const applied = await tx.query("SELECT version FROM schema_migrations WHERE version=2");
         if (applied.rows.length === 0) {
@@ -111,20 +117,26 @@ export class SqlStore {
     this.tail = pending.catch(() => { });
     return pending;
   }
-  transaction<T>(fn: (tx: Transaction) => Promise<T>): Promise<T> { return this.db.transaction(tx => runStoreTransaction(() => fn(tx))); }
+  invalidateSpaceCache(): void { this.cleanSpaceKey = null; }
+  transaction<T>(fn: (tx: Transaction) => Promise<T>): Promise<T> {
+    this.cleanSpaceKey = null;
+    return this.db.transaction(tx => runStoreTransaction(() => fn(tx)));
+  }
   /** Stops queued/future callbacks. Already active work is explicitly not contained. */
   abortForErasure(): boolean { this.terminal = true; return this.active > 0; }
-  async close(disposeAssets = true): Promise<void> { await this.run(() => this.db.close()); if (disposeAssets) this.dispose(); }
+  async close(disposeAssets = true): Promise<void> { this.cleanSpaceKey = null; await this.run(() => this.db.close()); if (disposeAssets) this.dispose(); }
   async meta(key: string): Promise<unknown> {
     return (await this.db.query<{
       value: unknown;
     }>("SELECT value FROM retrieval_meta WHERE key=$1", [key])).rows[0]?.value ?? null;
   }
   async setMeta(key: string, value: unknown, tx: Transaction | PGlite = this.db): Promise<void> {
+    if (key === "space") this.cleanSpaceKey = null;
     await tx.query("INSERT INTO retrieval_meta VALUES ($1,$2::jsonb) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [key, JSON.stringify(value)]);
   }
-  async writeDoc(tx: Transaction, doc: RetrievalDoc, tokens: number, overlap: number, countTokens?: (text: string) => number): Promise<void> {
-    const old = (await tx.query<{
+  async writeDoc(tx: Transaction, doc: RetrievalDoc, tokens: number, overlap: number, countTokens?: (text: string) => number, knownEmpty = false): Promise<void> {
+    this.cleanSpaceKey = null;
+    const old = knownEmpty ? undefined : (await tx.query<{
       title: string;
       body: string;
     }>("SELECT title,body FROM retrieval_docs WHERE doc_id=$1", [doc.doc_id])).rows[0];
@@ -133,18 +145,38 @@ export class SqlStore {
    ON CONFLICT(doc_id) DO UPDATE SET doc=excluded.doc,title=excluded.title,body=excluded.body,
    sensitivity=excluded.sensitivity,kind=excluded.kind,subjects=excluded.subjects,provenance=excluded.provenance,
    occurred_at=excluded.occurred_at,updated_at=excluded.updated_at,search_doc=excluded.search_doc`, [doc.doc_id, JSON.stringify(doc), doc.title, doc.text, doc.sensitivity === null ? null : SENSITIVITY_ORDER[doc.sensitivity], doc.kind, [...doc.subjects], [...doc.provenance], doc.occurred_at, doc.updated_at]);
-    if (old?.title !== doc.title || old.body !== doc.text) await this.writeChunks(tx, doc, tokens, overlap, countTokens);
-    await tx.query("DELETE FROM entity_edges WHERE source=$1", [doc.doc_id]);
-    for (const target of new Set(doc.subjects)) {
-      const edge: StoredEdge = { from: doc.doc_id, to: target, type: "subject", weight: 1, valid_from: doc.occurred_at, valid_to: null, provenance: [...doc.provenance] };
-      await tx.query("INSERT INTO entity_edges VALUES($1,$2,$3::jsonb)", [doc.doc_id, target, JSON.stringify(edge)]);
+    if (knownEmpty || old?.title !== doc.title || old.body !== doc.text) {
+      await this.writeChunks(tx, doc, tokens, overlap, countTokens, knownEmpty);
+    }
+    if (!knownEmpty) await tx.query("DELETE FROM entity_edges WHERE source=$1", [doc.doc_id]);
+    const uniqueSubjects = [...new Set(doc.subjects)];
+    if (uniqueSubjects.length > 0) {
+      const payloads = uniqueSubjects.map(target => {
+        const edge: StoredEdge = { from: doc.doc_id, to: target, type: "subject", weight: 1, valid_from: doc.occurred_at, valid_to: null, provenance: [...doc.provenance] };
+        return JSON.stringify(edge);
+      });
+      await tx.query(
+        "INSERT INTO entity_edges(source,target,payload) SELECT $1, u.target, u.payload::jsonb FROM unnest($2::text[],$3::text[]) AS u(target,payload)",
+        [doc.doc_id, uniqueSubjects, payloads],
+      );
     }
   }
   /** Replaces the document's chunks; their vectors are gone until embedded again. */
-  async writeChunks(tx: Transaction, doc: RetrievalDoc, tokens: number, overlap: number, countTokens?: (text: string) => number): Promise<void> {
-    await tx.query("DELETE FROM retrieval_chunks WHERE doc_id=$1", [doc.doc_id]);
-    for (const chunk of chunkDocument(doc, tokens, overlap, countTokens)) {
-      await tx.query("INSERT INTO retrieval_chunks(chunk_id,doc_id,chunk_index,body,revision) VALUES($1,$2,$3,$4,$5)", [chunk.chunk_id, doc.doc_id, chunk.index, chunk.text, crypto.randomUUID()]);
+  async writeChunks(tx: Transaction, doc: RetrievalDoc, tokens: number, overlap: number, countTokens?: (text: string) => number, knownEmpty = false): Promise<void> {
+    this.cleanSpaceKey = null;
+    if (!knownEmpty) await tx.query("DELETE FROM retrieval_chunks WHERE doc_id=$1", [doc.doc_id]);
+    const chunks = chunkDocument(doc, tokens, overlap, countTokens);
+    for (let start = 0; start < chunks.length; start += CHUNK_INSERT_BATCH) {
+      const slice = chunks.slice(start, start + CHUNK_INSERT_BATCH);
+      const ids = slice.map(chunk => chunk.chunk_id);
+      const docIds = slice.map(() => doc.doc_id);
+      const indices = slice.map(chunk => chunk.index);
+      const bodies = slice.map(chunk => chunk.text);
+      const revisions = slice.map(() => crypto.randomUUID());
+      await tx.query(
+        "INSERT INTO retrieval_chunks(chunk_id,doc_id,chunk_index,body,revision) SELECT * FROM unnest($1::text[],$2::text[],$3::integer[],$4::text[],$5::text[])",
+        [ids, docIds, indices, bodies, revisions],
+      );
     }
   }
   scope(query: RetrievalQuery, args: unknown[], alias = "d"): string {
@@ -177,38 +209,50 @@ export class SqlStore {
     const args: unknown[] = [query.text];
     const scope = this.scope(query, args);
     args.push(Math.min(1000, Math.max(200, query.limit * 20)));
-    return this.transaction(async (tx) => {
-      await tx.exec("SET LOCAL pg_trgm.similarity_threshold=0.2");
-      return (await tx.query<CandidateRow>(`SELECT d.doc,
-   ts_rank_cd(search_doc,websearch_to_tsquery('simple',$1)) + similarity(title,$1)*0.1 AS score
-   FROM retrieval_docs d WHERE ${scope} AND ($1='' OR search_doc @@ websearch_to_tsquery('simple',$1) OR title % $1)
-   ORDER BY score DESC, doc_id ASC LIMIT $${args.length}`, args)).rows;
-    });
+    return (await this.db.query<CandidateRow>(`WITH q AS (SELECT websearch_to_tsquery('simple',$1) AS tsq)
+   SELECT d.doc,
+   ts_rank_cd(d.search_doc,q.tsq) + similarity(d.title,$1)*0.1 AS score
+   FROM retrieval_docs d, q WHERE ${scope} AND ($1='' OR d.search_doc @@ q.tsq OR d.title % $1)
+   ORDER BY score DESC, d.doc_id ASC LIMIT $${args.length}`, args)).rows;
   }
   async vector(query: RetrievalQuery, vector: Float32Array, space: EmbeddingSpace): Promise<CandidateRow[]> {
     if(!Number.isInteger(space.dims)||space.dims<1||space.dims>2000)throw new PortError("config_invalid","invalid HNSW dimensions",false);
-    const args: unknown[] = [JSON.stringify([...vector]), space.id];
+    const args: unknown[] = [formatVector(vector), space.id];
     const scope = this.scope(query, args);
     args.push(Math.min(1000, Math.max(200, query.limit * 20)));
     // Materialize the permitted corpus before ranking. Approximate global HNSW
     // scans can lose visible neighbours when hidden vectors consume the window.
     return (await this.db.query<CandidateRow>(`WITH visible AS MATERIALIZED (
-      SELECT d.doc, d.doc_id, c.chunk_index, c.body, c.embedding
+      SELECT d.doc, d.doc_id, c.chunk_index, c.body,
+        (c.embedding::vector(${space.dims}) <=> $1::vector(${space.dims})) AS dist
       FROM retrieval_chunks c JOIN retrieval_docs d USING(doc_id)
       WHERE ${scope} AND c.space=$2 AND c.embedding IS NOT NULL
-    ) SELECT doc, 1-(embedding::vector(${space.dims}) <=> $1::vector(${space.dims})) AS score,
-      chunk_index, body, embedding::text AS vector FROM visible
-      ORDER BY embedding::vector(${space.dims}) <=> $1::vector(${space.dims}),doc_id,chunk_index LIMIT $${args.length}`, args)).rows;
+    ) SELECT doc,
+      CASE WHEN dist IS NULL OR dist = 'NaN'::float8 THEN 0.0 ELSE 1.0 - dist END AS score,
+      chunk_index, body FROM visible
+      ORDER BY dist ASC NULLS LAST, doc_id, chunk_index LIMIT $${args.length}`, args)).rows;
   }
   async spaceMismatch(space: EmbeddingSpace, query?: RetrievalQuery): Promise<boolean> {
+    const key = canonical(space);
+    if (this.cleanSpaceKey === key) return false;
+    const globalCheck = (await this.db.query<{ mismatch: boolean; stored: unknown }>(`SELECT
+      EXISTS(SELECT 1 FROM retrieval_chunks WHERE embedding IS NOT NULL
+        AND (space IS DISTINCT FROM $1 OR vector_dims(embedding)<>$2 OR embedded_at IS NULL)) AS mismatch,
+      (SELECT value FROM retrieval_meta WHERE key='space') AS stored`, [space.id, space.dims])).rows[0];
+    const stored = globalCheck?.stored ?? null;
+    const storedDiffers = stored !== null && canonical(stored) !== key;
+    if (globalCheck?.mismatch !== true && !storedDiffers) {
+      this.cleanSpaceKey = key;
+      return false;
+    }
+    if (query === undefined) return true;
     const args: unknown[] = [space.id, space.dims];
-    const scope = query === undefined ? "true" : this.scope(query, args);
+    const scope = this.scope(query, args);
     const result = (await this.db.query<{ vectors: boolean; mismatch: boolean }>(`SELECT
       EXISTS(SELECT 1 FROM retrieval_chunks c JOIN retrieval_docs d USING(doc_id) WHERE ${scope} AND embedding IS NOT NULL) AS vectors,
       EXISTS(SELECT 1 FROM retrieval_chunks c JOIN retrieval_docs d USING(doc_id) WHERE ${scope} AND embedding IS NOT NULL
         AND (space IS DISTINCT FROM $1 OR vector_dims(embedding)<>$2 OR embedded_at IS NULL)) AS mismatch`, args)).rows[0];
-    const stored = await this.meta("space");
-    return result?.mismatch === true || (query === undefined || result?.vectors === true) && stored !== null && canonical(stored) !== canonical(space);
+    return result?.mismatch === true || (result?.vectors === true && storedDiffers);
   }
 
   async ensureSpace(space: EmbeddingSpace): Promise<void> {
@@ -234,9 +278,15 @@ export class SqlStore {
   }
   /** Pending chunks, newest documents first; `only` narrows them to those documents. */
   async pending(limit: number, only?: readonly string[]): Promise<PendingRow[]> {
+    if (only !== undefined) {
+      if (only.length === 0) return [];
+      return (await this.db.query<PendingRow>(`SELECT c.chunk_id,c.doc_id,d.title,c.body,c.chunk_index,c.revision FROM retrieval_chunks c
+     JOIN retrieval_docs d USING(doc_id) WHERE c.embedding IS NULL AND c.doc_id=ANY($1::text[])
+     ORDER BY d.updated_at DESC NULLS LAST,c.doc_id,c.chunk_index LIMIT $2`, [[...only], limit])).rows;
+    }
     return (await this.db.query<PendingRow>(`SELECT c.chunk_id,c.doc_id,d.title,c.body,c.chunk_index,c.revision FROM retrieval_chunks c
-   JOIN retrieval_docs d USING(doc_id) WHERE c.embedding IS NULL AND ($1::text[] IS NULL OR c.doc_id=ANY($1::text[]))
-   ORDER BY d.updated_at DESC NULLS LAST,c.doc_id,c.chunk_index LIMIT $2`, [only === undefined ? null : [...only], limit])).rows;
+   JOIN retrieval_docs d USING(doc_id) WHERE c.embedding IS NULL
+   ORDER BY d.updated_at DESC NULLS LAST,c.doc_id,c.chunk_index LIMIT $1`, [limit])).rows;
   }
   /**
    * Copies the stored vectors of a document into the rebuild staging table when
@@ -257,7 +307,21 @@ export class SqlStore {
     return (await this.db.query<{ pending: number }>(`SELECT count(*)::int AS pending FROM retrieval_chunks c
       JOIN retrieval_docs d USING(doc_id) WHERE c.embedding IS NULL AND ${scope}`, args)).rows[0]?.pending ?? 0;
   }
+  /** Fast existence check using the partial pending index before evaluating document scope. */
+  async hasPending(query?: RetrievalQuery): Promise<boolean> {
+    const anyPending = (await this.db.query<{ pending: boolean }>(
+      "SELECT EXISTS(SELECT 1 FROM retrieval_chunks WHERE embedding IS NULL) AS pending",
+    )).rows[0]?.pending === true;
+    if (!anyPending || query === undefined) return anyPending;
+    const args: unknown[] = [];
+    const scope = this.scope(query, args);
+    return (await this.db.query<{ pending: boolean }>(
+      `SELECT EXISTS(SELECT 1 FROM retrieval_chunks c JOIN retrieval_docs d USING(doc_id) WHERE c.embedding IS NULL AND ${scope}) AS pending`,
+      args,
+    )).rows[0]?.pending === true;
+  }
   async edges(ceiling: Sensitivity, query?: RetrievalQuery, candidateIds?: readonly string[]): Promise<StoredEdge[]> {
+    if (candidateIds !== undefined && candidateIds.length === 0) return [];
     const args: unknown[] = [];
     const scope = this.scope(query ?? { text: "", mode: "lexical", scope: {}, ceiling, limit: 100, deadline_ms: 1000 }, args);
     let candidates = "";
@@ -269,6 +333,35 @@ export class SqlStore {
       payload: StoredEdge;
     }>(`SELECT e.payload FROM entity_edges e JOIN retrieval_docs d ON d.doc_id=e.source WHERE ${scope}${candidates} ORDER BY e.source,e.target LIMIT 10001`, args)).rows.map(row => row.payload);
   }
+  /** Fetch edges whose source docs have already been scope-verified in the same serialized store call. */
+  async edgesForVerifiedSources(candidateIds: readonly string[]): Promise<StoredEdge[]> {
+    if (candidateIds.length === 0) return [];
+    return (await this.db.query<{
+      payload: StoredEdge;
+    }>("SELECT e.payload FROM entity_edges e WHERE e.source=ANY($1::text[]) ORDER BY e.source,e.target LIMIT 10001", [[...candidateIds]])).rows.map(row => row.payload);
+  }
+}
+export function formatVector(vector: Float32Array): string {
+  return `[${vector.join(",")}]`;
+}
+export function parseVectorText(raw: string): Float32Array {
+  const start = raw.charCodeAt(0) === 91 ? 1 : 0;
+  const end = raw.charCodeAt(raw.length - 1) === 93 ? raw.length - 1 : raw.length;
+  if (start >= end) return new Float32Array(0);
+  let count = 1;
+  for (let i = start; i < end; i += 1) {
+    if (raw.charCodeAt(i) === 44) count += 1;
+  }
+  const out = new Float32Array(count);
+  let idx = 0;
+  let from = start;
+  for (let i = start; i <= end; i += 1) {
+    if (i === end || raw.charCodeAt(i) === 44) {
+      out[idx++] = Number(raw.slice(from, i));
+      from = i + 1;
+    }
+  }
+  return out;
 }
 export function canonical(value: unknown): string {
   if (Array.isArray(value)) {

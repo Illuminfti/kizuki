@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { closeCapacityInventories, currentCapacityBound } from "../../src/vault/capacity-inventory";
 import { serializePage } from "../../src/vault/frontmatter";
 import { createCanonPageCache, listCanonPagesReport } from "../../src/vault/pages";
 
@@ -109,4 +110,45 @@ test("a duplicate identity is withheld from every walk, cached or not", () => {
     expect(report.pages).toEqual([]);
     expect(report.skipped.map((entry) => entry.code)).toEqual(["duplicate", "duplicate"]);
   }
+});
+
+test("include_body: false and track_capacity: false preserve hashes, frontmatter, and skips without retaining bodies or watches", () => {
+  const root = scratch();
+  put(root, "lf", "fact:lf", "Multi-byte body \u2603 ".repeat(200));
+  writeFileSync(
+    join(root, "facts", "crlf.md"),
+    '---\r\nid: "fact:crlf"\r\ntitle: "CRLF"\r\ntype: "fact"\r\nstatus: "active"\r\nsensitivity: "public"\r\ntaint: "clean"\r\n---\r\nBody after CRLF\r\n',
+    "utf8",
+  );
+  writeFileSync(
+    join(root, "facts", "eof.md"),
+    '---\nid: "fact:eof"\ntitle: "EOF"\ntype: "fact"\nstatus: "archived"\nsensitivity: "public"\ntaint: "clean"\n---',
+    "utf8",
+  );
+  writeFileSync(join(root, "facts", "broken.md"), "---\nid: [unterminated\n---\nbody", "utf8");
+  writeFileSync(join(root, "facts", "no-close.md"), "---\nid: \"x\"\nno closing fence", "utf8");
+
+  closeCapacityInventories();
+  const lite = listCanonPagesReport(root, undefined, undefined, {
+    include_body: false,
+    track_capacity: false,
+  });
+  expect(currentCapacityBound(root)).toBeNull();
+
+  const full = listCanonPagesReport(root);
+  expect(lite.truncated).toBe(full.truncated);
+  expect(lite.scanned_files).toBe(full.scanned_files);
+  expect(lite.scanned_bytes).toBe(full.scanned_bytes);
+  expect(lite.skipped).toEqual(full.skipped);
+  expect(lite.pages.map(({ body: _b, ...rest }) => rest)).toEqual(
+    full.pages.map(({ body: _b, ...rest }) => rest),
+  );
+  expect(lite.pages.every((page) => page.body === "")).toBe(true);
+
+  // Passing a cache with include_body: false must not poison subsequent full walks.
+  const cache = createCanonPageCache();
+  listCanonPagesReport(root, cache, undefined, { include_body: false, track_capacity: false });
+  expect(cache.files.size).toBe(0);
+  const fullAfter = listCanonPagesReport(root, cache);
+  expect(fullAfter.pages.find((p) => p.id === "fact:lf")?.body).toContain("\u2603");
 });

@@ -391,6 +391,36 @@ function grantEpochOf(principal: Principal): number | null {
   return principal.kind === "agent" ? principal.grant_epoch : null;
 }
 
+const auditChangesByDb = new WeakMap<Database, number>();
+
+function isInTransaction(db: Database): boolean {
+  try {
+    return db.inTransaction;
+  } catch {
+    return true;
+  }
+}
+
+function sqliteTotalChanges(db: Database): number {
+  return db.query<{ n: number }, []>("SELECT total_changes() AS n").get()?.n ?? 0;
+}
+
+function addAuditRowChanges(db: Database, delta: number): void {
+  if (delta > 0) {
+    auditChangesByDb.set(db, (auditChangesByDb.get(db) ?? 0) + delta);
+  }
+}
+
+/**
+ * Cumulative SQLite `total_changes()` delta attributable to committed
+ * `agent_audit` writes on this handle. Used only by owner-only serving caches
+ * so consecutive audit rows do not invalidate them while any non-audit write
+ * invalidates immediately.
+ */
+export function auditRowChanges(db: Database): number {
+  return auditChangesByDb.get(db) ?? 0;
+}
+
 function insertAudit(
   db: Database,
   agentId: string,
@@ -400,12 +430,14 @@ function insertAudit(
   denied: AuditDenial[],
   at: string,
   grantEpoch: number | null,
+  creditChanges: boolean = !isInTransaction(db),
 ): string {
   const lists = assertAuditLists(served, denied);
   const servedCount = assertCount(lists.served.length, "served_count");
   const deniedCount = assertCount(lists.denied.length, "denied_count");
   const auditId = ulid();
-  using statement = db.prepare<
+  const before = creditChanges ? sqliteTotalChanges(db) : 0;
+  db.query<
     never,
     [string, string, string, string, string, string, number, number, number | null, string]
   >(
@@ -413,8 +445,7 @@ function insertAudit(
        (audit_id, agent_id, tool, query_shape, served, denied,
         served_count, denied_count, grant_epoch, at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  );
-  statement.run(
+  ).run(
     auditId,
     agentId,
     tool,
@@ -426,6 +457,9 @@ function insertAudit(
     grantEpoch,
     at,
   );
+  if (creditChanges) {
+    addAuditRowChanges(db, sqliteTotalChanges(db) - before);
+  }
   return auditId;
 }
 
@@ -538,19 +572,24 @@ export function reserveAudit(
   assertTool(tool);
   const stamped = new Date(rfc3339Millis(at, "at")).toISOString();
   const agentId = principal.kind === "owner" ? "owner" : principal.agent.agent_id;
+  const trackChanges = !isInTransaction(db);
   // The row is written before anything is served, so a short write by another
   // connection is waited out, within the ledger's bounded busy retries,
   // rather than refusing the call.
-  return runImmediate(db, ():
-    | { allow: true; audit_id: string }
-    | {
-        allow: false;
-        reason: "rate_limited";
-        retry_after_seconds: number;
-        audit_id: string;
-      } => {
+  const committed = runImmediate(db, (): {
+    outcome:
+      | { allow: true; audit_id: string }
+      | {
+          allow: false;
+          reason: "rate_limited";
+          retry_after_seconds: number;
+          audit_id: string;
+        };
+    delta: number;
+  } => {
     const rate = checkRate(db, principal, tool, stamped);
     if (!rate.allow) {
+      const before = trackChanges ? sqliteTotalChanges(db) : 0;
       const audit_id = insertAudit(
         db,
         agentId,
@@ -560,32 +599,48 @@ export function reserveAudit(
         [{ id: `tool:${tool}`, reason: "rate_limited" }],
         stamped,
         grantEpochOf(principal),
+        false,
       );
+      const delta = trackChanges ? sqliteTotalChanges(db) - before : 0;
       const retry = checkRate(db, principal, tool, stamped);
       if (retry.allow) {
         throw new Error("rate_limited reserve must still be limited after its row");
       }
       return {
-        allow: false,
-        reason: "rate_limited",
-        retry_after_seconds: retry.retry_after_seconds,
-        audit_id,
+        outcome: {
+          allow: false,
+          reason: "rate_limited",
+          retry_after_seconds: retry.retry_after_seconds,
+          audit_id,
+        },
+        delta,
       };
     }
+    const before = trackChanges ? sqliteTotalChanges(db) : 0;
+    const audit_id = insertAudit(
+      db,
+      agentId,
+      tool,
+      args,
+      [],
+      [],
+      stamped,
+      grantEpochOf(principal),
+      false,
+    );
+    const delta = trackChanges ? sqliteTotalChanges(db) - before : 0;
     return {
-      allow: true,
-      audit_id: insertAudit(
-        db,
-        agentId,
-        tool,
-        args,
-        [],
-        [],
-        stamped,
-        grantEpochOf(principal),
-      ),
+      outcome: {
+        allow: true,
+        audit_id,
+      },
+      delta,
     };
   });
+  if (trackChanges) {
+    addAuditRowChanges(db, committed.delta);
+  }
+  return committed.outcome;
 }
 
 /**
@@ -616,6 +671,67 @@ export function recordAudit(
     stamped,
     grantEpochOf(principal),
   );
+}
+
+/**
+ * Reserves and finalizes one audit row in a single IMMEDIATE transaction (one
+ * WAL sync instead of two) for principals that are never rate-limited and
+ * read-only calls that cannot mutate state. Running both INSERT and UPDATE
+ * inside the same transaction ensures audit triggers on either operation fail
+ * closed and roll back before any response is released.
+ */
+export function recordImmediateAudit(
+  db: Database,
+  principal: Principal,
+  tool: Tool,
+  args: Record<string, unknown>,
+  served: AuditItem[],
+  denied: AuditDenial[],
+  at: string = new Date().toISOString(),
+  options?: { attempts?: number; beforeCommit?: () => void },
+): string {
+  assertTool(tool);
+  const stamped = new Date(rfc3339Millis(at, "at")).toISOString();
+  const agentId = principal.kind === "owner" ? "owner" : principal.agent.agent_id;
+  const grantEpoch = grantEpochOf(principal);
+  const lists = assertAuditLists(served, denied);
+  const servedCount = assertCount(lists.served.length, "served_count");
+  const deniedCount = assertCount(lists.denied.length, "denied_count");
+  const shaped = JSON.stringify(shapeArguments(args));
+  const servedJson = JSON.stringify(lists.served);
+  const deniedJson = JSON.stringify(lists.denied);
+  const auditId = ulid();
+  const trackChanges = !isInTransaction(db);
+  const committed = runImmediate(
+    db,
+    () => {
+      const before = trackChanges ? sqliteTotalChanges(db) : 0;
+      db.query<never, [string, string, string, number | null, string]>(
+        `INSERT INTO agent_audit
+           (audit_id, agent_id, tool, query_shape, served, denied,
+            served_count, denied_count, grant_epoch, at)
+         VALUES (?, ?, ?, '{}', '[]', '[]', 0, 0, ?, ?)`,
+      ).run(auditId, agentId, tool, grantEpoch, stamped);
+      db.query<never, [string, string, string, number, number, string]>(
+        `UPDATE agent_audit
+            SET query_shape = ?, served = ?, denied = ?,
+                served_count = ?, denied_count = ?
+          WHERE audit_id = ?`,
+      ).run(shaped, servedJson, deniedJson, servedCount, deniedCount, auditId);
+      const changed = db.query<{ n: number }, []>("SELECT changes() AS n").get();
+      if (changed?.n !== 1) {
+        throw new Error("serving audit update was not recorded");
+      }
+      const delta = trackChanges ? sqliteTotalChanges(db) - before : 0;
+      options?.beforeCommit?.();
+      return { auditId, delta };
+    },
+    options?.attempts,
+  );
+  if (trackChanges) {
+    addAuditRowChanges(db, committed.delta);
+  }
+  return committed.auditId;
 }
 
 export function recordLifecycle(
@@ -684,6 +800,8 @@ export function updateAudit(
   denied: AuditDenial[],
 ): void {
   const lists = assertAuditLists(served, denied);
+  const trackChanges = !isInTransaction(db);
+  const before = trackChanges ? sqliteTotalChanges(db) : 0;
   db.query<never, [string, string, string, number, number, string]>(
     `UPDATE agent_audit
         SET query_shape = ?, served = ?, denied = ?,
@@ -697,6 +815,9 @@ export function updateAudit(
     lists.denied.length,
     auditId,
   );
+  if (trackChanges) {
+    addAuditRowChanges(db, sqliteTotalChanges(db) - before);
+  }
 }
 
 function parseTool(value: string): AuditRow["tool"] {

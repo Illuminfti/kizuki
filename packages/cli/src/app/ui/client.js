@@ -5,7 +5,7 @@ const SESSION_KEY = 'kizuki.app.session';
 const main = document.getElementById('main');
 const dialog = document.getElementById('dialog');
 const notice = document.getElementById('notification');
-const state = { view: 'memory', status: null, service: null, model: null, modelError: false, agents: null, agentsError: false, sources: [], catalog: [], receipts: [], activityStatus: 'idle', hits: null, query: '', degraded: [], busy: false, operation: null, dismissedCaptureId: null, setupError: null, world: null, worldError: false, worldKind: 'concepts', worldQuery: '', worldRef: null, worldDetailKind: null, worldCard: null, worldLoading: false, worldAtlasFocus: null, worldAtlasPanel: 'home' };
+const state = { view: 'memory', status: null, service: null, serviceStatus: 'idle', disconnectReason: 'none', model: null, modelError: false, agents: null, agentsError: false, sources: [], catalog: [], receipts: [], activityStatus: 'idle', hits: null, query: '', degraded: [], busy: false, operation: null, dismissedCaptureId: null, setupError: null, world: null, worldError: false, worldKind: 'concepts', worldQuery: '', worldRef: null, worldDetailKind: null, worldCard: null, worldLoading: false, worldAtlasFocus: null, worldAtlasPanel: 'home' };
 let bearer = null;
 let noticeTimer;
 let dialogCleanup = null;
@@ -115,7 +115,7 @@ function staleResponse() { return Object.assign(new Error('Response superseded.'
 function invalidatePrivateView() {
   privacyGeneration++; refreshSequence++; searchSequence++; activitySequence++; serviceSequence++; modelSequence++; agentsSequence++; worldSequence++;
   privateViewValid = false;
-  state.busy = false; state.hits = null; state.query = ''; state.degraded = []; state.sources = []; state.receipts = []; state.activityStatus = 'idle'; state.service = null; state.model = null; state.modelError = false; state.agents = null; state.agentsError = false; state.operation = null; state.world = null; state.worldError = false; state.worldRef = null; state.worldDetailKind = null; state.worldCard = null; state.worldQuery = ''; state.worldLoading = false; state.worldAtlasFocus = null; state.worldAtlasPanel = 'home'; state.worldRequest = null;
+  state.busy = false; state.hits = null; state.query = ''; state.degraded = []; state.sources = []; state.receipts = []; state.activityStatus = 'idle'; state.service = null; state.serviceStatus = 'idle'; state.model = null; state.modelError = false; state.agents = null; state.agentsError = false; state.operation = null; state.world = null; state.worldError = false; state.worldRef = null; state.worldDetailKind = null; state.worldCard = null; state.worldQuery = ''; state.worldLoading = false; state.worldAtlasFocus = null; state.worldAtlasPanel = 'home'; state.worldRequest = null;
   clearDialogTransient();
   if (dialog.open) closeDialog();
   dialog.replaceChildren();
@@ -143,7 +143,7 @@ async function api(route, payload = {}) {
   try {
     const response = await fetch(`/app/v1/${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session}` }, body: JSON.stringify(payload), cache: 'no-store', credentials: 'omit', redirect: 'error', signal: controller.signal });
     if (!current()) throw staleResponse();
-    if (response.status === 401) { disconnect(); throw Object.assign(new Error(humanError('unauthorized')), { code: 'unauthorized' }); }
+    if (response.status === 401) { disconnect('expired'); throw Object.assign(new Error(humanError('unauthorized')), { code: 'unauthorized' }); }
     const result = await response.json();
     if (!current()) throw staleResponse();
     if (!result.ok) throw Object.assign(new Error(humanError(result.error?.code || 'error')), { code: result.error?.code || 'error' });
@@ -154,16 +154,24 @@ async function api(route, payload = {}) {
     throw Object.assign(new Error('Kizuki is not responding. Your operation may still be running; reopen or refresh to check its state.'), { code: 'transport' });
   } finally { clearTimeout(timer); }
 }
-function disconnect() {
+function disconnect(reason = 'none') {
   invalidatePrivateView();
   bearer = null;
+  state.disconnectReason = reason;
   try { sessionStorage.removeItem(SESSION_KEY); } catch {}
   state.hits = null; state.sources = []; state.receipts = []; state.status = null; state.operation = null;
   if (dialog.open) closeDialog();
-  renderDisconnected();
+  renderNavigation();
+  renderDisconnected(reason);
 }
-function renderDisconnected() {
-  main.replaceChildren(el('section', { class: 'empty-state' }, icon('lock'), el('h2', {}, 'Open Kizuki to continue'), el('p', {}, 'This private workspace opens from the Kizuki app on your device. Close this tab and open the app again to reconnect.')));
+function renderDisconnected(reason = state.disconnectReason) {
+  const title = reason === 'expired' ? 'Session ended' : reason === 'manual' ? 'Tab disconnected' : 'Open Kizuki to continue';
+  const detail = reason === 'expired'
+    ? 'This local app session is no longer active — for example, after restarting kizuki app. Close this tab and run kizuki app on this device to open a fresh session.'
+    : reason === 'manual'
+      ? 'This tab’s local session was cleared. Run kizuki app on this device when you want to reconnect.'
+      : 'This private workspace opens from the Kizuki app on your device. Close this tab and open the app again to reconnect.';
+  main.replaceChildren(el('section', { class: 'empty-state', role: reason === 'expired' ? 'alert' : undefined }, icon('lock'), el('h2', {}, title), el('p', {}, detail)));
 }
 function navigate(view, focus = true) {
   if (!['memory', 'sources', 'activity', 'agents', 'world', 'settings'].includes(view)) return;
@@ -180,7 +188,11 @@ function navigate(view, focus = true) {
 }
 function renderNavigation() {
   document.getElementById('navigation').replaceChildren(...[['memory', 'Memory'], ['sources', 'Sources'], ['activity', 'Activity'], ['agents', 'Agents'], ['world', 'World'], ['settings', 'Settings']].map(([id, title]) => el('a', { class: 'nav-link', href: `#${id}`, 'aria-current': state.view === id ? 'page' : undefined, onclick: event => { event.preventDefault(); navigate(id); } }, icon(id), title)));
-  document.getElementById('view-label').textContent = state.view.charAt(0).toUpperCase() + state.view.slice(1);
+  const label = state.view.charAt(0).toUpperCase() + state.view.slice(1);
+  document.getElementById('view-label').textContent = label;
+  document.title = `${label} — Kizuki`;
+  const refreshButton = document.getElementById('refresh');
+  if (refreshButton) refreshButton.disabled = !bearer;
 }
 function heading(title, description, action) { return el('div', { class: 'page-heading' }, el('div', {}, el('h1', {}, title), description && el('p', {}, description)), action); }
 function empty(title, description, action) { return el('section', { class: 'empty-state' }, icon('memory'), el('h2', {}, title), el('p', {}, description), action); }
@@ -220,18 +232,21 @@ async function initialize() {
 }
 function renderMemory() {
   if (!state.status?.vault.ready || state.sources.length === 0) return renderWelcome();
-  const field = el('input', { id: 'memory-query', type: 'search', placeholder: 'Find something you remember…', 'aria-label': 'Search your memory', autocomplete: 'off', spellcheck: 'false', maxlength: '2000' }); field.value = state.query;
-  const form = el('form', { class: 'search-form', onsubmit: event => { event.preventDefault(); search(field.value); } }, icon('search'), field, el('button', { class: 'button button-primary', type: 'submit', disabled: state.busy }, 'Search'));
+  const field = el('input', { id: 'memory-query', type: 'search', placeholder: 'Find something you remember…', 'aria-label': 'Search your memory', 'aria-keyshortcuts': 'Control+K Meta+K', autocomplete: 'off', spellcheck: 'false', maxlength: '2000' }); field.value = state.query;
+  const form = el('form', { class: 'search-form', onsubmit: event => { event.preventDefault(); if (!field.value.trim()) { field.focus(); message('Enter a word or phrase to search your saved sources.'); return; } search(field.value); } }, icon('search'), field, el('button', { class: 'button button-primary', type: 'submit', disabled: state.busy }, 'Search'));
   const section = el('section', {}, heading('Your memory.', 'The original information, with a clear path back to its source.', button('Organise now', runPass)), form, el('p', { class: 'search-hint' }, 'Search works on this device. Organising memory pages needs a model and separate permission for each source.'));
   if (state.busy) section.append(el('div', { class: 'opening', 'aria-busy': 'true', 'aria-label': 'Searching your memory' }, el('div', { class: 'skeleton skeleton-line' }), el('div', { class: 'skeleton skeleton-panel' })));
   else if (state.hits === null) {
     const pending = state.sources.find(source => source.consent !== 'active' && source.consent !== 'denied' && source.consent !== 'purged');
     const waiting = state.sources.find(source => source.consent === 'active' && !source.last_run);
+    const hasActive = state.sources.some(source => source.consent === 'active');
     section.append(pending
       ? empty('Permission comes before import.', 'Choose what Kizuki may keep from this source. Nothing is imported until you allow it.', button('Review permission', () => consent(pending), 'primary'))
       : waiting
         ? empty('Import this source to search it.', 'Import reads only the information permitted for this source. Search works without a model.', button('Import history', () => capture(waiting), 'primary'))
-        : empty('A place to find things again.', 'Search for a name, a phrase, or a detail from a source you’ve imported.'));
+        : !hasActive
+          ? empty('No active sources right now.', 'Connect a source or review your source permissions to start searching your memory.', button('Manage sources', () => navigate('sources'), 'primary'))
+          : empty('A place to find things again.', 'Search for a name, a phrase, or a detail from a source you’ve imported.'));
   }
   else if (!state.hits.length) section.append(empty('Nothing matched this search.', 'Try a more specific word from the original source, or check that the source has finished importing.', button('Check sources', () => navigate('sources'))));
   else {
@@ -523,16 +538,24 @@ function undo(receipt) {
   focusDialog(content);
 }
 async function loadService() {
+  if (!bearer || !privateViewValid) return;
   const sequence = ++serviceSequence;
   state.service = null;
+  state.serviceStatus = 'loading';
   if (state.view === 'settings') render();
   try {
     const service = await api('service_status');
     if (sequence !== serviceSequence || !bearer || !privateViewValid) return;
     state.service = service;
+    state.serviceStatus = 'loaded';
     if (state.view === 'settings') render();
   } catch (error) {
-    if (sequence === serviceSequence && bearer && error.code !== 'stale_response') message(error.message);
+    if (sequence === serviceSequence && bearer && privateViewValid && error.code !== 'stale_response') {
+      state.service = null;
+      state.serviceStatus = 'unavailable';
+      if (state.view === 'settings') render();
+      message(error.message);
+    }
   }
 }
 async function loadModel() {
@@ -769,13 +792,24 @@ function agentRevoke(agent) {
   content.append(grantSummary(agent.grant), el('p', { class: 'dialog-description' }, 'This stops the agent’s access, including existing connections. Its name and credential file are retained; it cannot be reused as a new identity.'), el('div', { class: 'form-actions' }, button('Keep access', closeDialog), button('Revoke access', () => launchOperation('agent_revoke', { name: agent.name }, 'Revoking agent access', async (operation, present) => { await loadAgents(); if (present()) showAgentResult(operation); }), 'danger')));
   focusDialog(content);
 }
+function localCapabilitiesSummary(caps) {
+  const retrieval = { fts5: 'Built-in text search (FTS5)', embedded_pg: 'Embedded vector search', external_pg: 'External PostgreSQL retrieval', custom: 'Custom retrieval', unavailable: 'Retrieval setup needs attention' }[caps.retrieval] || 'Retrieval unknown';
+  const embedding = { none: 'Embeddings off', gguf: 'Local GGUF embeddings', local_http: 'Local HTTP embeddings', unavailable: 'Embedding setup needs attention' }[caps.embedding] || 'Embeddings unknown';
+  const memtBase = { off: 'MemT off', local_hybrid: 'MemT local hybrid', gpu_configured: 'MemT GPU configured', unavailable: 'MemT setup needs attention' }[caps.memt] || 'MemT unknown';
+  const memt = caps.memt_model && (caps.memt === 'local_hybrid' || caps.memt === 'gpu_configured') ? `${memtBase} (${caps.memt_model})` : memtBase;
+  return `${retrieval} · ${embedding} · ${memt}`;
+}
 function renderSettings() {
+  const serviceLoading = state.serviceStatus === 'loading';
+  const serviceText = serviceLoading ? 'Checking background activity…' : state.serviceStatus === 'unavailable' ? 'Background activity could not be checked. Refresh to try again.' : state.service?.detail || 'Refresh to check background activity.';
+  const caps = state.service?.local_capabilities;
   return el('section', {}, heading('Workspace settings.', 'Model setup, local custody and background activity for this device.'), renderModelSettings(), el('section', { class: 'settings-group', 'aria-labelledby': 'workspace-settings-title' }, el('h2', { id: 'workspace-settings-title' }, 'Workspace and service'), el('div', { class: 'settings-list' },
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Workspace'), el('p', {}, 'Your memory stays in a local folder you control.')), el('span', { class: 'settings-value' }, state.status?.vault.name || 'Not created')),
-    el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Background activity'), el('p', {}, state.service?.detail || 'Refresh to check background activity.'), state.service && el('small', {}, `Checked ${dateText(state.service.checked_at)}`)), el('div', { class: 'form-actions' }, button('Refresh', loadService), state.service && state.service.state !== 'active' && state.service.kind !== 'none' && !state.service.other_workspace && button('Enable background activity', () => launchOperation('install_service', {}, 'Setting up background activity', async (_operation, present) => { await refresh(); if (present()) await loadService(); }), 'primary'))),
+    el('div', { class: 'settings-row', 'aria-busy': serviceLoading ? 'true' : undefined }, el('div', {}, el('h3', {}, 'Background activity'), el('p', { role: state.serviceStatus === 'unavailable' ? 'alert' : undefined }, serviceText), state.service && el('small', {}, `Checked ${dateText(state.service.checked_at)}`)), el('div', { class: 'form-actions' }, button('Refresh', loadService, 'secondary', { disabled: serviceLoading }), state.service && state.service.state !== 'active' && state.service.kind !== 'none' && !state.service.other_workspace && button('Enable background activity', () => launchOperation('install_service', {}, 'Setting up background activity', async (_operation, present) => { await refresh(); if (present()) await loadService(); }), 'primary'))),
+    caps && el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Local search and memory'), el('p', {}, 'Read-only configuration status on this device. No network probes are made from this view.')), el('span', { class: 'settings-value' }, localCapabilitiesSummary(caps))),
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Source privacy'), el('p', {}, 'Each source has its own permission. Imported content stays on this device unless you separately allow a model to use it.')), button('Manage sources', () => navigate('sources'))),
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Agent access'), el('p', {}, 'Set up, inspect or revoke separate assistant permissions.')), button('Manage agents', () => navigate('agents'))),
-    el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'App session'), el('p', {}, 'This tab remembers only its local app capability. Search results and source content are not stored in browser storage.')), button('Disconnect tab', disconnect)),
+    el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'App session'), el('p', {}, 'This tab remembers only its local app capability. Search results and source content are not stored in browser storage.')), button('Disconnect tab', () => disconnect('manual'))),
     )), el('div', { class: 'status-note' }, icon('info'), el('p', {}, 'Search works without a model. Automatic organisation needs a working model and your permission to use each source.')));
 }
 function worldCoverage(coverage) {
@@ -940,11 +974,11 @@ function renderWorld() {
   const section = el('section', { 'aria-busy': state.worldLoading ? 'true' : 'false' }, heading('Your world.', 'Ideas, situations and practical knowledge connected to the information you save.'), el('div', { class: 'world-tabs', role: 'group', 'aria-label': 'World type' }, button('Attention', () => choose('attention'), state.worldKind === 'attention' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'attention' }), button('Concepts', () => choose('concepts'), state.worldKind === 'concepts' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'concepts' }), button('Situations', () => choose('situations'), state.worldKind === 'situations' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'situations' }), button('Procedures', () => choose('procedures'), state.worldKind === 'procedures' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'procedures' }), button('Artifacts', () => choose('artifacts'), state.worldKind === 'artifacts' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'artifacts' }), button('Outcomes', () => choose('outcomes'), state.worldKind === 'outcomes' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'outcomes' })), kind === 'attention' ? null : form, el('p', { class: 'search-hint' }, 'Kizuki uses your configured model to organise sources you allow it to read. You can always search saved sources without a model.'));
   section.append(el('nav', { class: 'world-tabs', 'aria-label': 'Atlas views' }, ...Object.entries(atlasPanelLabels).map(([panel, label]) => button(label, () => loadAtlas(panel), 'secondary', { 'aria-pressed': state.world?.operation === 'atlas' && state.worldAtlasPanel === panel }))));
   const resumeField = el('input', { type: 'text', placeholder: 'Resume handle', 'aria-label': 'Resume handle', maxlength: '43', autocomplete: 'off' });
-  section.append(el('form', { class: 'search-form', onsubmit: event => { event.preventDefault(); loadWorld(null, { operation: 'resume', handle: resumeField.value.trim() }); } }, resumeField, el('button', { class: 'button button-secondary', type: 'submit' }, 'Resume')));
+  section.append(el('form', { class: 'search-form', onsubmit: event => { event.preventDefault(); const handle = resumeField.value.trim(); if (!handle) { resumeField.focus(); message('Enter a resume handle to open a shared view.'); return; } loadWorld(null, { operation: 'resume', handle }); } }, resumeField, el('button', { class: 'button button-secondary', type: 'submit' }, 'Resume')));
   const taskField = el('input', { id: 'world-task', type: 'text', placeholder: 'What are you working on?', 'aria-label': 'Task for world slice', maxlength: '512', autocomplete: 'off' });
-  section.append(el('form', { id: 'world-slice-form', class: 'search-form', onsubmit: event => { event.preventDefault(); loadWorld(null, { operation: 'slice', task: taskField.value, budgetTokens: 2000 }); } }, taskField, el('button', { class: 'button button-secondary', type: 'submit' }, 'Prepare task view')));
+  section.append(el('form', { id: 'world-slice-form', class: 'search-form', onsubmit: event => { event.preventDefault(); if (!taskField.value.trim()) { taskField.focus(); message('Describe what you are working on to prepare a task view.'); return; } loadWorld(null, { operation: 'slice', task: taskField.value, budgetTokens: 2000 }); } }, taskField, el('button', { class: 'button button-secondary', type: 'submit' }, 'Prepare task view')));
   const retry = () => ['observation', 'evidence'].includes(state.worldRequest?.operation) ? loadWorld(state.worldRef, state.worldRequest) : state.worldAtlasPanel && state.worldRequest?.operation === 'atlas' ? loadAtlas() : loadWorld();
-  const noMatches = () => empty(`No ${kind} found.`, state.worldQuery ? 'Try another name, or search your saved sources.' : 'Connect a source and set up a model to start building your world. If you have already done this, check processing in Activity.', button('Search memory', () => navigate('memory'), 'primary'));
+  const noMatches = () => empty(`No ${kind} found.`, state.worldQuery ? 'Try another name, or search your saved sources.' : 'Connect a source and set up a model to start building your world. If you have already done this, check processing in Activity.', el('div', { class: 'empty-actions' }, button('Search memory', () => navigate('memory'), 'primary'), button('Model settings', () => navigate('settings'))));
   if (state.worldRef) section.append(button(`Back to ${kind}`, () => loadWorld(null), 'quiet'));
   if (state.worldLoading) section.append(el('p', { class: 'search-hint', role: 'status', 'aria-live': 'polite' }, `Loading ${state.worldRef ? kind.slice(0, -1) : kind}…`));
   else if (state.worldError) section.append(el('div', { role: 'alert' }, empty('World view is unavailable.', 'Kizuki could not load the latest information. Try again to check it.', button('Try again', retry, 'primary'))));
@@ -1175,7 +1209,8 @@ async function launchOperation(route, payload, title, done) {
         return;
       }
       const line = progress.querySelector('p'); if (line) line.textContent = route === 'model_test' ? 'Waiting for the model to answer the test prompt…' : route === 'run_pass' ? 'Processing. The completed run will have a receipt.' : 'In progress. Your original source stays in place.';
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      const delay = attempt < 5 ? 150 : attempt < 15 ? 400 : 1000;
+      await new Promise(resolve => setTimeout(resolve, delay));
     }
     throw new Error('This is taking longer than expected. Close this panel and refresh to check its current state.');
   } catch (error) {
@@ -1194,7 +1229,13 @@ async function launchOperation(route, payload, title, done) {
     if (!dialog.open || !dialog.contains(content)) message(text);
   }
 }
-document.getElementById('refresh').addEventListener('click', refresh);
+document.getElementById('refresh').addEventListener('click', async () => {
+  if (!bearer) return;
+  const buttonEl = document.getElementById('refresh');
+  if (buttonEl) { buttonEl.disabled = true; buttonEl.setAttribute('aria-busy', 'true'); }
+  try { await refresh(); }
+  finally { if (buttonEl) { buttonEl.setAttribute('aria-busy', 'false'); buttonEl.disabled = !bearer; } }
+});
 document.querySelector('.wordmark').addEventListener('click', event => { event.preventDefault(); navigate('memory'); });
 document.addEventListener('keydown', event => {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {

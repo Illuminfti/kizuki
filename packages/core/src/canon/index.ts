@@ -47,12 +47,28 @@ export type {
   RetrievalOpRef,
 } from "./receipts";
 export { undoReceipt } from "./undo";
-export { recoverCanonWrites } from "./recovery";
+export { recoverCanonWrites, resolveStaleCanonHold, resolveStaleCanonHoldOwned } from "./recovery";
 export { retryCanonProjectionObligations } from "./projection-obligations";
 export { CanonRecoveryError, inspectCanonRecovery } from "./write-intent";
-export { canonRecoveryNextStep, inspectCanonRecoveryDetail, readCanonRecoveryHold } from "./stage-recovery";
-export type { CanonRecoveryDetail, CanonRecoveryHold, CanonStageInspection, CanonStageRecoveryRecord } from "./stage-recovery";
-export type { CanonRecoveryReport } from "./recovery";
+export {
+  CANON_RECOVERY_RESOLUTIONS_PATH,
+  canonRecoveryNextStep,
+  inspectCanonRecoveryDetail,
+  readCanonRecoveryHold,
+  readCanonRecoveryResolutions,
+} from "./stage-recovery";
+export type {
+  CanonRecoveryDetail,
+  CanonRecoveryHold,
+  CanonRecoveryResolutionRecord,
+  CanonStageInspection,
+  CanonStageRecoveryRecord,
+} from "./stage-recovery";
+export type {
+  CanonRecoveryReport,
+  ResolveStaleCanonHoldOptions,
+  StaleCanonHoldResolution,
+} from "./recovery";
 export type { CanonRecoverySummary } from "./write-intent";
 export type { UndoReceiptOptions } from "./undo";
 export { CANON_SCHEMA_VERSION, applyCanonV4, initCanon } from "./schema";

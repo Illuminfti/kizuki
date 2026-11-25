@@ -36,6 +36,18 @@ function holder(value: unknown): boolean {
     Number.isSafeInteger(v.pid) && Number(v.pid) > 0 && typeof v.holder_id === "string" && v.holder_id.length <= 256 &&
     isRfc3339(v.heartbeat_at) && isRfc3339(v.acquired_at) && (v.ownership_token === undefined || typeof v.ownership_token === "string" && /^[0-9a-f-]{36}$/.test(v.ownership_token));
 }
+function refusalMetadata(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  return Object.keys(v).every(k => ["resource", "requested", "limit", "corpus_bytes", "limit_bytes", "at"].includes(k)) &&
+    Number.isSafeInteger(v.corpus_bytes) && Number(v.corpus_bytes) >= 0 &&
+    Number.isSafeInteger(v.limit_bytes) && Number(v.limit_bytes) >= 0 &&
+    isRfc3339(v.at) &&
+    (v.resource === undefined || ["text_bytes", "payload_bytes", "documents", "chunks", "links"].includes(String(v.resource))) &&
+    (v.requested === undefined || (Number.isSafeInteger(v.requested) && Number(v.requested) >= 0)) &&
+    (v.limit === undefined || (Number.isSafeInteger(v.limit) && Number(v.limit) >= 0));
+}
 function leaseMetadata(path: string, relative: string): void {
   const st = lstatSync(path);
   if (st.isDirectory()) {
@@ -89,10 +101,11 @@ export function validateOwnedGeneration(vaultPath: string, dataDir: string): voi
     } else if (name === "lease") leaseMetadata(path, name);
     else if (name === "engine.json" || /^engine\.json\.[0-9a-f-]{36}\.tmp$/.test(name)) {
       const v = json(path);
-      if (Object.keys(v).some(k => !["port", "contract", "contract_minor", "space", "created_at", "rebuilt_at", "engine", "schema"].includes(k)) ||
+      if (Object.keys(v).some(k => !["port", "contract", "contract_minor", "space", "created_at", "rebuilt_at", "refusal", "engine", "schema"].includes(k)) ||
           v.port !== EMBEDDED_RETRIEVAL_DESCRIPTOR.id || v.contract !== EMBEDDED_RETRIEVAL_DESCRIPTOR.contract || v.contract_minor !== EMBEDDED_RETRIEVAL_DESCRIPTOR.contract_minor ||
           !isRfc3339(v.created_at) || (v.rebuilt_at !== null && !isRfc3339(v.rebuilt_at)) ||
           (v.space !== null && (typeof v.space !== "string" || v.space.length > 256)) ||
+          !refusalMetadata(v.refusal) ||
           (v.engine !== undefined && v.engine !== "pglite") || (v.schema !== undefined && v.schema !== 2)) refuse();
     } else if (/^assets-[A-Za-z0-9]{6}$/.test(name) && lstatSync(path).isDirectory()) {
       const files = entries(path, 2);

@@ -9,12 +9,12 @@ export type HelpTopic = Pick<Command, "name" | "usage" | "summary" | "schema">;
 
 const GROUPS: readonly { title: string; names: readonly string[] }[] = [
   { title: "Start", names: ["app", "init", "import", "doctor"] },
-  { title: "Recall", names: ["query", "context", "world"] },
+  { title: "Recall", names: ["query", "context", "world", "memt", "attention", "reflex"] },
   { title: "Sources", names: ["connect", "backfill", "sync"] },
   { title: "Correct", names: ["tell", "undo", "audit"] },
-  { title: "Run", names: ["serve", "models", "agent"] },
-  { title: "Custody", names: ["purge", "backup", "export", "restore", "rebuild", "recover"] },
-  { title: "Meta", names: ["version"] },
+  { title: "Run", names: ["serve", "models", "agent", "hook"] },
+  { title: "Custody", names: ["purge", "backup", "export", "restore", "rebuild", "recover", "verify"] },
+  { title: "Meta", names: ["version", "parity"] },
 ];
 
 const EXAMPLES: Readonly<Record<string, readonly string[]>> = {
@@ -36,6 +36,31 @@ const EXAMPLES: Readonly<Record<string, readonly string[]>> = {
   world: [
     `${INVOCATION} world --operation situation --ref TOKEN`,
     `${INVOCATION} world --operation concept --ref TOKEN --json`,
+  ],
+  memt: [
+    `${INVOCATION} memt status`,
+    `${INVOCATION} memt recall "recovery hold" --domain ops`,
+    `${INVOCATION} memt experience add --domain ops --condition "when X" --recommendation "do Y"`,
+    `${INVOCATION} memt sync --dry-run`,
+    `${INVOCATION} memt snapshot list`,
+    `${INVOCATION} memt deploy-check`,
+  ],
+  attention: [
+    `${INVOCATION} attention`,
+    `${INVOCATION} attention dismiss CUE_ID`,
+    `${INVOCATION} attention snooze CUE_ID --until 2026-12-31T00:00:00.000Z`,
+  ],
+  reflex: [
+    `${INVOCATION} reflex --request ./plan-check.json`,
+    `${INVOCATION} reflex --request ./plan-check.json --format html`,
+  ],
+  hook: [
+    `${INVOCATION} hook session-start --harness claude-code --token-ref file:/absolute/private/credential`,
+    `${INVOCATION} hook session-start --harness generic --token-ref file:/absolute/private/credential --verbose`,
+  ],
+  verify: [`${INVOCATION} verify world --vault /absolute/offline-copy`],
+  parity: [
+    `${INVOCATION} parity run --queries ./queries.txt --estate-cmd -- ./legacy-recall {query}`,
   ],
   doctor: [`${INVOCATION} doctor`, `${INVOCATION} doctor --json`],
   connect: [
@@ -138,12 +163,12 @@ export function printRootHelp(
   write("Capture and recall work without a model. Automatic canon writing needs one.");
   write("The app needs a graphical desktop and a default web browser.");
   write("Linux uses /usr/bin/xdg-open; macOS uses /usr/bin/open.");
-  write("Use connect to enroll local files, exports, Beeper messaging, IMAP, Telegram, Gmail, and Google Calendar.");
+  write("Use connect to enroll local files, exports, Beeper messaging, IMAP, Telegram, Gmail, Google Calendar, X own-post API, and ICS feeds.");
   write("Other account connectors are not enrollable here. None of these sign-in paths are live-account qualified.");
   write(
     `${RETIRED_OWNER_GATE_VERBS.join(", ")} are retired. Use audit, undo, and tell.`,
   );
-  write(IS_COMPILED ? "Setup guide: README.txt beside these executables." : "Docs: README.md · docs/cli.md · docs/architecture.md");
+  write(IS_COMPILED ? "Setup guide: README.txt beside these executables." : "Docs: README.md · docs/cli.md · docs/integrations.md · docs/architecture.md");
 }
 
 const EXIT_CODES = [

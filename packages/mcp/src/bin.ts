@@ -1,9 +1,6 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { authenticateAgentCredential, bindConfiguredEmbedding, isLedgerBusy, LEDGER_BUSY_TIMEOUT_MS, leaseHeldMessage, PortError, PortRegistry, bindLocalSourcePort, loadConfiguredRetrieval } from "@kizuki/core";
-import { registerGgufEmbedding } from "@kizuki/embed-gguf";
-import { registerLocalHttpEmbedding } from "@kizuki/embed-local-http";
-import { createEmbeddedRetrievalPort, EMBEDDED_RETRIEVAL_DESCRIPTOR, registerEmbeddedRetrieval } from "@kizuki/retrieval-pg";
 import { openLedgerForServing } from "@kizuki/core/internal";
 import type { Principal, RetrievalPort } from "@kizuki/core";
 import { ownerPrincipal, principalFromToken } from "./principal";
@@ -64,11 +61,18 @@ async function bindRetrieval(vault: string, id: string): Promise<RetrievalPort> 
   const registry = new PortRegistry();
   // stdout is the protocol channel; a port's own lines go to stderr.
   const logger = (line: { level: string; message: string }): void => { process.stderr.write(`${line.level} ${line.message}\n`); };
+  // Lazy-load optional retrieval/embedding packages so the default lexical floor avoids their startup cost.
+  const { createEmbeddedRetrievalPort, EMBEDDED_RETRIEVAL_DESCRIPTOR, registerEmbeddedRetrieval } = await import("@kizuki/retrieval-pg");
   // The vault's configured embedding port rides with the engine, so this
   // session's search can rank by vector and its writes cut chunks the same way.
-  const embedding = id === "kizuki.retrieval.embedded-pg"
-    ? await bindConfiguredEmbedding(vault, (embeddings) => { registerGgufEmbedding(embeddings); registerLocalHttpEmbedding(embeddings); }, logger)
-    : undefined;
+  let embedding: Awaited<ReturnType<typeof bindConfiguredEmbedding>> = undefined;
+  if (id === "kizuki.retrieval.embedded-pg") {
+    const [{ registerGgufEmbedding }, { registerLocalHttpEmbedding }] = await Promise.all([
+      import("@kizuki/embed-gguf"),
+      import("@kizuki/embed-local-http"),
+    ]);
+    embedding = await bindConfiguredEmbedding(vault, (embeddings) => { registerGgufEmbedding(embeddings); registerLocalHttpEmbedding(embeddings); }, logger);
+  }
   if (embedding === undefined) registerEmbeddedRetrieval(registry);
   else registry.registerPort(EMBEDDED_RETRIEVAL_DESCRIPTOR, (ctx) => createEmbeddedRetrievalPort(ctx, { embedding, own_embedding: true }));
   try {
@@ -106,6 +110,7 @@ export async function main(argv: string[]): Promise<void> {
   let db: ReturnType<typeof openLedgerForServing> | undefined;
   try {
     db = openLedgerForServing(join(stateDir, "kizuki.db"), { busyTimeoutMs: LEDGER_BUSY_TIMEOUT_MS });
+    db.exec("PRAGMA temp_store = MEMORY; PRAGMA cache_size = -8192; PRAGMA mmap_size = 0;");
   } catch (error) {
     db?.close();
     // A ledger that needs repair is repaired by opening it, which is a write.
