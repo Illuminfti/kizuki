@@ -18,10 +18,13 @@ export function packetPrincipal(ctx: ServeContext): string {
 /** Render from authorized structured pieces before packing or hashing. Literal
  * evidence stays quoted. A v1 generated line is never scrubbed by regex. */
 export function scopePacketPieces(ctx: ServeContext, pieces: readonly Piece[]): Piece[] {
+  if (pieces.length === 0 || pieces.every(piece => piece.scopedBlock === true || piece.placeholder === true)) {
+    return [...pieces];
+  }
   return ctx.db.transaction(() => {
     const scope = referenceScope(ctx), redactor = redactorOf(ctx);
-    const index = pieces.some(piece => piece.canon !== undefined) ? loadCanon(ctx) : undefined;
     const unscoped = pieces.filter(piece => piece.scopedBlock !== true);
+    const index = unscoped.some(piece => piece.canon !== undefined) ? loadCanon(ctx) : undefined;
     prepareChunkReferences(scope, unscoped.flatMap(piece => piece.canon === undefined ? [] : [piece.canon]),
       unscoped.flatMap(piece => piece.canon !== undefined || piece.quoted === undefined ? [] : [piece.quoted]));
     return pieces.flatMap(piece => {

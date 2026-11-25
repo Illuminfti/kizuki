@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { Tiktoken } from "js-tiktoken/lite";
 import ranks from "js-tiktoken/ranks/cl100k_base";
 import { serveContextPacket } from "../../src/serving/packet";
+import { packetPrefix, packetTokens } from "../../src/serving/packet-tokenizer";
 import { rebuildDerived } from "../../src/derived";
 import { ServeError } from "../../src/serving/types";
 import { recordedPage, serveFixture } from "./helpers";
@@ -117,3 +118,31 @@ test("a copied compiled tokenizer works with fetch denied and bundled ranks", ()
     rmSync(run, { recursive: true, force: true });
   }
 }, 30_000);
+
+test("cached segment counting and prefix truncation match js-tiktoken exactly", () => {
+  const samples = [
+    "",
+    "hello world",
+    "   \n\n  indented line\n- [page:01TEST] s=public :: Title\n> body line\n\n   \n",
+    "KIZUKI CONTEXT v2\nprincipal=abc purpose=session budget=2000\nrules=quoted\n## now\n- item 1\n- item 2\n",
+    "知識と記憶は文脈によって変わります。\n中文检索保持来源。\n👩🏽‍💻🧑‍🚀🏳️‍🌈🪿✨\n<|endoftext|><|fim_prefix|>\n",
+    "line1\r\n\r\nline2\n   \t\nline3\nIt's don't we're I've I'm we'll I'd 1234567890",
+  ];
+  // Incremental growing packet simulation exercises the line-segment cache.
+  let growing = "";
+  for (const sample of samples) {
+    growing += sample;
+    for (const candidate of [sample, growing]) {
+      const expected = encoding.encode(candidate, [], []);
+      expect(packetTokens(candidate)).toBe(expected.length);
+      for (const budget of [0, 1, 3, 11, expected.length, expected.length + 5]) {
+        const expectedPrefix = budget <= 0
+          ? ""
+          : expected.length <= budget
+            ? candidate
+            : encoding.decode(expected.slice(0, budget));
+        expect(packetPrefix(candidate, budget)).toBe(expectedPrefix);
+      }
+    }
+  }
+});

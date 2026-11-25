@@ -16,25 +16,53 @@ import type { CanonChunk, QuotedChunk } from "../types";
  * that cannot be issued here fails the projection exactly as before.
  */
 export function prepareChunkReferences(scope: RefScope, canon: readonly CanonChunk[], quoted: readonly QuotedChunk[]): void {
-  for (const chunk of canon) for (const id of chunk.sources.map(eventIdFromReference)) issueEventVersionRef(scope, id);
-  for (const chunk of quoted) { issueEventVersionRef(scope, chunk.event_id); issueSourceRef(scope, chunk.event_id); }
-  prepareEventRawSubjects(scope, [
-    ...canon.flatMap(chunk => chunk.sources.map(eventIdFromReference).map(eventId => ({ eventId, ids: chunk.subjects }))),
-    ...quoted.map(chunk => ({ eventId: chunk.event_id, ids: chunk.subjects })),
-  ]);
+  if (canon.length === 0 && quoted.length === 0) return;
+  const issuedEvents = new Set<string>();
+  const issuedSources = new Set<string>();
+  const rawSubjectInputs: { eventId: string; ids: readonly string[] }[] = [];
+  for (const chunk of canon) {
+    const seenChunkSources = new Set<string>();
+    for (const rawSource of chunk.sources) {
+      const id = eventIdFromReference(rawSource);
+      if (!issuedEvents.has(id)) {
+        issuedEvents.add(id);
+        issueEventVersionRef(scope, id);
+      }
+      if (!seenChunkSources.has(id)) {
+        seenChunkSources.add(id);
+        rawSubjectInputs.push({ eventId: id, ids: chunk.subjects });
+      }
+    }
+  }
+  for (const chunk of quoted) {
+    if (!issuedEvents.has(chunk.event_id)) {
+      issuedEvents.add(chunk.event_id);
+      issueEventVersionRef(scope, chunk.event_id);
+    }
+    if (!issuedSources.has(chunk.event_id)) {
+      issuedSources.add(chunk.event_id);
+      issueSourceRef(scope, chunk.event_id);
+    }
+    rawSubjectInputs.push({ eventId: chunk.event_id, ids: chunk.subjects });
+  }
+  prepareEventRawSubjects(scope, rawSubjectInputs);
 }
 /** Construct each nested DTO from named fields. No legacy identity or label
  * attachment can be inherited by adding a field to a v1 chunk. */
 export function projectCanonChunk(scope: RefScope, chunk: CanonChunk, index: CanonIndex = loadCanon(scope.ctx)): CanonChunkV2 {
   const page = issuePageRef(scope, chunk.page_id, index);
   if (page === null) throw missingReference();
-  const sources = chunk.sources.map(eventIdFromReference).map(id => {
+  const sourceIds = chunk.sources.map(eventIdFromReference);
+  const sources = sourceIds.map(id => {
     const source = issueEventVersionRef(scope, id);
     if (source === null) throw missingReference();
     return source;
   });
   const subjects = new Map<string, ReturnType<typeof eventRawSubjectRefs>[number]>();
-  for (const id of chunk.sources.map(eventIdFromReference)) {
+  const seenSources = new Set<string>();
+  for (const id of sourceIds) {
+    if (seenSources.has(id)) continue;
+    seenSources.add(id);
     for (const subject of eventRawSubjectRefs(scope, id, chunk.subjects)) subjects.set(subject.token, subject);
   }
   return { page, title: chunk.title, type: chunk.type, sensitivity: chunk.sensitivity, taint: chunk.taint,
