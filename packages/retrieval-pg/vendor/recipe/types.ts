@@ -17,6 +17,8 @@ export interface RecipeCandidate {
   readonly keyword_hit: boolean;
   score: number;
   vector: Float32Array | null;
+  /** Optional precomputed query-chunk cosine similarity from the vector store. */
+  readonly cosine?: number;
 }
 
 export interface RecipeEdge {

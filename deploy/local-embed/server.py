@@ -23,6 +23,7 @@ import resource
 import sys
 import threading
 import time
+from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,7 @@ DEFAULT_DIMS = 384
 DEFAULT_MAX_SEQ_LENGTH = 512
 DEFAULT_BATCH_SIZE = 32
 DEFAULT_THREADS = min(6, os.cpu_count() or 4)
+DEFAULT_CACHE_SIZE = 2048
 MAX_REQUEST_BYTES = 4 * 1024 * 1024
 MAX_BATCH_INPUTS = 128
 
@@ -110,12 +112,17 @@ class LocalSemanticEmbedder:
         backend: str = "auto",
         onnx_cache_dir: str | None = None,
         allow_download: bool = False,
+        cache_size: int = DEFAULT_CACHE_SIZE,
     ) -> None:
         self.model_id = model_id
         self.max_seq_length = max_seq_length
         self.batch_size = max(1, min(batch_size, MAX_BATCH_INPUTS))
         self.threads = max(1, threads)
+        self.cache_capacity = max(0, int(cache_size))
         self._lock = threading.Lock()
+        self._cache: OrderedDict[str, list[float]] = OrderedDict()
+        self.cache_hits = 0
+        self.cache_misses = 0
         self.requests_total = 0
         self.texts_total = 0
         self.total_latency_ms = 0.0
@@ -125,14 +132,8 @@ class LocalSemanticEmbedder:
         load_path = str(snapshot) if snapshot is not None else model_id
         local_only = not allow_download and snapshot is not None
 
-        from transformers import AutoTokenizer
-
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            load_path,
-            local_files_only=local_only,
-            use_fast=True,
-        )
-
+        self.fast_tokenizer: Any = None
+        self.tokenizer: Any = None
         self.backend = "torch"
         self.ort_session: Any = None
         self.ort_input_names: set[str] = set()
@@ -142,6 +143,16 @@ class LocalSemanticEmbedder:
         onnx_path = self._prepare_onnx(load_path, local_only, backend, onnx_cache_dir)
         if onnx_path is not None:
             import onnxruntime as ort
+
+            self.fast_tokenizer = self._load_fast_tokenizer(load_path)
+            if self.fast_tokenizer is None:
+                from transformers import AutoTokenizer
+
+                self.tokenizer = AutoTokenizer.from_pretrained(
+                    load_path,
+                    local_files_only=local_only,
+                    use_fast=True,
+                )
 
             sess_options = ort.SessionOptions()
             sess_options.intra_op_num_threads = self.threads
@@ -163,8 +174,13 @@ class LocalSemanticEmbedder:
             self.backend = "onnx"
         else:
             import torch
-            from transformers import AutoModel
+            from transformers import AutoModel, AutoTokenizer
 
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                load_path,
+                local_files_only=local_only,
+                use_fast=True,
+            )
             torch.set_num_threads(self.threads)
             self.torch_model = AutoModel.from_pretrained(
                 load_path,
@@ -175,9 +191,37 @@ class LocalSemanticEmbedder:
             self.backend = "torch"
 
         self.embed(["warmup query"])
+        self._cache.clear()
+        self.cache_hits = 0
+        self.cache_misses = 0
         self.requests_total = 0
         self.texts_total = 0
         self.total_latency_ms = 0.0
+
+    def _load_fast_tokenizer(self, load_path: str) -> Any:
+        snap = Path(load_path)
+        tok_file = snap / "tokenizer.json"
+        if not tok_file.is_file():
+            return None
+        try:
+            import tokenizers
+
+            tok = tokenizers.Tokenizer.from_file(str(tok_file))
+            pad_token = "[PAD]"
+            cfg_file = snap / "tokenizer_config.json"
+            if cfg_file.is_file():
+                cfg = json.loads(cfg_file.read_text(encoding="utf-8"))
+                raw_pad = cfg.get("pad_token")
+                if isinstance(raw_pad, str) and raw_pad:
+                    pad_token = raw_pad
+            pad_id = tok.token_to_id(pad_token)
+            if pad_id is None:
+                pad_id = 0
+            tok.enable_truncation(max_length=self.max_seq_length)
+            tok.enable_padding(pad_id=pad_id, pad_token=pad_token)
+            return tok
+        except Exception:
+            return None
 
     def _prepare_onnx(
         self,
@@ -214,12 +258,17 @@ class LocalSemanticEmbedder:
 
         try:
             import torch
-            from transformers import AutoModel
+            from transformers import AutoModel, AutoTokenizer
 
             onnx_file.parent.mkdir(parents=True, exist_ok=True)
+            export_tokenizer = AutoTokenizer.from_pretrained(
+                load_path,
+                local_files_only=local_only,
+                use_fast=True,
+            )
             model = AutoModel.from_pretrained(load_path, local_files_only=local_only)
             model.eval()
-            dummy = self.tokenizer(
+            dummy = export_tokenizer(
                 ["export dummy text"],
                 padding=True,
                 truncation=True,
@@ -261,13 +310,26 @@ class LocalSemanticEmbedder:
 
     def _embed_subbatch(self, texts: list[str]) -> np.ndarray:
         if self.backend == "onnx":
-            encoded = self.tokenizer(
-                texts,
-                padding=True,
-                truncation=True,
-                max_length=self.max_seq_length,
-                return_tensors="np",
-            )
+            if self.fast_tokenizer is not None:
+                encodings = self.fast_tokenizer.encode_batch(texts)
+                input_ids = np.array([e.ids for e in encodings], dtype=np.int64)
+                attention_mask = np.array([e.attention_mask for e in encodings], dtype=np.int64)
+                encoded: dict[str, np.ndarray] = {
+                    "input_ids": input_ids,
+                    "attention_mask": attention_mask,
+                }
+                if "token_type_ids" in self.ort_input_names:
+                    encoded["token_type_ids"] = np.array(
+                        [e.type_ids for e in encodings], dtype=np.int64
+                    )
+            else:
+                encoded = self.tokenizer(
+                    texts,
+                    padding=True,
+                    truncation=True,
+                    max_length=self.max_seq_length,
+                    return_tensors="np",
+                )
             feed: dict[str, Any] = {}
             for name in self.ort_input_names:
                 if name in encoded:
@@ -301,23 +363,46 @@ class LocalSemanticEmbedder:
         if not texts:
             return [], 0
         started = time.perf_counter()
-        indexed = sorted(enumerate(texts), key=lambda item: len(item[1]))
         ordered_result: list[list[float] | None] = [None] * len(texts)
-        approx_tokens = 0
+        approx_tokens = sum(max(1, (len(t) + 3) // 4) for t in texts)
 
         with self._lock:
-            for start in range(0, len(indexed), self.batch_size):
-                chunk = indexed[start : start + self.batch_size]
-                sub_texts = [item[1] if len(item[1]) > 0 else " " for item in chunk]
-                matrix = self._embed_subbatch(sub_texts)
-                for row_idx, (orig_idx, raw_text) in enumerate(chunk):
-                    vec = matrix[row_idx]
-                    if vec.shape[0] != self.dims or not np.all(np.isfinite(vec)):
-                        raise RuntimeError("embedding model produced non-finite or mismatched vector")
-                    if not np.any(vec != 0):
-                        raise RuntimeError("embedding model produced zero vector")
-                    ordered_result[orig_idx] = vec.tolist()
-                    approx_tokens += max(1, (len(raw_text) + 3) // 4)
+            missing_by_text: dict[str, list[int]] = {}
+            for orig_idx, raw_text in enumerate(texts):
+                if self.cache_capacity > 0:
+                    cached = self._cache.get(raw_text)
+                    if cached is not None:
+                        self._cache.move_to_end(raw_text)
+                        ordered_result[orig_idx] = cached
+                        self.cache_hits += 1
+                        continue
+                self.cache_misses += 1
+                indices = missing_by_text.get(raw_text)
+                if indices is None:
+                    missing_by_text[raw_text] = [orig_idx]
+                else:
+                    indices.append(orig_idx)
+
+            if missing_by_text:
+                unique_missing = sorted(missing_by_text.keys(), key=len)
+                for start in range(0, len(unique_missing), self.batch_size):
+                    chunk_texts = unique_missing[start : start + self.batch_size]
+                    sub_texts = [t if len(t) > 0 else " " for t in chunk_texts]
+                    matrix = self._embed_subbatch(sub_texts)
+                    for row_idx, raw_text in enumerate(chunk_texts):
+                        vec = matrix[row_idx]
+                        if vec.shape[0] != self.dims or not np.all(np.isfinite(vec)):
+                            raise RuntimeError("embedding model produced non-finite or mismatched vector")
+                        if not np.any(vec != 0):
+                            raise RuntimeError("embedding model produced zero vector")
+                        vec_list = vec.tolist()
+                        if self.cache_capacity > 0:
+                            self._cache[raw_text] = vec_list
+                            self._cache.move_to_end(raw_text)
+                            while len(self._cache) > self.cache_capacity:
+                                self._cache.popitem(last=False)
+                        for orig_idx in missing_by_text[raw_text]:
+                            ordered_result[orig_idx] = vec_list
 
             elapsed_ms = (time.perf_counter() - started) * 1000.0
             self.requests_total += 1
@@ -341,6 +426,10 @@ class LocalSemanticEmbedder:
             "uptime_s": round(time.time() - self.started_at, 2),
             "requests_total": self.requests_total,
             "texts_total": self.texts_total,
+            "cache_hits": self.cache_hits,
+            "cache_misses": self.cache_misses,
+            "cache_size": len(self._cache),
+            "cache_capacity": self.cache_capacity,
             "avg_request_latency_ms": (
                 round(self.total_latency_ms / self.requests_total, 2)
                 if self.requests_total > 0
@@ -349,22 +438,48 @@ class LocalSemanticEmbedder:
         }
 
 
+class EmbedHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
 class EmbedRequestHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    timeout = 30.0
+    disable_nagle_algorithm = True
+    wbufsize = 65536
     embedder: LocalSemanticEmbedder
 
     def log_message(self, format: str, *args: Any) -> None:
         return
 
+    def handle_one_request(self) -> None:
+        try:
+            super().handle_one_request()
+        except (TimeoutError, ConnectionResetError, BrokenPipeError):
+            self.close_connection = True
+
     def _send_json(self, status: int, payload: dict[str, Any]) -> None:
         body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        conn_header = self.headers.get("Connection", "").lower() if self.headers else ""
+        keep_alive = (
+            status < 400
+            and self.request_version == "HTTP/1.1"
+            and "close" not in conn_header
+        )
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Connection", "close")
+        if keep_alive:
+            self.send_header("Connection", "keep-alive")
+            self.send_header("Keep-Alive", "timeout=30")
+            self.close_connection = False
+        else:
+            self.send_header("Connection", "close")
+            self.close_connection = True
         self.end_headers()
         self.wfile.write(body)
-        self.close_connection = True
+        self.wfile.flush()
 
     def do_GET(self) -> None:
         path = self.path.split("?", 1)[0]
@@ -577,11 +692,14 @@ def run_benchmark(embedder: LocalSemanticEmbedder) -> dict[str, Any]:
         "dims": embedder.dims,
         "threads": embedder.threads,
         "query_latency_ms": {
-            "mean": round(mean_ms, 2),
-            "p50": round(p50_ms, 2),
-            "p95": round(p95_ms, 2),
+            "mean": round(mean_ms, 3),
+            "p50": round(p50_ms, 3),
+            "p95": round(p95_ms, 3),
         },
         "batch_32_throughput_docs_per_s": round(throughput_docs_per_s, 1),
+        "cache_hits": embedder.cache_hits,
+        "cache_misses": embedder.cache_misses,
+        "cache_size": len(embedder._cache),
         "rss_mib": round(rss_bytes / (1024 * 1024), 2),
         "rss_bytes": rss_bytes,
         "semantic_top1_accuracy": f"{hits}/{len(paraphrases)}",
@@ -619,6 +737,11 @@ def main(argv: list[str] | None = None) -> int:
         default=int(os.environ.get("KIZUKI_EMBED_THREADS", str(DEFAULT_THREADS))),
     )
     parser.add_argument(
+        "--cache-size",
+        type=int,
+        default=int(os.environ.get("KIZUKI_EMBED_CACHE_SIZE", str(DEFAULT_CACHE_SIZE))),
+    )
+    parser.add_argument(
         "--backend",
         choices=("auto", "onnx", "torch"),
         default=os.environ.get("KIZUKI_EMBED_BACKEND", "auto"),
@@ -651,6 +774,7 @@ def main(argv: list[str] | None = None) -> int:
         backend=args.backend,
         onnx_cache_dir=args.onnx_cache_dir or None,
         allow_download=args.allow_download,
+        cache_size=args.cache_size,
     )
 
     if args.benchmark:
@@ -662,7 +786,7 @@ def main(argv: list[str] | None = None) -> int:
         pass
 
     BoundHandler.embedder = embedder
-    server = ThreadingHTTPServer((host, args.port), BoundHandler)
+    server = EmbedHTTPServer((host, args.port), BoundHandler)
     actual_host, actual_port = server.server_address[:2]
     print(
         json.dumps(

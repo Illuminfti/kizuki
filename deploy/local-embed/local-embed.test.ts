@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { OWNER, runRail, serveSearch } from "@kizuki/core";
+import { OWNER, runRail, serveSearch } from "../../packages/core/src/index";
 import { openVaultDb } from "../../packages/cli/src/context";
 import { openConfiguredRetrieval } from "../../packages/cli/src/retrieval-runtime";
 import { createHelpers, fixtureConsent } from "../../packages/cli/test/helpers";
@@ -134,7 +134,7 @@ test("real local CPU BAAI/bge-small-en-v1.5 server enables vector layer in docto
   writeFileSync(
     join(f.vault, ".kizuki", "serve.toml"),
     `[ports]
-retrieval = { id = "kizuki.retrieval.embedded-pg", max_text_bytes = 67108864 }
+retrieval = "kizuki.retrieval.embedded-pg"
 
 [ports.embedding]
 id = "kizuki.embedding.local-http"
@@ -202,4 +202,53 @@ prompt_doc = "{title}\\n\\n{text}"
     await engine?.close();
     db.close();
   }
+});
+
+test("local-embed server exposes LRU cache telemetry in /health and serves repeated texts from cache", async () => {
+  const healthBefore = (await (await fetch(`http://127.0.0.1:${serverPort}/health`)).json()) as {
+    cache_hits: number;
+    cache_misses: number;
+    cache_size: number;
+    cache_capacity: number;
+  };
+  expect(typeof healthBefore.cache_hits).toBe("number");
+  expect(typeof healthBefore.cache_misses).toBe("number");
+  expect(healthBefore.cache_capacity).toBeGreaterThanOrEqual(2048);
+
+  const uniqueInput = "Represent this sentence for searching relevant passages: synthetic cache probe alpha-9421";
+  const postEmbed = async (input: string[]) => {
+    const res = await fetch(`http://127.0.0.1:${serverPort}/v1/embeddings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "BAAI/bge-small-en-v1.5", input }),
+    });
+    expect(res.status).toBe(200);
+    return (await res.json()) as { data: Array<{ index: number; embedding: number[] }> };
+  };
+
+  const missResp = await postEmbed([uniqueInput]);
+  const healthAfterMiss = (await (await fetch(`http://127.0.0.1:${serverPort}/health`)).json()) as {
+    cache_hits: number;
+    cache_misses: number;
+    cache_size: number;
+  };
+  expect(healthAfterMiss.cache_misses).toBe(healthBefore.cache_misses + 1);
+  expect(healthAfterMiss.cache_size).toBeGreaterThanOrEqual(healthBefore.cache_size + 1);
+
+  const t0 = performance.now();
+  let hitResp = missResp;
+  for (let i = 0; i < 20; i += 1) {
+    hitResp = await postEmbed([uniqueInput]);
+  }
+  const avgHitMs = (performance.now() - t0) / 20;
+  expect(hitResp.data[0]!.embedding).toEqual(missResp.data[0]!.embedding);
+  expect(avgHitMs).toBeLessThan(5);
+
+  const healthAfterHits = (await (await fetch(`http://127.0.0.1:${serverPort}/health`)).json()) as {
+    cache_hits: number;
+    cache_misses: number;
+    cache_size: number;
+  };
+  expect(healthAfterHits.cache_hits).toBe(healthAfterMiss.cache_hits + 20);
+  expect(healthAfterHits.cache_misses).toBe(healthAfterMiss.cache_misses);
 });
