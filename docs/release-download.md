@@ -80,6 +80,34 @@ The example reports `integrity_ok` only after those bindings pass. It does not
 extract the archive, execute binaries, download files, rebuild, sign, publish or
 change release approval.
 
+## Unpacking and running a downloaded archive
+
+Once an archive has been verified (or downloaded from a release page), unpack it
+into a dedicated version directory rather than overwriting an older installation:
+
+```sh
+mkdir -p kizuki-1.0.2
+tar -xzf kizuki-SOURCE_SHA-TARGET.tar.gz -C kizuki-1.0.2
+cd kizuki-1.0.2
+sha256sum -c SHA256SUMS          # macOS: shasum -a 256 -c SHA256SUMS
+./kizuki version                 # compare source=<SHA> with BUILD.json
+```
+
+To make `kizuki` and `kizuki-mcp` callable from any shell without moving the
+package directory, create local symlinks (zero network calls):
+
+```sh
+mkdir -p "$HOME/.local/bin"
+ln -sf "$PWD/kizuki" "$HOME/.local/bin/kizuki"
+ln -sf "$PWD/kizuki-mcp" "$HOME/.local/bin/kizuki-mcp"
+```
+
+Ensure `"$HOME/.local/bin"` is on your `PATH`. Keep `kizuki` and `kizuki-mcp`
+together in their real version directory, and always run `serve --install` from
+that real directory rather than through a moving symlink (see the
+[upgrade runbook](upgrade.md)). Follow `README.txt` inside the unpacked folder
+for guided browser setup (`./kizuki app`), CLI setup, and service lifecycle.
+
 ## Verification and limits
 
 Run `bun test scripts/release-download.test.ts` and the repository typecheck.

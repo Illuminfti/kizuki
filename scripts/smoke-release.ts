@@ -134,6 +134,29 @@ try {
   ) throw new Error("doctor did not report a healthy imported no-model vault");
   const context = run(cli, ["context", "--query", "Ada", "--vault", vault], env);
   if (!context.includes("Ada")) throw new Error("imported note is missing from compiled context");
+  const memtStatus = JSON.parse(runJson(cli, ["memt", "status", "--json", "--vault", vault], env).stdout) as {
+    schema?: string;
+    status?: string;
+    data?: {
+      subcommand?: string;
+      mode?: string;
+      gpu_backend?: string;
+      experiences?: { total?: number; uninternalized?: number };
+      snapshots?: { total?: number };
+    };
+  };
+  if (
+    memtStatus.schema !== "kizuki.cli.memt/v1" ||
+    memtStatus.status !== "ok" ||
+    memtStatus.data?.subcommand !== "status" ||
+    memtStatus.data?.mode !== "local-hybrid" ||
+    memtStatus.data?.gpu_backend !== "offline" ||
+    memtStatus.data?.experiences?.total !== 0 ||
+    memtStatus.data?.snapshots?.total !== 0 ||
+    existsSync(join(vault, ".kizuki", "memt", "registry.sqlite"))
+  ) {
+    throw new Error("compiled memt status smoke failed");
+  }
   const world = JSON.parse(runJson(cli, ["world", "--operation", "find_concepts", "--json", "--vault", vault], env).stdout) as
     { schema?: string; status?: string; data?: unknown };
   if (world.schema !== "kizuki.cli.world/v1" || world.status !== "ok") throw new Error("compiled world command smoke failed");
@@ -189,18 +212,58 @@ try {
   const rejected = await mcpSession(mcp, env, ["--vault", vault, "--token-ref", `file:${credential}`], [agentRequests[0]!]);
   if (rejected.code === 0 || `${rejected.output}${rejected.diagnostics}`.includes(envelope.token) || `${rejected.output}${rejected.diagnostics}`.includes(credential)) throw new Error("revoked credential reconnected");
 
+  const expectedMcpTools = [
+    "search",
+    "get_page",
+    "query_entities",
+    "timeline",
+    "context_packet",
+    "graph_neighbors",
+    "system_health",
+    "world_view",
+    "propose",
+    "correct",
+    "memt_status",
+    "memt_recall",
+    "memt_experience",
+    "memt_snapshot",
+  ] as const;
   const ownerSession = await mcpSession(mcp, env, ["--vault", vault, "--owner"], [
     agentRequests[0]!,
     agentRequests[1]!,
     '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}',
     '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"world_view","arguments":{"operation":"find_concepts","label":"","valid":{"kind":"all"},"knownAt":{"kind":"current"}}}}',
+    '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"memt_status","arguments":{}}}',
   ]);
   if (ownerSession.code !== 0) throw new Error("owner MCP smoke failed");
   if (!ownerSession.output.includes('"tools"')) throw new Error("MCP tools/list did not respond");
-  const ownerResponses = ownerSession.output.trim().split("\n").filter(Boolean).map(line => JSON.parse(line) as { id?: number; result?: { isError?: boolean; structuredContent?: unknown } });
+  const ownerResponses = ownerSession.output.trim().split("\n").filter(Boolean).map(line => JSON.parse(line) as {
+    id?: number;
+    result?: {
+      isError?: boolean;
+      structuredContent?: Record<string, unknown>;
+      tools?: { name?: string }[];
+    };
+  });
+  const listedTools = ownerResponses.find(response => response.id === 2)?.result?.tools?.map(tool => tool.name) ?? [];
+  if (
+    listedTools.length !== expectedMcpTools.length ||
+    expectedMcpTools.some(name => !listedTools.includes(name))
+  ) {
+    throw new Error(`MCP tools/list mismatch: expected ${expectedMcpTools.length} tools, got ${listedTools.length} (${listedTools.join(", ")})`);
+  }
   const worldResponse = ownerResponses.find(response => response.id === 3)?.result;
   if (worldResponse === undefined || worldResponse.isError === true) throw new Error("MCP world_view smoke failed");
   requireConceptDiscovery(worldResponse.structuredContent, "compiled MCP");
+  const memtResponse = ownerResponses.find(response => response.id === 4)?.result;
+  if (
+    memtResponse === undefined ||
+    memtResponse.isError === true ||
+    memtResponse.structuredContent?.["schema"] !== "kizuki.memt-status/v1" ||
+    memtResponse.structuredContent?.["mode"] !== "local-hybrid"
+  ) {
+    throw new Error("MCP memt_status smoke failed");
+  }
 
   verifyPackageDirectory(release, build);
   process.stdout.write(`release smoke passed: ${release}\n`);

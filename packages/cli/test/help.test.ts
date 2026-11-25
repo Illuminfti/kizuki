@@ -983,4 +983,25 @@ describe("help", () => {
       expect(result.stderr).toContain("usage: kizuki version");
     }
   });
+
+  test("root help groups every live command and points to integration docs", () => {
+    const env = isolatedEnv();
+    const result = runCli(env, "--help");
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("docs/integrations.md");
+    const lines = result.stdout.split("\n");
+    const metaIndex = lines.indexOf("Meta");
+    const examplesIndex = lines.indexOf("Examples");
+    expect(metaIndex).toBeGreaterThan(0);
+    expect(examplesIndex).toBeGreaterThan(metaIndex);
+    // Every command belongs to an explicit group rather than trailing ungrouped after Meta.
+    const metaSection = lines.slice(metaIndex + 1, examplesIndex).filter((line) => line.startsWith("  "));
+    expect(metaSection.length).toBe(2);
+    for (const verb of ["hook", "attention", "verify", "reflex", "parity", "memt"] as const) {
+      const help = runCli(env, "help", verb);
+      expect(help.exitCode).toBe(0);
+      expect(help.stdout).toContain("Examples");
+    }
+  });
 });

@@ -1,6 +1,6 @@
 # Current direction
 
-Implementation inventory updated 2026-10-21. This describes the checked-out
+Implementation inventory updated 2026-11-25. This describes the checked-out
 source, not the version installed on any particular host. The readiness decision
 below remains the owner's recorded 2026-09-23 decision.
 
@@ -89,6 +89,22 @@ with an explicit reason when the data does not exist. `kizuki hook
 session-start` delivers that packet to Claude Code, Codex or any command-running
 harness at session start and prints nothing on any failure; see
 [integrations](integrations.md).
+
+Dual-system procedural memory (`@kizuki/memt`): `kizuki memt` (`status`,
+`recall`, `experience`, `sync`, `snapshot`, `deploy-check`) and four additional
+MCP tools (`memt_status`, `memt_recall`, `memt_experience`, `memt_snapshot`,
+bringing the stdio MCP adapter to 14 tools total) store and retrieve verified
+procedural experiences under the caller's sensitivity ceiling and purge-custody
+rules. Without a configured MemT-1.0 SGLang GPU server, MemT operates
+automatically in `local-hybrid` mode; `kizuki memt status` and `kizuki doctor`
+stay strictly read-only on an untouched vault.
+
+Optional local semantic retrieval: lexical FTS works with no model or extra
+service. `deploy/local-embed` provides a loopback-only local CPU embedding
+server (`BAAI/bge-small-en-v1.5`, 384 dims, OpenAI and Ollama wire contracts)
+for opt-in `kizuki.embedding.local-http` + `kizuki.retrieval.embedded-pg`
+hybrid ranking; semantic retrieval remains off by default and live model
+quality qualification remains unrun.
 
 The public CLI including `app`, a Linux x64 baseline local native package, file ingest, FTS
 query, doctor, tell/undo/audit, serve loopback, context packets, and MCP stdio

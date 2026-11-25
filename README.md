@@ -155,19 +155,48 @@ That is how one successful task can improve the next agent's starting point with
 
 Kizuki brings selected sources into an append-only ledger, extracts source-linked claims, searches them, compiles bounded context packets, writes model-produced canon through one receipted autonomous writer, corrects live claims, audits writes and undoes them. The source inventory below does not identify which release is installed on a particular host.
 
-On top of that substrate, 1.0.0 ships the first world-model layer. With a configured model and a source grant that permits extraction, the sync rail runs typed extraction and admits source-anchored claims about **Concepts** and **Situations**. `kizuki world`, the MCP `world_view` tool, loopback HTTP `/v1/world_view` and the World views in `kizuki app` read the same cards, each with evidence, confidence, uncertainty and coverage. `kizuki tell --world-claim` and MCP `correct` correct a world claim with a receipt that undo reverses, and a second authorized client sees the correction on its next read.
+On top of that substrate, 1.0 ships the first world-model layer. With a configured model and a source grant that permits extraction, the sync rail runs typed extraction and admits source-anchored claims about **Concepts** and **Situations**. `kizuki world`, the MCP `world_view` tool, loopback HTTP `/v1/world_view` and the World views in `kizuki app` read the same cards, each with evidence, confidence, uncertainty and coverage. `kizuki tell --world-claim` and MCP `correct` correct a world claim with a receipt that undo reverses, and a second authorized client sees the correction on its next read.
 
-This checkout additionally implements evidence and history reads, shared/resumed views, World Slice and Diff, domain readers, captured ArtifactVersions, Outcomes, Attention, a frozen forecast baseline and Atlas through that same world reader. [Current implementation and limits](docs/CURRENT.md) lists the distinction between available operations and input population: extraction for Question, Person, Skill, Framework, Procedure, Commitment and Decision stays disabled until its real model qualification passes. Synthetic integration coverage is described in the [golden journey](docs/world/golden-journey.md); it is not a live-account or model-quality claim.
+This checkout additionally implements evidence and history reads, shared/resumed views, World Slice and Diff, domain readers, captured ArtifactVersions, Outcomes, Attention, a frozen forecast baseline, Atlas through that same world reader, optional local CPU semantic retrieval (`deploy/local-embed` + `kizuki.retrieval.embedded-pg`), and `@kizuki/memt` dual-system procedural memory (`kizuki memt` and 4 MemT MCP tools with automatic `local-hybrid` fallback). [Current implementation and limits](docs/CURRENT.md) lists the distinction between available operations and input population: extraction for Question, Person, Skill, Framework, Procedure, Commitment and Decision stays disabled until its real model qualification passes. Synthetic integration coverage is described in the [golden journey](docs/world/golden-journey.md); it is not a live-account or model-quality claim.
 
 Adaptive domain expansion and task-aware collaboration remain [explicit v2 requirements](docs/v2-adaptive-collaboration.md). **No roadmap concept becomes a public feature until its implementation exists.** Owner decision D23 (2026-09-23) set the 1.0.0 launch bar at the world model as built and Telegram native sign-in.
 
-> **1.0.0.** Autonomous canon writing and the world model require a usable model bound by the running host. Capture, search, context, audit and undo remain useful without one. The release package is an unsigned Linux x64 build; nothing is published to npm.
+> **1.0.2.** Autonomous canon writing and the world model require a usable model bound by the running host. Capture, lexical search, context, procedural memory (`local-hybrid`), audit and undo remain useful without one. The release package is an unsigned Linux x64 baseline build; nothing is published to npm.
 
 ## Quick start
 
-Use a Linux x86_64 or macOS Apple Silicon desktop with **Bun 1.3.14**, the version pinned by CI, Git, and a working default browser. The app opens that browser through `/usr/bin/xdg-open` on Linux or `/usr/bin/open` on macOS. On a headless machine, use the command-line example below.
+Choose either a **GitHub Release archive** (Linux x86_64, no Bun required) or a **source checkout** (Linux x86_64 or macOS Apple Silicon with **Bun 1.3.14**, the version pinned by CI, and Git).
 
-Clone this repository using GitHub’s Code button, then open the guided app from the checkout root:
+### Option A: Release archive (Linux x86_64, no Bun required)
+
+Download the unsigned Linux x64 baseline archive from GitHub Releases (or build one locally with `bun run build:release`), unpack it into a dedicated version folder, verify its checksums, and confirm its build identity:
+
+```bash
+mkdir -p kizuki-1.0.2 && tar -xzf kizuki-*-bun-linux-x64-baseline.tar.gz -C kizuki-1.0.2
+cd kizuki-1.0.2
+sha256sum -c SHA256SUMS
+./kizuki version
+```
+
+Optionally expose `kizuki` and `kizuki-mcp` on your `PATH` via local symlinks (zero network access; keep both binaries together in their version directory, and always run `serve --install` from that real directory):
+
+```bash
+mkdir -p "$HOME/.local/bin"
+ln -sf "$PWD/kizuki" "$HOME/.local/bin/kizuki"
+ln -sf "$PWD/kizuki-mcp" "$HOME/.local/bin/kizuki-mcp"
+```
+
+Open the guided desktop app in your default browser (`/usr/bin/xdg-open` on Linux, `/usr/bin/open` on macOS):
+
+```bash
+./kizuki app
+```
+
+[Release archive verification →](docs/release-download.md) · [Native package build →](docs/native-build.md) · [Upgrade & rollback runbook →](docs/upgrade.md)
+
+### Option B: Run from source (Linux x86_64 or macOS Apple Silicon)
+
+Clone this repository, install dependencies with **Bun 1.3.14**, and launch the guided desktop app:
 
 ```bash
 bun install --frozen-lockfile
@@ -176,7 +205,9 @@ bun packages/cli/src/main.ts app
 
 Create your workspace, connect a local notes folder, and review its permissions before importing. Search works without a model. Settings lets you configure a model, test the connection with a synthetic prompt, and separately permit each source to use that exact model destination. It also lets you give an assistant scoped read access. [Local app guide →](docs/local-app.md)
 
-For a temporary command-line example with background activity turned off:
+### 60-second CLI quick start (headless / zero-model)
+
+For a temporary vault with background services turned off (substitute `./kizuki` if using a release package):
 
 ```bash
 demo="$(mktemp -d)"
@@ -201,13 +232,18 @@ bun packages/cli/src/main.ts doctor --vault "$demo/vault"
 
 Importing does **not** itself write canon. Without a model, expect `canon writing: off`; the demo does not invent generated pages or model answers.
 
+### Optional: local semantic search & MemT procedural memory
+
+- **Local CPU semantic search (opt-in, off by default):** Lexical search works with zero setup. To add zero-API-cost vector/hybrid ranking, run the bundled loopback-only CPU embedding service in [`deploy/local-embed`](deploy/local-embed/README.md) (`BAAI/bge-small-en-v1.5`, 384d, OpenAI and Ollama wire contracts) and configure `kizuki.retrieval.embedded-pg` with `kizuki.embedding.local-http` in `<vault>/.kizuki/serve.toml`. See [semantic retrieval setup and limits](docs/cli.md#semantic-retrieval-embedding-port).
+- **Dual-system procedural memory (`@kizuki/memt`):** Run `kizuki memt status`, `kizuki memt experience add`, and `kizuki memt recall` to store and retrieve verified procedural experiences under sensitivity ceilings and purge-custody tracking. Without a GPU backend, MemT operates automatically in `local-hybrid` mode; when an optional MemT-1.0 SGLang GPU server is online, `kizuki memt sync` internalizes experiences into verified `.safetensors` KV snapshots. See [`kizuki memt`](docs/cli.md#memt).
+
 [Full CLI reference →](docs/cli.md)
 
 ## Connect sources
 
 Start with `kizuki connect` to see the catalog and `kizuki connect status` to inspect enrolled sources and their last run. New enrollment requires an explicit [source consent policy](docs/cli.md#source-consent) before capture.
 
-Current entry points include local Markdown, ChatGPT/Claude exports, WhatsApp/Pocket/Omnivore exports, Beeper Desktop, read-only IMAP, native Telegram sign-in, Gmail, Google Calendar and X own-post browser sign-in, ICS files, offline Screenpipe ingestion, and one-shot [estate importers](docs/legacy-import.md) with owner-written mapping files. Telegram, Gmail and Google Calendar require operator-supplied app configuration. X requires a public Native App client ID, an exact registered loopback callback and eligible API access with usage credits. The 1.0.0 release package compiles in the project's Telegram app credentials; a source checkout reads them from the environment. None of those account paths are live-account qualified on this revision. WHOOP remains a component without CLI enrollment. The connection guide lists provider setup and coverage limits.
+Current entry points include local Markdown, ChatGPT/Claude exports, WhatsApp/Pocket/Omnivore exports, Beeper Desktop, read-only IMAP, native Telegram sign-in, Gmail, Google Calendar and X own-post browser sign-in, ICS files and HTTPS feeds, offline Screenpipe ingestion, and one-shot [estate importers](docs/legacy-import.md) with owner-written mapping files. Telegram, Gmail and Google Calendar require operator-supplied app configuration. X requires a public Native App client ID, an exact registered loopback callback and eligible API access with usage credits. A release package built with Telegram app credentials compiles them in; a source checkout reads them from the environment. None of those account paths are live-account qualified on this revision. WHOOP remains a component without CLI enrollment. The connection guide lists provider setup and coverage limits.
 
 [Connection setup and limits →](docs/connect.md)
 
@@ -260,21 +296,27 @@ Lexical search works without a model. Optional retrieval implementations sit beh
 
 Kizuki owns the memory and world state. Your chosen client owns its agent loop.
 
-For an already-provisioned identity and grant:
+Create a scoped agent identity with `kizuki agent add`, then connect any stdio MCP client using the compiled binary (or `bun packages/mcp/src/bin.ts` from a source checkout):
 
 ```bash
+kizuki-mcp --vault /absolute/path/to/vault --token-ref file:/absolute/path/to/credential
+# or from a source checkout:
 bun packages/mcp/src/bin.ts --vault /absolute/path/to/vault --token-env KIZUKI_AGENT_TOKEN
 ```
 
-The current stdio MCP adapter exposes:
+The current stdio MCP adapter exposes **14 tools** (10 core tools + 4 `@kizuki/memt` procedural-memory tools):
 
-| Read tools | Write tools |
+| Surface | Tools |
 | --- | --- |
-| `search`, `get_page`, `query_entities`, `timeline`, `context_packet`, `graph_neighbors`, `system_health`, `world_view` | `propose`, `correct` |
+| Core read (8) | `search`, `get_page`, `query_entities`, `timeline`, `context_packet`, `graph_neighbors`, `system_health`, `world_view` |
+| Core write (2) | `propose`, `correct` |
+| MemT procedural memory (4) | `memt_status`, `memt_recall`, `memt_experience`, `memt_snapshot` |
 
-`propose` files a claim. `correct` relays an authorized correction. There is no unrestricted `put_page` tool. Permission is enforced below the prompt layer through identity, grants, sensitivity ceilings, scopes, allowlists, rate limits and audit.
+`propose` files a claim. `correct` relays an authorized correction. There is no unrestricted `put_page` tool. Permission is enforced below the prompt layer through identity, grants, sensitivity ceilings, scopes, allowlists, rate limits and audit. Agent access to the 4 MemT tools is derived from existing core tool grants (`system_health`, `search`, `context_packet`, `propose`) under the same sensitivity ceiling, with automatic `local-hybrid` fallback when no GPU backend is online.
 
-`world_view` reads Concept and Situation cards through this same authorization boundary. References it returns are bound to the calling principal and grant; later world-model projections follow the same rule rather than creating an agent-only backdoor.
+`world_view` reads Concept and Situation cards (and the additional implemented world operations) through this same authorization boundary. References it returns are bound to the calling principal and grant; later world-model projections follow the same rule rather than creating an agent-only backdoor.
+
+Copy-paste recipes for **Claude Code**, **Codex**, **Cursor**, generic stdio MCP clients, and `kizuki hook session-start` live in the [harness integration guide →](docs/integrations.md).
 
 ## Product law: UX + DX + AX together
 
@@ -310,17 +352,18 @@ Prove a small Concept with useful human and agent views, then expand through sha
 
 ## Status
 
-**Version 1.0.0.** The distinction between working capability and the complete world-model product matters.
+**Version 1.0.2.** The distinction between working capability, gated extraction activation, and future v2 direction matters.
 
 | Layer | What this revision supports |
 | --- | --- |
-| Capture | Local sources, exports and selected connector paths. |
-| Recall | Model-free lexical search, context packets and MCP read tools. Advanced retrieval depends on configured ports and data. |
+| Capture | Local sources, exports and selected connector paths (live-account qualification remains unrun). |
+| Recall | Model-free lexical search, context packets, session-start hooks, and 14 scoped MCP tools. Optional loopback-only local CPU semantic retrieval (`deploy/local-embed` + `kizuki.retrieval.embedded-pg`) is opt-in and off by default. |
 | Claims | Source-linked working claims with authority, confidence, validity, sensitivity and supersession. |
 | Canon | Model-configured autonomous writer; correction, receipts, audit and undo. |
-| Operations | Local serve loop, doctor reporting and rebuildable retrieval. |
-| Packaging | Source execution and an unsigned Linux x64 release package. No npm package and no signed installer. |
-| World model | Typed extraction, Concept and Situation cards, `kizuki world`, MCP and HTTP `world_view`, the app World views, and world-claim correction. World Slice, World Diff, revision resume, outcomes, attention, forecasts and Atlas are still roadmap. |
+| World model | Typed Concept and Situation extraction (default when a model and grant exist), `kizuki world`, MCP and HTTP `world_view`, app World views, world-claim correction, plus World Slice, World Diff, evidence/history/shared/resumed views, domain readers, captured ArtifactVersions, Outcomes, Attention, frozen forecast baseline and Atlas on the shared world reader. Extraction activation for Question, Person, Skill, Framework, Procedure, Commitment and Decision stays gated pending real model qualification; [v2 adaptive collaboration](docs/v2-adaptive-collaboration.md) remains roadmap. |
+| Procedural memory | `@kizuki/memt` (`kizuki memt` + 4 MCP tools) with sensitivity ceilings, purge-custody tracking, automatic `local-hybrid` fallback without a GPU, and optional `native-gpu` KV snapshots. |
+| Operations | Local serve loop, doctor reporting, live snapshots/exports/restores, and rebuildable retrieval. |
+| Packaging | Source execution (`Bun 1.3.14`) and an unsigned Linux x64 baseline release package (macOS arm64 remains an unsigned candidate). No npm package and no signed installer. |
 
 ## What Kizuki is not
 
