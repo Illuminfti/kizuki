@@ -5,6 +5,27 @@ import { parseWorldCanonReceipt } from "./world-receipt";
 
 type ReceiptSchemaVersions = { readonly ledger: number; readonly canon: number };
 
+const FORBIDDEN_TYPED_KEYS = [
+  "state",
+  "own_id_origin",
+  "basis",
+  "prior_receipt_id",
+  "purge_receipt_id",
+  "erased_at",
+  "integrity",
+] as const;
+
+const WORLD_PAGE_PATH = /^auto\/world\/[a-f0-9]{32}\.md$/;
+
+interface RestoreStatements {
+  readonly hasTypedClaims: boolean;
+  readonly hasSemanticHandles: boolean;
+  readonly typedClaimById: ReturnType<Database["query"]>;
+  readonly typedClaimByReceipt: ReturnType<Database["query"]>;
+  readonly semanticHandle: ReturnType<Database["query"]>;
+  readonly insertLegacy: ReturnType<Database["query"]>;
+}
+
 /**
  * Restore the historical receipt stream inside private backup staging. The caller
  * restores its claim/world dependencies first and validates the complete history
@@ -16,10 +37,30 @@ export function restoreCanonReceipts(
   versions: ReceiptSchemaVersions,
 ): void {
   if (!db.inTransaction) throw new Error("canon receipt restore requires a transaction");
-  for (const row of rows) insertReceipt(db, row, versions);
+  const stmts: RestoreStatements = {
+    hasTypedClaims: db.query("SELECT 1 FROM claims WHERE is_world_typed=1 LIMIT 1").get() !== null,
+    hasSemanticHandles: db.query("SELECT 1 FROM semantic_handles LIMIT 1").get() !== null,
+    typedClaimById: db.query("SELECT 1 FROM claims WHERE claim_id=? AND is_world_typed=1"),
+    typedClaimByReceipt: db.query("SELECT 1 FROM claims WHERE receipt_id=? AND is_world_typed=1"),
+    semanticHandle: db.query("SELECT 1 FROM semantic_handles WHERE handle_id=?"),
+    insertLegacy: db.query(
+      `INSERT INTO canon_receipts
+         (receipt_id, claim_ids, provenance, sensitivity, page_path, kind,
+          before_hash, after_hash, at, receipt_kind, page_action, archive_path,
+          writer, producer, model_ref, authority, confidence, taint,
+          candidates, superseded, retrieval_ops, reverts, reverted_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ),
+  };
+  for (const row of rows) insertReceipt(db, row, versions, stmts);
 }
 
-function insertReceipt(db: Database, raw: Record<string, unknown>, versions: ReceiptSchemaVersions): void {
+function insertReceipt(
+  db: Database,
+  raw: Record<string, unknown>,
+  versions: ReceiptSchemaVersions,
+  stmts: RestoreStatements,
+): void {
   if (Object.hasOwn(raw, "schema")) {
     if (versions.ledger < 33 || versions.canon !== 5) throw new Error("typed canon receipt requires ledger33/canon5");
     const receipt = parseWorldCanonReceipt(raw);
@@ -28,25 +69,20 @@ function insertReceipt(db: Database, raw: Record<string, unknown>, versions: Rec
     else insertReceiptRow(db, receipt, receipt.kind === "revert" ? "revert" : receipt.kind === "purge_rewrite" ? "purge_review" : "claim");
     return;
   }
-  if (["state", "own_id_origin", "basis", "prior_receipt_id", "purge_receipt_id", "erased_at", "integrity"].some(key => Object.hasOwn(raw, key)) ||
-      (Array.isArray(raw.claim_ids) && raw.claim_ids.some(id => typeof id === "string" &&
-        db.query("SELECT 1 FROM claims WHERE claim_id=? AND is_world_typed=1").get(id) !== null)) ||
-      (typeof raw.receipt_id === "string" && db.query("SELECT 1 FROM claims WHERE receipt_id=? AND is_world_typed=1").get(raw.receipt_id) !== null) ||
-      (typeof raw.page_path === "string" && /^auto\/world\/[a-f0-9]{32}\.md$/.test(raw.page_path) &&
-        db.query("SELECT 1 FROM semantic_handles WHERE handle_id=?").get(raw.page_path.slice(11, -3)) !== null)) {
+  if (FORBIDDEN_TYPED_KEYS.some(key => Object.hasOwn(raw, key)) ||
+      (stmts.hasTypedClaims && (
+        (Array.isArray(raw.claim_ids) && raw.claim_ids.some(id => typeof id === "string" &&
+          stmts.typedClaimById.get(id) !== null)) ||
+        (typeof raw.receipt_id === "string" && stmts.typedClaimByReceipt.get(raw.receipt_id) !== null)
+      )) ||
+      (stmts.hasSemanticHandles && typeof raw.page_path === "string" && WORLD_PAGE_PATH.test(raw.page_path) &&
+        stmts.semanticHandle.get(raw.page_path.slice(11, -3)) !== null)) {
     throw new Error("backup typed canon receipt discriminator is missing");
   }
   const pagePath = asString(raw.page_path, "page_path");
   const archivePath = asStringOrNull(raw.archive_path, "archive_path");
   assertReceiptPaths({ page_path: pagePath, archive_path: archivePath });
-  db.query(
-    `INSERT INTO canon_receipts
-       (receipt_id, claim_ids, provenance, sensitivity, page_path, kind,
-        before_hash, after_hash, at, receipt_kind, page_action, archive_path,
-        writer, producer, model_ref, authority, confidence, taint,
-        candidates, superseded, retrieval_ops, reverts, reverted_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
+  stmts.insertLegacy.run(
     asString(raw.receipt_id, "receipt_id"),
     JSON.stringify(raw.claim_ids ?? []),
     JSON.stringify(raw.provenance ?? []),

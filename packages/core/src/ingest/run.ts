@@ -93,73 +93,75 @@ function emptyResult(cursor: string | null): RunResult {
 
 type EventResult = Omit<RunResult, "cursor">;
 
-function processEvent(
+/** Upper bounds per write transaction when a pacer is active so a waiting daemon is never starved. */
+const PACED_CHUNK_MAX_EVENTS = 128;
+const PACED_CHUNK_MAX_MS = 100;
+
+function processEventBody(
   db: Database,
   input: unknown,
   grants: ProducerGrants,
   source?: SourceAdmission,
   context?: SourceTombstoneContext,
 ): EventResult {
-  return runImmediate(db, (): EventResult => {
-    const result: EventResult = {
-      stored: 0,
-      duplicates: 0,
-      errors: [],
-      proposals_created: 0,
-      withdrawn: 0,
-      retractions_filed: 0,
-    };
-    const accepted = accept(db, input, source === undefined ? {} : { source });
-    if (accepted.status === "error") {
-      switch (accepted.kind) {
-        case "infrastructure":
-          throw new LedgerStoreError("infrastructure", accepted.error);
-        case "validation":
-          result.errors.push(accepted.error);
-          return result;
-        default: {
-          const _exhaustive: never = accepted.kind;
-          throw new LedgerStoreError("infrastructure", String(_exhaustive));
-        }
+  const result: EventResult = {
+    stored: 0,
+    duplicates: 0,
+    errors: [],
+    proposals_created: 0,
+    withdrawn: 0,
+    retractions_filed: 0,
+  };
+  const accepted = accept(db, input, source === undefined ? {} : { source });
+  if (accepted.status === "error") {
+    switch (accepted.kind) {
+      case "infrastructure":
+        throw new LedgerStoreError("infrastructure", accepted.error);
+      case "validation":
+        result.errors.push(accepted.error);
+        return result;
+      default: {
+        const _exhaustive: never = accepted.kind;
+        throw new LedgerStoreError("infrastructure", String(_exhaustive));
       }
     }
-    if (accepted.status === "duplicate") {
-      result.duplicates = 1;
-      return result;
-    }
-    if (accepted.status === "suppressed") {
-      result.suppressed = 1;
-      return result;
-    }
-
-    result.stored = 1;
-    if (accepted.event.deleted) {
-      const cascade = cascadeTombstone(db, accepted.event, context);
-      result.withdrawn = cascade.withdrawn.length;
-      result.retractions_filed = cascade.retractions_filed.length;
-      return result;
-    }
-    const produced = produceForEvent(accepted.event, grants);
-    if (produced.status !== "ok") return result;
-    for (const proposal of produced.proposals) {
-      // Acceptance and extraction are separate steps. A proposal the
-      // staging contract refuses is this event's error and not grounds to
-      // unwrite the raw row the ledger already accepted: rolling that back
-      // would drop the text from the estate outright rather than leave it
-      // unextracted.
-      // fileProposal validates before it writes and files under its own
-      // savepoint, so nothing half staged survives the refusal.
-      try {
-        if (fileProposal(db, proposal).outcome === "stored") {
-          result.proposals_created += 1;
-        }
-      } catch (error) {
-        if (!(error instanceof StagingError)) throw error;
-        result.errors.push(error.message);
-      }
-    }
+  }
+  if (accepted.status === "duplicate") {
+    result.duplicates = 1;
     return result;
-  });
+  }
+  if (accepted.status === "suppressed") {
+    result.suppressed = 1;
+    return result;
+  }
+
+  result.stored = 1;
+  if (accepted.event.deleted) {
+    const cascade = cascadeTombstone(db, accepted.event, context);
+    result.withdrawn = cascade.withdrawn.length;
+    result.retractions_filed = cascade.retractions_filed.length;
+    return result;
+  }
+  const produced = produceForEvent(accepted.event, grants);
+  if (produced.status !== "ok") return result;
+  for (const proposal of produced.proposals) {
+    // Acceptance and extraction are separate steps. A proposal the
+    // staging contract refuses is this event's error and not grounds to
+    // unwrite the raw row the ledger already accepted: rolling that back
+    // would drop the text from the estate outright rather than leave it
+    // unextracted.
+    // fileProposal validates before it writes and files under its own
+    // savepoint, so nothing half staged survives the refusal.
+    try {
+      if (fileProposal(db, proposal).outcome === "stored") {
+        result.proposals_created += 1;
+      }
+    } catch (error) {
+      if (!(error instanceof StagingError)) throw error;
+      result.errors.push(error.message);
+    }
+  }
+  return result;
 }
 
 const HAS_MORE_ERROR = "sync batch has_more must be an own boolean data property";
@@ -281,8 +283,7 @@ function ingressBatch(
     if (cloned === undefined || !Array.isArray(cloned)) {
       return { ok: false, error: batchShapeError(errors) };
     }
-    const encoded = new TextEncoder().encode(JSON.stringify(cloned));
-    if (encoded.byteLength > MAX_SYNC_BATCH_BYTES) {
+    if (Buffer.byteLength(JSON.stringify(cloned), "utf8") > MAX_SYNC_BATCH_BYTES) {
       return { ok: false, error: `sync batch exceeds ${MAX_SYNC_BATCH_BYTES} bytes` };
     }
 
@@ -306,6 +307,99 @@ function ingressBatch(
   }
 }
 
+function runIngressedBatch(
+  db: Database,
+  batch: SyncBatch,
+  grants: ProducerGrants,
+  source?: SourceAdmission,
+  context?: SourceTombstoneContext,
+  pace?: () => void,
+): RunResult {
+  const result: RunResult = {
+    stored: 0,
+    duplicates: 0,
+    errors: [],
+    proposals_created: 0,
+    withdrawn: 0,
+    retractions_filed: 0,
+    cursor: batch.cursor,
+  };
+
+  const events = batch.events;
+  if (events.length === 0) return result;
+
+  // Batch commits eliminate per-event fsync overhead while a per-event savepoint
+  // preserves exact single-event rollback and abort semantics. When a pacer is
+  // active, bounded chunks leave the ledger free for a waiting daemon.
+  let index = 0;
+  let aborted = false;
+  while (index < events.length && !aborted) {
+    const startIndex = index;
+    const chunk = runImmediate(db, () => {
+      const chunkStart = pace === undefined ? 0 : performance.now();
+      const chunkLimit = pace === undefined
+        ? events.length
+        : Math.min(events.length, startIndex + PACED_CHUNK_MAX_EVENTS);
+      let cursor = startIndex;
+      let stored = 0;
+      let duplicates = 0;
+      let suppressed = 0;
+      let hasSuppressed = false;
+      const errors: string[] = [];
+      let proposals_created = 0;
+      let withdrawn = 0;
+      let retractions_filed = 0;
+      let chunkAborted = false;
+      while (cursor < chunkLimit) {
+        const input = events[cursor];
+        cursor += 1;
+        try {
+          const event = db.transaction(() => processEventBody(db, input, grants, source, context)).immediate();
+          stored += event.stored;
+          duplicates += event.duplicates;
+          if (event.suppressed !== undefined) {
+            hasSuppressed = true;
+            suppressed += event.suppressed;
+          }
+          if (event.errors.length > 0) errors.push(...event.errors);
+          proposals_created += event.proposals_created;
+          withdrawn += event.withdrawn;
+          retractions_filed += event.retractions_filed;
+        } catch (error) {
+          // Contention is not a bad record, and it is not this source failing.
+          // Each write above already retried within its bound; past that the
+          // checkpoint stays where it was, so the caller replays this batch from
+          // the same cursor and the events already committed deduplicate.
+          if (isLedgerBusy(error)) throw error;
+          errors.push(errorText(error));
+          if (error instanceof LedgerStoreError) {
+            chunkAborted = true;
+            break;
+          }
+        }
+        if (pace !== undefined && cursor < chunkLimit && performance.now() - chunkStart >= PACED_CHUNK_MAX_MS) {
+          break;
+        }
+      }
+      return { cursor, stored, duplicates, suppressed, hasSuppressed, errors, proposals_created, withdrawn, retractions_filed, chunkAborted };
+    });
+    index = chunk.cursor;
+    result.stored += chunk.stored;
+    result.duplicates += chunk.duplicates;
+    if (chunk.hasSuppressed) result.suppressed = (result.suppressed ?? 0) + chunk.suppressed;
+    if (chunk.errors.length > 0) result.errors.push(...chunk.errors);
+    result.proposals_created += chunk.proposals_created;
+    result.withdrawn += chunk.withdrawn;
+    result.retractions_filed += chunk.retractions_filed;
+    if (chunk.chunkAborted) return result;
+    pace?.();
+  }
+
+  // bun:sqlite close() can leave this batch in the WAL; PASSIVE copies idle frames.
+  db.exec("PRAGMA wal_checkpoint(PASSIVE)");
+  return result;
+}
+
 /**
  * The grants are the caller's to name: this seam is handed a batch with no
  * connector behind it, so nothing here can decide what that batch is entitled
@@ -321,44 +415,7 @@ export function runBatch(
 ): RunResult {
   const ingress = ingressBatch(batch);
   if (!ingress.ok) return refusedRun(ingress.error, null);
-
-  const result: RunResult = {
-    stored: 0,
-    duplicates: 0,
-    errors: [],
-    proposals_created: 0,
-    withdrawn: 0,
-    retractions_filed: 0,
-    cursor: ingress.value.cursor,
-  };
-
-  for (const input of ingress.value.events) {
-    try {
-      const event = processEvent(db, input, grants, source, context);
-      result.stored += event.stored;
-      result.duplicates += event.duplicates;
-      if (event.suppressed !== undefined) result.suppressed = (result.suppressed ?? 0) + event.suppressed;
-      result.errors.push(...event.errors);
-      result.proposals_created += event.proposals_created;
-      result.withdrawn += event.withdrawn;
-      result.retractions_filed += event.retractions_filed;
-    } catch (error) {
-      // Contention is not a bad record, and it is not this source failing.
-      // Each write above already retried within its bound; past that the
-      // checkpoint stays where it was, so the caller replays this batch from
-      // the same cursor and the events already committed deduplicate.
-      if (isLedgerBusy(error)) throw error;
-      result.errors.push(errorText(error));
-      if (error instanceof LedgerStoreError) {
-        return result;
-      }
-    }
-    pace?.();
-  }
-
-  // bun:sqlite close() can leave this batch in the WAL; PASSIVE copies idle frames.
-  db.exec("PRAGMA wal_checkpoint(PASSIVE)");
-  return result;
+  return runIngressedBatch(db, ingress.value, grants, source, context, pace);
 }
 
 /**
@@ -739,7 +796,8 @@ async function runConnector(
     return { result: persistRun(db, connector_id, source_key, mode, previous, batch.cursor, result, "refused"), terminal: false };
   }
 
-  const processed = runBatch(
+  // `batch` already passed `ingressBatch`; `labelBatch` only stamps host-resolved sensitivity.
+  const processed = runIngressedBatch(
     db,
     labelBatch(db, connector_id, source_key, batch),
     sourceGrants(manifest),
