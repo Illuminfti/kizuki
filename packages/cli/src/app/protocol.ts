@@ -12,6 +12,64 @@ export interface AppLocalCapabilities {
     memt: 'off' | 'local_hybrid' | 'gpu_configured' | 'unavailable';
     memt_model?: string | null;
 }
+export type AppMemtSensitivity = 'public' | 'work' | 'personal' | 'private';
+export type AppMemtOutcome = 'verified' | 'observed' | 'failed' | 'superseded';
+export interface AppMemtSnapshotSummary {
+    partition_key: string;
+    sensitivity_ceiling: AppMemtSensitivity;
+    snapshot_name: string;
+    event_watermark: string;
+    taint_state: 'clean' | 'stale' | 'purged_invalidated';
+    source_count: number;
+    updated_at: string;
+}
+export interface AppMemtStatus {
+    mode: 'off' | 'local_hybrid' | 'gpu_configured' | 'unavailable';
+    enabled: boolean;
+    gpu_configured: boolean;
+    api_key_configured: boolean;
+    registry_present: boolean;
+    model: string | null;
+    default_partition: string;
+    checked_at: string;
+    experiences: {
+        total: number;
+        verified: number;
+        observed: number;
+        failed: number;
+        uninternalized: number;
+    };
+    snapshots: {
+        total: number;
+        clean: number;
+        stale: number;
+        purged_invalidated: number;
+        partitions: AppMemtSnapshotSummary[];
+    };
+}
+export interface AppMemtExperienceItem {
+    id: string;
+    domain: string;
+    scope_key: string;
+    sensitivity: AppMemtSensitivity;
+    condition: string;
+    recommendation: string;
+    verification: string;
+    outcome: AppMemtOutcome;
+    confidence: number;
+    use_count: number;
+    citations: string[];
+    internalized_in_snapshot: string | null;
+    has_embedding: boolean;
+    updated_at: string;
+    score?: number;
+}
+export interface AppMemtExperiencesResponse {
+    experiences: AppMemtExperienceItem[];
+    domains: string[];
+    truncated: boolean;
+    mode: 'list' | 'search';
+}
 export interface AppServiceStatus {
     intent: ServeIntent | 'unknown';
     kind: SupervisorKind;
@@ -154,6 +212,17 @@ export interface AppProtocol {
     };
     service_status: { request: {}; response: AppServiceStatus };
     install_service: { request: {}; response: { operation_id: string } };
+    memt_status: { request: {}; response: AppMemtStatus };
+    memt_experiences: {
+        request: {
+            query?: string;
+            domain?: string;
+            outcome?: 'all' | AppMemtOutcome;
+            ceiling?: AppMemtSensitivity;
+            limit?: number;
+        };
+        response: AppMemtExperiencesResponse;
+    };
     model_status: { request: {}; response: AppModelStatus };
     model_save: {
         request: { expected_revision: string; selection: AppModelSelection; credential: AppModelCredential };
