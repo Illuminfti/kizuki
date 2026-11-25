@@ -5,7 +5,7 @@ Zero-API-cost, loopback-only CPU semantic vector server for Kizuki's `@kizuki/em
 ## Architecture & Model Selection
 
 - **Model**: `BAAI/bge-small-en-v1.5` (384 dimensions, 6-layer BERT encoder, CLS pooling + L2 normalization).
-- **Local Cache**: Uses the pre-cached HuggingFace snapshot at `~/.cache/huggingface/hub/models--BAAI--bge-small-en-v1.5` with `local_files_only=True` (`HF_HUB_OFFLINE=1`) and optional ONNX Runtime graph caching under `/data/models/kizuki-embed/BAAI--bge-small-en-v1.5/model.onnx`.
+- **Local Cache**: Uses the pre-cached HuggingFace snapshot at `~/.cache/huggingface/hub/models--BAAI--bge-small-en-v1.5` with `local_files_only=True` (`HF_HUB_OFFLINE=1`) and optional ONNX Runtime graph caching under `~/.cache/kizuki-embed/BAAI--bge-small-en-v1.5/model.onnx` (or `--onnx-cache-dir`).
 - **Wire Contracts**:
   - `POST /v1/embeddings` — OpenAI-compatible embeddings endpoint (`api = "openai"`).
   - `POST /api/embed` — Ollama-compatible embeddings endpoint (`api = "ollama"`).

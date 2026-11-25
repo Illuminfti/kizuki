@@ -192,7 +192,7 @@ export function eligibleWorldClaim(
     const hit = ownerCache.entries.get(ownerKey);
     if (hit !== undefined) {
       chargeBytes(budget, hit.bytes);
-      return hit.item;
+      return hit.item === null ? null : { ...hit.item, supports: [...hit.item.supports] };
     }
     const bytesBefore = budget.bytes;
     const item = readEligibleWorldClaim(ctx, claimId, valid, budget, options, undefined, ownerCache.reuse);

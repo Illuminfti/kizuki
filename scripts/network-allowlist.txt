@@ -5,7 +5,6 @@
 packages/mcp/test/helpers/golden-app.ts:call.fetch#1:authenticated synthetic journey through the test-owned loopback App endpoint
 packages/mcp/test/scoped-output-scan.test.ts:both.fetch#1:authenticated synthetic scoped-tool output scan against the test-owned loopback server
 packages/mcp/test/scoped-output-scan.test.ts:(toplevel).fetch#1:authenticated synthetic unsupported-health refusal against the test-owned loopback server
-packages/mcp/test/scoped-output-scan.test.ts:(toplevel).fetch#2:authenticated synthetic wrong-reference refusal against the test-owned loopback server
 packages/mcp/test/scoped-refs.test.ts:(toplevel).fetch#1:authenticated synthetic busy-writer and erasure refusal against the test-owned loopback server
 packages/core/src/contracts/remote.ts:(toplevel).import.node.http#1:loopback port adapter; TCP is restricted to loopback and Unix sockets stay local
 packages/core/src/contracts/remote.ts:(toplevel).import.node.http#2:loopback port adapter; TCP is restricted to loopback and Unix sockets stay local
@@ -121,8 +120,28 @@ scripts/fuzz/surfaces.ts:run.fetch#2:synthetic captured-text separation check ag
 packages/core/test/serve/http-hostile.test.ts:withHttp.fetch#1:synthetic malformed-body requests to the test-owned loopback HTTP listener
 packages/core/test/serve/http-hostile.test.ts:(toplevel).fetch#1:synthetic oversized chunked body sent to the test-owned loopback HTTP listener
 scripts/fuzz/app.ts:post.fetch#1:synthetic app requests to the worker-owned loopback HTTP listener; bearer and origin refusal are checked before dispatch
-packages/embed-local-http/src/http.ts:postJson.Bun.connect#1:owner-configured local embedding server; the single socket of the embedding port, refused unless the address literal is on the loopback interface and never routed through HTTP_PROXY
+packages/embed-local-http/src/http.ts:send.Bun.connect#1:owner-configured local embedding server; the single socket of the embedding port, refused unless the address literal is on the loopback interface and never routed through HTTP_PROXY
 packages/embed-local-http/test/helpers.ts:startFakeServer.Bun.serve#1:loopback fake embedding server bound to 127.0.0.1 for the embedding port tests
 packages/embed-local-http/test/port.test.ts:(toplevel).Bun.serve#1:loopback chunked-reply embedding server bound to 127.0.0.1
 packages/embed-local-http/test/port.test.ts:(toplevel).Bun.serve#2:loopback canary standing in for an HTTP proxy, bound to 127.0.0.1, which must receive nothing
 packages/embed-local-http/test/port.test.ts:(toplevel).fetch#1:synthetic loopback follow-up client proving that the proxy-denial fixture leaves later HTTP clients reachable
+deploy/local-embed/local-embed.test.ts:(toplevel).fetch#1:synthetic loopback health check against the test-owned local-embed process
+deploy/local-embed/local-embed.test.ts:postEmbed.fetch#1:synthetic loopback embedding request against the test-owned local-embed process
+deploy/local-embed/local-embed.test.ts:(toplevel).fetch#2:synthetic loopback models check against the test-owned local-embed process
+deploy/local-embed/local-embed.test.ts:(toplevel).fetch#3:synthetic loopback health telemetry check against the test-owned local-embed process
+deploy/memt-sglang/launch-flash-8gpu.sh:(toplevel).curl#1:operator launch script loopback readiness probe against 127.0.0.1
+deploy/memt-sglang/launch-flash-8gpu.sh:(toplevel).curl#2:operator launch script loopback identity probe against 127.0.0.1
+deploy/memt-sglang/launch-flash-8gpu.sh:(toplevel).curl#3:operator launch script loopback capabilities probe against 127.0.0.1
+deploy/memt-sglang/launch-nano-2gpu.sh:(toplevel).curl#1:operator launch script loopback readiness probe against 127.0.0.1
+deploy/memt-sglang/launch-nano-2gpu.sh:(toplevel).curl#2:operator launch script loopback identity probe against 127.0.0.1
+deploy/memt-sglang/launch-nano-2gpu.sh:(toplevel).curl#3:operator launch script loopback capabilities probe against 127.0.0.1
+deploy/memt-sglang/launch-pro-8gpu.sh:(toplevel).curl#1:operator launch script loopback readiness probe against 127.0.0.1
+deploy/memt-sglang/launch-pro-8gpu.sh:(toplevel).curl#2:operator launch script loopback identity probe against 127.0.0.1
+deploy/memt-sglang/launch-pro-8gpu.sh:(toplevel).curl#3:operator launch script loopback capabilities probe against 127.0.0.1
+packages/cli/test/memt.test.ts:(toplevel).Bun.serve#1:synthetic loopback fake MemT server bound to 127.0.0.1 for CLI tests
+packages/core/test/serve/http.test.ts:(toplevel).fetch#10:authenticated synthetic loopback read against the standing serve endpoint
+packages/core/test/serve/http.test.ts:(toplevel).fetch#11:authenticated synthetic loopback read against the standing serve endpoint
+packages/core/test/serve/http.test.ts:(toplevel).fetch#12:authenticated synthetic loopback read against the standing serve endpoint
+packages/core/test/serve/http.test.ts:(toplevel).fetch#13:authenticated synthetic loopback read against the standing serve endpoint
+packages/core/test/serve/http.test.ts:(toplevel).fetch#14:authenticated synthetic loopback read against the standing serve endpoint
+packages/memt/test/memt.test.ts:constructor.Bun.serve#1:synthetic loopback fake MemT server bound to 127.0.0.1 for engine tests

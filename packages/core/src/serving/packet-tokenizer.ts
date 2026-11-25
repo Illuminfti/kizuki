@@ -83,8 +83,10 @@ function bpePieceCount(piece: string, table: Map<string, number>): number {
   } else {
     count = bpeMergeStarts(bin, table).len;
   }
-  if (pieceCountCache.size >= PIECE_CACHE_MAX) pieceCountCache.clear();
-  pieceCountCache.set(piece, count);
+  if (piece.length <= 256) {
+    if (pieceCountCache.size >= PIECE_CACHE_MAX) pieceCountCache.clear();
+    pieceCountCache.set(piece, count);
+  }
   return count;
 }
 
@@ -112,8 +114,10 @@ function countSegment(segment: string, table: Map<string, number>): number {
   while ((match = PAT_REGEX.exec(segment)) !== null) {
     total += bpePieceCount(match[0], table);
   }
-  if (segmentCountCache.size >= SEGMENT_CACHE_MAX) segmentCountCache.clear();
-  segmentCountCache.set(segment, total);
+  if (segment.length <= 4_096) {
+    if (segmentCountCache.size >= SEGMENT_CACHE_MAX) segmentCountCache.clear();
+    segmentCountCache.set(segment, total);
+  }
   return total;
 }
 

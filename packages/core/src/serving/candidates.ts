@@ -281,7 +281,11 @@ function matchingEventsForPacket(
       ...(ctx.selection === undefined ? {} : { selection: ctx.selection }),
       limit: MAX_RETRIEVAL_LIMIT,
       ceiling: grant.ceiling,
-      source: { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall" },
+      source: {
+        owner: ctx.principal.kind === "owner",
+        purpose: ctx.sourcePurpose ?? "recall",
+        deny_classes: denyClassesOf(grant),
+      },
       ...(opts.subjects === undefined ? {} : { subjects: opts.subjects }),
       ...(opts.kinds === undefined ? {} : { types: opts.kinds }),
       ...(opts.since === undefined ? {} : { since: opts.since }),

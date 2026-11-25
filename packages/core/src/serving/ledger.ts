@@ -292,7 +292,7 @@ export function authorizeEventsBatch(
         }
         const allowed = sourceGrant.policy.allowed_fields;
         if (
-          (row.has_text !== 0 && !allowed.includes("text")) ||
+          ((row.has_text !== 0 || purpose === "extract") && !allowed.includes("text")) ||
           (!allowed.includes("subjects") && Object.keys(JSON.parse(row.subjects) as object).length > 0) ||
           (!allowed.includes("attachments") && Object.keys(JSON.parse(row.attachments) as object).length > 0) ||
           (!allowed.includes("metadata") && Object.keys(JSON.parse(row.metadata) as object).length > 0)

@@ -38,4 +38,5 @@ export type { ResolveStaleCanonHoldOptions, StaleCanonHoldResolution } from "./c
 export { CANON_RECOVERY_RESOLUTIONS_PATH, readCanonRecoveryResolutions } from "./canon/stage-recovery";
 export type { CanonRecoveryResolutionRecord } from "./canon/stage-recovery";
 export { trimServingCaches } from "./serving/canon";
+export { packetTokens } from "./serving/packet-tokenizer";
 export type { MemtHealthSnapshot } from "./serving/types";

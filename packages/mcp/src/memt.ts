@@ -16,7 +16,7 @@ import type {
   ServeContext,
   Tool,
 } from "@kizuki/core";
-import { createRedactor } from "@kizuki/core/internal";
+import { createRedactor, packetTokens } from "@kizuki/core/internal";
 import type { MemtHealthSnapshot } from "@kizuki/core/internal";
 import { ENVELOPE_V2_SCHEMA } from "@kizuki/core/world";
 import type { EnvelopeV2 } from "@kizuki/core/world";
@@ -26,12 +26,12 @@ import {
   MemtEngine,
   createMemtEngine,
   defaultMemtRegistryPath,
-  estimateMemTTokens,
   loadMemtConfig,
   validateMemTSnapshotFile,
   withinSensitivityCeiling,
 } from "@kizuki/memt";
 import type {
+  ExperienceRecord,
   MemtSensitivity,
   System2EvidenceHit,
 } from "@kizuki/memt";
@@ -298,7 +298,7 @@ export function createMemtBridge(
   };
 
   const handleRecall = async (args: Record<string, unknown>): Promise<Record<string, unknown>> => {
-    const principal = requireLivePrincipal(ctx, ["search"]);
+    const principal = requireLivePrincipal(ctx, ["search", "context_packet"]);
     const ceiling = toMemtSensitivity(principal.grant.ceiling);
     const redactor = createRedactor(principal, ctx.servingSecrets);
     const query = asString(args["query"]);
@@ -438,10 +438,20 @@ export function createMemtBridge(
       const confidence = typeof args["confidence"] === "number" && Number.isFinite(args["confidence"])
         ? args["confidence"]
         : undefined;
+      const redactExperience = (exp: ExperienceRecord): ExperienceRecord => ({
+        ...exp,
+        domain: redactor.text(exp.domain),
+        scope_key: redactor.text(exp.scope_key),
+        condition: redactor.text(exp.condition),
+        recommendation: redactor.text(exp.recommendation),
+        verification: redactor.text(exp.verification),
+        citations: exp.citations.map((c) => redactor.text(c)),
+      });
       const recorded = engine.experiences.recordExperience({
-        domain,
-        scope_key: asString(args["scope_key"]) ?? domain,
+        domain: redactor.text(domain),
+        scope_key: redactor.text(asString(args["scope_key"]) ?? domain),
         sensitivity,
+        dedupSensitivityCeiling: ceiling,
         condition: redactor.text(condition),
         recommendation: redactor.text(recommendation),
         ...(verification !== undefined ? { verification: redactor.text(verification) } : {}),
@@ -453,7 +463,7 @@ export function createMemtBridge(
         schema: "kizuki.memt-experience/v1",
         action: "record",
         deduplicated: recorded.deduplicated,
-        experience: recorded.experience,
+        experience: redactExperience(recorded.experience),
       };
     }
 
@@ -480,6 +490,8 @@ export function createMemtBridge(
           score: Number(hit.score.toFixed(6)),
           experience: {
             ...hit.experience,
+            domain: redactor.text(hit.experience.domain),
+            scope_key: redactor.text(hit.experience.scope_key),
             condition: redactor.text(hit.experience.condition),
             recommendation: redactor.text(hit.experience.recommendation),
             verification: redactor.text(hit.experience.verification),
@@ -519,7 +531,15 @@ export function createMemtBridge(
     return {
       schema: "kizuki.memt-experience/v1",
       action: "verify",
-      experience: updated,
+      experience: {
+        ...updated,
+        domain: redactor.text(updated.domain),
+        scope_key: redactor.text(updated.scope_key),
+        condition: redactor.text(updated.condition),
+        recommendation: redactor.text(updated.recommendation),
+        verification: redactor.text(updated.verification),
+        citations: updated.citations.map((c) => redactor.text(c)),
+      },
     };
   };
 
@@ -770,8 +790,8 @@ export function createMemtBridge(
     if (hits.length === 0) return envelope;
 
     const header = "## Procedural Memory (MemT-1.0)";
-    const headerTokens = estimateMemTTokens(`\n\n${header}\n`);
-    if (headerTokens >= remaining) return envelope;
+    const basePrefix = `${currentMd}\n\n${header}\n`;
+    if (packetTokens(basePrefix) >= budgetTokens) return envelope;
 
     const compactText = (value: string, maxChars: number): string => {
       const clean = value.replace(/\s+/g, " ").trim();
@@ -780,7 +800,8 @@ export function createMemtBridge(
     };
 
     const lines: string[] = [];
-    let addedTokens = headerTokens;
+    let nextMd = currentMd;
+    let nextTokens = usedTokens;
     for (const hit of hits) {
       if (lines.length >= 3) break;
       const exp = hit.experience;
@@ -788,21 +809,20 @@ export function createMemtBridge(
       const cond = redactor.text(exp.condition);
       const rec = redactor.text(exp.recommendation);
       let line = `- [${domain}] When: ${cond} -> Do: ${rec} (${exp.outcome}, conf=${exp.confidence.toFixed(2)})`;
-      let cost = estimateMemTTokens(`${line}\n`);
-      if (addedTokens + cost > remaining) {
+      let candidateMd = `${currentMd}\n\n${header}\n${[...lines, line].join("\n")}`;
+      let candidateTokens = packetTokens(candidateMd);
+      if (candidateTokens > budgetTokens) {
         line = `- [${domain}] When: ${compactText(cond, 120)} -> Do: ${compactText(rec, 140)} (${exp.outcome}, conf=${exp.confidence.toFixed(2)})`;
-        cost = estimateMemTTokens(`${line}\n`);
-        if (addedTokens + cost > remaining) continue;
+        candidateMd = `${currentMd}\n\n${header}\n${[...lines, line].join("\n")}`;
+        candidateTokens = packetTokens(candidateMd);
+        if (candidateTokens > budgetTokens) continue;
       }
       lines.push(line);
-      addedTokens += cost;
+      nextMd = candidateMd;
+      nextTokens = candidateTokens;
     }
 
     if (lines.length === 0) return envelope;
-
-    const suffix = `\n\n${header}\n${lines.join("\n")}`;
-    const nextMd = `${currentMd}${suffix}`;
-    const nextTokens = Math.min(budgetTokens, usedTokens + addedTokens);
 
     if (isV2) {
       const v2 = envelope as EnvelopeV2;

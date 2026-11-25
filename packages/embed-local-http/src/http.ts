@@ -212,8 +212,10 @@ function buildRequestBytes(request: JsonPost, keepAlive: boolean): Uint8Array {
  */
 export class LoopbackJsonClient {
   private idle: PooledConnection | null = null;
+  private closed = false;
 
   close(): void {
+    this.closed = true;
     const conn = this.idle;
     this.idle = null;
     if (conn !== null) {
@@ -226,12 +228,13 @@ export class LoopbackJsonClient {
     }
   }
 
-  async post(request: JsonPost): Promise<unknown> {
+  async post(request: JsonPost, keepAlive = true): Promise<unknown> {
+    if (this.closed) throw new HttpFailure("aborted");
     const startedAt = Date.now();
-    const pooled = this.takeIdle(request.host, request.port);
+    const pooled = keepAlive ? this.takeIdle(request.host, request.port) : null;
     if (pooled !== null) {
       try {
-        return await this.send(request, pooled, request.timeout_ms, true);
+        return await this.send(request, pooled, request.timeout_ms, true, true);
       } catch (error) {
         // Retry once on a fresh socket if the idle keep-alive socket was closed
         // by the peer before sending any response bytes.
@@ -245,10 +248,10 @@ export class LoopbackJsonClient {
         }
         const remaining = request.timeout_ms - (Date.now() - startedAt);
         if (remaining <= 0) throw new HttpFailure("timeout");
-        return this.send(request, null, remaining, false);
+        return this.send(request, null, remaining, false, true);
       }
     }
-    return this.send(request, null, request.timeout_ms, false);
+    return this.send(request, null, request.timeout_ms, false, keepAlive);
   }
 
   private takeIdle(host: string, port: number): PooledConnection | null {
@@ -266,7 +269,15 @@ export class LoopbackJsonClient {
   }
 
   private returnIdle(conn: PooledConnection): void {
-    if (conn.closed) return;
+    if (this.closed || conn.closed) {
+      conn.closed = true;
+      try {
+        conn.socket.terminate();
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
     if (this.idle !== null && this.idle !== conn) {
       const old = this.idle;
       old.closed = true;
@@ -286,8 +297,9 @@ export class LoopbackJsonClient {
     reused: PooledConnection | null,
     timeoutMs: number,
     isReused: boolean,
+    keepAlive: boolean,
   ): Promise<unknown> {
-    const outgoing = buildRequestBytes(request, true);
+    const outgoing = buildRequestBytes(request, keepAlive);
     return new Promise<unknown>((resolve, reject) => {
       let settled = false;
       let conn: PooledConnection | null = reused;
@@ -468,6 +480,10 @@ export class LoopbackJsonClient {
             }
             active.received.push(new Uint8Array(chunk));
             try {
+              if (active.headers !== null && active.headers.contentLength !== null) {
+                const bodyOffset = active.headers.headEnd + HEAD_END.length;
+                if (active.total < bodyOffset + active.headers.contentLength) return;
+              }
               const raw = concat(active.received, active.total);
               active.received = [raw];
               if (active.headers === null) {
@@ -491,7 +507,7 @@ export class LoopbackJsonClient {
                   active.onComplete(
                     hdrs.status,
                     decoded.body,
-                    hdrs.keepAlive && exact,
+                    keepAlive && hdrs.keepAlive && exact,
                   );
                 }
               } else if (hdrs.contentLength !== null) {
@@ -500,7 +516,7 @@ export class LoopbackJsonClient {
                   active.onComplete(
                     hdrs.status,
                     bodyView.subarray(0, hdrs.contentLength),
-                    hdrs.keepAlive && exact,
+                    keepAlive && hdrs.keepAlive && exact,
                   );
                 }
               }
@@ -554,104 +570,11 @@ class StaleKeepAliveError extends Error {
  * rerouted to a proxy. The reply is read to the end of the connection, capped
  * at `max_response_bytes`, and a redirect is a failure.
  */
-export function postJson(request: JsonPost): Promise<unknown> {
-  const outgoing = buildRequestBytes(request, false);
-
-  return new Promise<unknown>((resolve, reject) => {
-    const received: Uint8Array[] = [];
-    let total = 0;
-    let written = 0;
-    let settled = false;
-    let socket: LoopbackSocket | undefined;
-
-    const settle = (outcome: () => unknown): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      request.signal?.removeEventListener("abort", abort);
-      try {
-        socket?.terminate();
-      } catch {
-        /* the peer may already be gone */
-      }
-      try {
-        resolve(outcome());
-      } catch (error) {
-        reject(error);
-      }
-    };
-    const fail = (kind: HttpFailureKind): void =>
-      settle(() => {
-        throw new HttpFailure(kind);
-      });
-    const abort = (): void => fail("aborted");
-    const timer = setTimeout(() => fail("timeout"), request.timeout_ms);
-    const flush = (target: { write(data: Uint8Array): number }): void => {
-      if (written < outgoing.byteLength)
-        written += target.write(outgoing.subarray(written));
-    };
-    request.signal?.addEventListener("abort", abort, { once: true });
-    if (request.signal?.aborted) {
-      abort();
-      return;
-    }
-
-    Bun.connect({
-      hostname: request.host,
-      port: request.port,
-      socket: {
-        open(target) {
-          socket = target;
-          // A deadline that fired while the connection was pending has already settled.
-          if (settled) target.terminate();
-          else flush(target);
-        },
-        drain(target) {
-          if (!settled) flush(target);
-        },
-        data(_target, chunk) {
-          if (settled) return;
-          total += chunk.byteLength;
-          if (total > request.max_response_bytes + MAX_HEAD_BYTES) {
-            fail("too_large");
-            return;
-          }
-          received.push(new Uint8Array(chunk));
-        },
-        close() {
-          settle(() => {
-            const raw = concat(received, total);
-            const hdrs = parseHeaders(raw);
-            if (hdrs === null) throw new HttpFailure("malformed");
-            const rest = raw.subarray(hdrs.headEnd + HEAD_END.length);
-            if (hdrs.chunked) {
-              const decoded = tryDecodeChunked(rest, true);
-              if (decoded === null) throw new HttpFailure("malformed");
-              return finalizeReply(
-                hdrs.status,
-                decoded.body,
-                request.max_response_bytes,
-              );
-            }
-            if (hdrs.contentLength !== null) {
-              if (rest.byteLength < hdrs.contentLength)
-                throw new HttpFailure("malformed");
-              return finalizeReply(
-                hdrs.status,
-                rest.subarray(0, hdrs.contentLength),
-                request.max_response_bytes,
-              );
-            }
-            return finalizeReply(hdrs.status, rest, request.max_response_bytes);
-          });
-        },
-        error() {
-          fail("network");
-        },
-        connectError() {
-          fail("network");
-        },
-      },
-    }).catch(() => fail("network"));
-  });
+export async function postJson(request: JsonPost): Promise<unknown> {
+  const client = new LoopbackJsonClient();
+  try {
+    return await client.post(request, false);
+  } finally {
+    client.close();
+  }
 }

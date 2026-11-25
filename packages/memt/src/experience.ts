@@ -45,6 +45,8 @@ export interface RecordExperienceInput {
   readonly domain: string;
   readonly scope_key: string;
   readonly sensitivity: MemtSensitivity;
+  /** Optional caller ceiling restricting which existing rows may be deduplicated against. */
+  readonly dedupSensitivityCeiling?: MemtSensitivity;
   readonly condition: string;
   readonly recommendation: string;
   readonly verification?: string;
@@ -150,6 +152,7 @@ interface ExperienceMetaRow {
 interface ScopeCandidateRow {
   id: string;
   dedup_key: string;
+  sensitivity: string;
   condition: string;
   recommendation: string;
   embedding: Uint8Array | null;
@@ -186,6 +189,7 @@ interface VectorBucket {
 interface DedupEntry {
   readonly id: string;
   dedupKey: string;
+  sensitivityRank: number;
   tokens: Set<string>;
   unitVector: Float32Array | null;
   dim: number;
@@ -955,7 +959,7 @@ export class ExperienceBank {
       "SELECT * FROM experiences WHERE dedup_key = ? AND outcome != 'superseded' ORDER BY updated_at DESC LIMIT 1",
     );
     this.stmtScopeCandidates = this.db.query<ScopeCandidateRow, [string, string]>(
-      `SELECT id, dedup_key, condition, recommendation, embedding
+      `SELECT id, dedup_key, sensitivity, condition, recommendation, embedding
        FROM experiences
        WHERE domain = ? AND scope_key = ? AND outcome != 'superseded'
        ORDER BY updated_at DESC
@@ -1322,6 +1326,9 @@ export class ExperienceBank {
       bucket.updatedAtMs[idx] = bucket.updatedAtMs[lastIdx]!;
       bucket.indexById.set(movedId, idx);
     }
+    bucket.ids[lastIdx] = "";
+    bucket.domains[lastIdx] = "";
+    bucket.scopeKeys[lastIdx] = "";
     bucket.count = lastIdx;
   }
 
@@ -1347,9 +1354,11 @@ export class ExperienceBank {
         unitVector = normalizeToUnitFloat32(decoded);
         dim = unitVector !== null ? unitVector.length : 0;
       }
+      const sens: MemtSensitivity = isMemtSensitivity(row.sensitivity) ? row.sensitivity : "private";
       entries.push({
         id: row.id,
         dedupKey: row.dedup_key,
+        sensitivityRank: MEMT_SENSITIVITY_ORDER[sens],
         tokens: tokenizeNormalized(`${row.condition} ${row.recommendation}`),
         unitVector,
         dim,
@@ -1418,6 +1427,10 @@ export class ExperienceBank {
     const incomingDim = incomingUnit !== null ? incomingUnit.length : 0;
 
     const scopeEntries = this.getScopeDedupEntries(domain, scopeKey);
+    const dedupCeilingRank =
+      input.dedupSensitivityCeiling !== undefined
+        ? MEMT_SENSITIVITY_ORDER[input.dedupSensitivityCeiling]
+        : null;
     const incomingTokens = tokenizeNormalized(`${condition} ${recommendation}`);
     const incomingTokenCount = incomingTokens.size;
     const jaccThreshold = this.nearDuplicateThreshold;
@@ -1426,16 +1439,26 @@ export class ExperienceBank {
     let matchedEntry: DedupEntry | null = null;
     let duplicateRow: ExperienceRow | null = null;
 
-    // 1. Fast exact dedup_key check in scope cache (or indexed DB lookup)
+    // 1. Fast exact dedup_key check in scope cache (with indexed DB fallback)
     for (const entry of scopeEntries) {
+      if (dedupCeilingRank !== null && entry.sensitivityRank > dedupCeilingRank) {
+        continue;
+      }
       if (entry.dedupKey === dedupKey) {
         matchedEntry = entry;
         break;
       }
     }
-    if (matchedEntry === null && scopeEntries.length >= MAX_DEDUP_ENTRIES_PER_SCOPE) {
+    if (matchedEntry === null) {
       const exactRow = this.stmtGetByDedup.get(dedupKey);
-      if (exactRow !== null && exactRow.domain === domain && exactRow.scope_key === scopeKey) {
+      if (
+        exactRow !== null &&
+        exactRow.domain === domain &&
+        exactRow.scope_key === scopeKey &&
+        (dedupCeilingRank === null ||
+          (isMemtSensitivity(exactRow.sensitivity) &&
+            MEMT_SENSITIVITY_ORDER[exactRow.sensitivity] <= dedupCeilingRank))
+      ) {
         duplicateRow = exactRow;
       }
     }
@@ -1444,6 +1467,9 @@ export class ExperienceBank {
     if (matchedEntry === null && duplicateRow === null) {
       let bestScore = -1;
       for (const entry of scopeEntries) {
+        if (dedupCeilingRank !== null && entry.sensitivityRank > dedupCeilingRank) {
+          continue;
+        }
         const entrySize = entry.tokens.size;
         const maxLen =
           incomingTokenCount >= entrySize ? incomingTokenCount : entrySize;
@@ -1549,9 +1575,12 @@ export class ExperienceBank {
         citations,
       );
 
-      if (matchedEntry !== null && mergedUnit !== null) {
-        matchedEntry.unitVector = mergedUnit;
-        matchedEntry.dim = mergedUnit.length;
+      if (matchedEntry !== null) {
+        matchedEntry.sensitivityRank = MEMT_SENSITIVITY_ORDER[mergedSensitivity];
+        if (mergedUnit !== null) {
+          matchedEntry.unitVector = mergedUnit;
+          matchedEntry.dim = mergedUnit.length;
+        }
       }
       if (mergedOutcome === "superseded") {
         const idx = scopeEntries.findIndex((e) => e.id === dupId);
@@ -1618,6 +1647,7 @@ export class ExperienceBank {
       scopeEntries.unshift({
         id,
         dedupKey,
+        sensitivityRank: MEMT_SENSITIVITY_ORDER[input.sensitivity],
         tokens: incomingTokens,
         unitVector: incomingUnit,
         dim: incomingDim,

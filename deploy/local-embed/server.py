@@ -16,6 +16,7 @@ optional ONNX Runtime acceleration and length-sorted micro-batching.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import ipaddress
 import json
 import os
@@ -242,11 +243,7 @@ class LocalSemanticEmbedder:
         cache_root = (
             Path(onnx_cache_dir)
             if onnx_cache_dir
-            else (
-                Path("/data/models/kizuki-embed")
-                if Path("/data/models").is_dir() and os.access("/data/models", os.W_OK)
-                else Path.home() / ".cache" / "kizuki-embed"
-            )
+            else Path.home() / ".cache" / "kizuki-embed"
         )
         safe_id = self.model_id.replace("/", "--")
         onnx_file = cache_root / safe_id / "model.onnx"
@@ -291,20 +288,24 @@ class LocalSemanticEmbedder:
                 )
                 dynamic_axes["token_type_ids"] = {0: "batch", 1: "seq"}
 
-            tmp_file = onnx_file.with_suffix(".onnx.tmp")
-            with torch.inference_mode():
-                torch.onnx.export(
-                    model,
-                    args,
-                    str(tmp_file),
-                    input_names=input_names,
-                    output_names=["last_hidden_state"],
-                    dynamic_axes=dynamic_axes,
-                    opset_version=14,
-                    dynamo=False,
-                )
-            tmp_file.replace(onnx_file)
-            return onnx_file
+            tmp_file = onnx_file.with_suffix(f".{os.getpid()}.onnx.tmp")
+            try:
+                with torch.inference_mode():
+                    torch.onnx.export(
+                        model,
+                        args,
+                        str(tmp_file),
+                        input_names=input_names,
+                        output_names=["last_hidden_state"],
+                        dynamic_axes=dynamic_axes,
+                        opset_version=14,
+                        dynamo=False,
+                    )
+                tmp_file.replace(onnx_file)
+                return onnx_file
+            except Exception:
+                tmp_file.unlink(missing_ok=True)
+                raise
         except Exception:
             return None
 
@@ -368,11 +369,16 @@ class LocalSemanticEmbedder:
 
         with self._lock:
             missing_by_text: dict[str, list[int]] = {}
+            key_by_text: dict[str, bytes] = {}
             for orig_idx, raw_text in enumerate(texts):
                 if self.cache_capacity > 0:
-                    cached = self._cache.get(raw_text)
+                    cache_key = key_by_text.get(raw_text)
+                    if cache_key is None:
+                        cache_key = hashlib.sha256(raw_text.encode("utf-8")).digest()
+                        key_by_text[raw_text] = cache_key
+                    cached = self._cache.get(cache_key)
                     if cached is not None:
-                        self._cache.move_to_end(raw_text)
+                        self._cache.move_to_end(cache_key)
                         ordered_result[orig_idx] = cached
                         self.cache_hits += 1
                         continue
@@ -397,8 +403,9 @@ class LocalSemanticEmbedder:
                             raise RuntimeError("embedding model produced zero vector")
                         vec_list = vec.tolist()
                         if self.cache_capacity > 0:
-                            self._cache[raw_text] = vec_list
-                            self._cache.move_to_end(raw_text)
+                            cache_key = key_by_text[raw_text]
+                            self._cache[cache_key] = vec_list
+                            self._cache.move_to_end(cache_key)
                             while len(self._cache) > self.cache_capacity:
                                 self._cache.popitem(last=False)
                         for orig_idx in missing_by_text[raw_text]:

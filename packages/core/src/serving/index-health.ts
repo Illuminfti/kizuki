@@ -20,9 +20,18 @@ import { principalName } from "./gate";
 const MAX_INDEX_HEALTH_CACHE = 32;
 const MAX_SCOPE_CACHE = 16;
 
-const indexDegradedCache = new Map<string, boolean>();
-const ledgerMissingCache = new Map<string, boolean>();
-const canonScopeCache = new Map<string, { canonIds: string[]; canonPaths: string[] }>();
+let indexDegradedByDb = new WeakMap<Database, Map<string, boolean>>();
+let ledgerMissingByDb = new WeakMap<Database, Map<string, boolean>>();
+let canonScopeByDb = new WeakMap<Database, Map<string, { canonIds: string[]; canonPaths: string[] }>>();
+
+function dbCache<T>(byDb: WeakMap<Database, Map<string, T>>, db: Database): Map<string, T> {
+  let cache = byDb.get(db);
+  if (cache === undefined) {
+    cache = new Map();
+    byDb.set(db, cache);
+  }
+  return cache;
+}
 
 function lruSet<T>(cache: Map<string, T>, key: string, value: T, max: number): void {
   if (cache.has(key)) cache.delete(key);
@@ -31,9 +40,9 @@ function lruSet<T>(cache: Map<string, T>, key: string, value: T, max: number): v
 }
 
 registerServingCacheTrimmer(() => {
-  indexDegradedCache.clear();
-  ledgerMissingCache.clear();
-  canonScopeCache.clear();
+  indexDegradedByDb = new WeakMap();
+  ledgerMissingByDb = new WeakMap();
+  canonScopeByDb = new WeakMap();
 });
 
 /** Owner-only cache of table presence keyed by SQLite schema_version. */
@@ -45,7 +54,10 @@ const ownerTableCache = new WeakMap<Database, { schema: number; sql: string | nu
  */
 export function ownerDbStamp(db: Database, allowReadTransaction = false): string | null {
   if (!allowReadTransaction && db.inTransaction) return null;
-  const schema = db.query<{ schema_version: number }, []>("PRAGMA schema_version").get()?.schema_version ?? -1;
+  const ver = db.query<{ data_version: number; schema_version: number }, []>(
+    "SELECT (SELECT data_version FROM pragma_data_version) AS data_version, (SELECT schema_version FROM pragma_schema_version) AS schema_version",
+  ).get();
+  const schema = ver?.schema_version ?? -1;
   let cached = ownerTableCache.get(db);
   if (cached === undefined || cached.schema !== schema) {
     const parts: string[] = [];
@@ -53,10 +65,14 @@ export function ownerDbStamp(db: Database, allowReadTransaction = false): string
       parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) || ':' || COALESCE(SUM(deleted = 1), 0) FROM events) AS ev_agg");
     }
     if (tableExists(db, "search_documents")) {
-      parts.push("(SELECT COUNT(*) FROM search_documents) AS sd_cnt");
+      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) FROM search_documents WHERE scope='ledger') AS sd_l_agg");
+      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) FROM search_documents) AS sd_agg");
+    }
+    if (tableExists(db, "search_docs")) {
+      parts.push("(SELECT COUNT(*) FROM search_docs WHERE scope='ledger') AS sdocs_l_cnt");
     }
     if (tableExists(db, "canon_receipts")) {
-      parts.push("(SELECT COUNT(*) FROM canon_receipts) AS cr_cnt");
+      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) FROM canon_receipts) AS cr_agg");
     }
     if (tableExists(db, "event_purges")) {
       parts.push("(SELECT COUNT(*) FROM event_purges) AS ep_cnt");
@@ -65,7 +81,7 @@ export function ownerDbStamp(db: Database, allowReadTransaction = false): string
       parts.push("(SELECT COUNT(*) FROM event_classes) AS ec_cnt");
     }
     if (tableExists(db, "claims")) {
-      parts.push("(SELECT COUNT(*) FROM claims WHERE status = 'live') AS cl_cnt");
+      parts.push("(SELECT COUNT(*) || ':' || COALESCE(SUM(status = 'live'), 0) FROM claims) AS cl_agg");
     }
     if (tableExists(db, "canon_holds")) {
       parts.push("(SELECT COUNT(*) FROM canon_holds) AS ch_cnt");
@@ -75,8 +91,8 @@ export function ownerDbStamp(db: Database, allowReadTransaction = false): string
   }
   const counts = cached.sql === null
     ? ""
-    : Object.values(db.query<Record<string, number>, []>(cached.sql).get() ?? {}).join(":");
-  return `${canonReadGeneration(db)}:${sourcePolicyEpoch(db)}:${purgeReadEpoch(db)}:${claimsEpoch(db)}:${counts}`;
+    : Object.values(db.query<Record<string, number | string>, []>(cached.sql).get() ?? {}).join(":");
+  return `${ver?.data_version ?? 0}:${schema}:${canonReadGeneration(db)}:${sourcePolicyEpoch(db)}:${purgeReadEpoch(db)}:${claimsEpoch(db)}:${counts}`;
 }
 
 export function grantCacheKey(ctx: ServeContext, grant: Grant): string {
@@ -134,26 +150,33 @@ export function visibleCanonStamp(
   const hasReceipts = tableExists(ctx.db, "canon_receipts");
   const hasLineage = hasReceipts && tableExists(ctx.db, "canon_source_survivor_lineage");
   const hasSearch = tableExists(ctx.db, "search_documents");
+  const hasSearchFts = hasSearch && tableExists(ctx.db, "search_docs");
   const hasGrants = tableExists(ctx.db, "source_grants") && tableExists(ctx.db, "source_event_bindings");
+  const hasInventory = hasGrants && tableExists(ctx.db, "source_store_inventory");
   const hasPurges = tableExists(ctx.db, "event_purges");
+  const hasPurgeBatches = tableExists(ctx.db, "purge_batches");
   const hasEvents = tableExists(ctx.db, "events");
   const hasClasses = tableExists(ctx.db, "event_classes");
+  const hasPageClasses = tableExists(ctx.db, "canon_page_classes");
+  const hasClaimSupport = tableExists(ctx.db, "claim_v2_support_events");
 
+  const pageIdsJson = JSON.stringify(permitted.map((page) => page.id));
   const cols: string[] = [];
   const binds: string[] = [];
   if (hasReceipts) {
-    cols.push("(SELECT count(*) FROM canon_receipts WHERE page_path IN (SELECT value FROM json_each(?))) AS r_n");
-    cols.push("(SELECT coalesce(max(rowid), 0) FROM canon_receipts WHERE page_path IN (SELECT value FROM json_each(?))) AS r_head");
-    binds.push(pathsJson, pathsJson);
+    cols.push("(SELECT count(*) || ':' || coalesce(max(rowid), 0) || ':' || coalesce(sum(reverted_by IS NOT NULL), 0) || ':' || coalesce(sum(receipt_state = 'erased'), 0) FROM canon_receipts WHERE page_path IN (SELECT value FROM json_each(?))) AS r_agg");
+    binds.push(pathsJson);
   }
   if (hasLineage) {
     cols.push("(SELECT count(*) FROM canon_source_survivor_lineage WHERE child_receipt_id IN (SELECT receipt_id FROM canon_receipts WHERE page_path IN (SELECT value FROM json_each(?)))) AS l_n");
     binds.push(pathsJson);
   }
-  if (hasSearch) {
-    cols.push("(SELECT count(*) FROM search_documents WHERE scope='canon' AND doc_id IN (SELECT value FROM json_each(?))) AS s_n");
-    cols.push("(SELECT coalesce(max(rowid), 0) FROM search_documents WHERE scope='canon' AND doc_id IN (SELECT value FROM json_each(?))) AS s_head");
-    binds.push(docIdsJson, docIdsJson);
+  if (hasSearchFts) {
+    cols.push("(SELECT count(*) || ':' || coalesce(max(sd.rowid), 0) || ':' || coalesce(sum(length(sd.path)), 0) FROM search_documents sd WHERE sd.scope='canon' AND sd.doc_id IN (SELECT value FROM json_each(?)) AND EXISTS (SELECT 1 FROM search_docs f WHERE f.rowid=sd.rowid AND f.doc_id=sd.doc_id)) AS s_agg");
+    binds.push(docIdsJson);
+  } else if (hasSearch) {
+    cols.push("(SELECT count(*) || ':' || coalesce(max(rowid), 0) FROM search_documents WHERE scope='canon' AND doc_id IN (SELECT value FROM json_each(?))) AS s_agg");
+    binds.push(docIdsJson);
   }
   if (hasGrants) {
     cols.push(`(SELECT coalesce(group_concat(g.source_key || ':' || g.revision || ':' || g.status || ':' || length(g.policy)), '')
@@ -164,9 +187,21 @@ export function visibleCanonStamp(
        )) AS g_agg`);
     binds.push(sourcesJson);
   }
+  if (hasInventory) {
+    cols.push(`(SELECT coalesce(group_concat(i.source_key || ':' || coalesce(i.erasure_report, '') || ':' || i.payload_complete), '')
+       FROM source_store_inventory i
+       WHERE EXISTS (
+         SELECT 1 FROM source_event_bindings b
+         WHERE b.source_key = i.source_key AND b.event_id IN (SELECT value FROM json_each(?))
+       )) AS si_agg`);
+    binds.push(sourcesJson);
+  }
   if (hasPurges) {
     cols.push("(SELECT count(*) FROM event_purges WHERE event_id IN (SELECT value FROM json_each(?))) AS p_n");
     binds.push(sourcesJson);
+  }
+  if (hasPurgeBatches) {
+    cols.push("(SELECT count(*) FROM purge_batches WHERE state <> 'ready') AS pb_n");
   }
   if (hasEvents) {
     cols.push("(SELECT count(*) FROM events WHERE deleted = 1 AND event_id IN (SELECT value FROM json_each(?))) AS d_n");
@@ -176,12 +211,20 @@ export function visibleCanonStamp(
     cols.push("(SELECT count(*) FROM event_classes WHERE event_id IN (SELECT value FROM json_each(?))) AS c_n");
     binds.push(sourcesJson);
   }
+  if (hasPageClasses) {
+    cols.push("(SELECT count(*) || ':' || coalesce(sum(credential), 0) FROM canon_page_classes WHERE page_id IN (SELECT value FROM json_each(?))) AS pc_agg");
+    binds.push(pageIdsJson);
+  }
+  if (hasClaimSupport) {
+    cols.push("(SELECT count(*) FROM claim_v2_support_events WHERE event_id IN (SELECT value FROM json_each(?))) AS cs_n");
+    binds.push(sourcesJson);
+  }
 
   const row = cols.length === 0
     ? null
     : ctx.db.query<Record<string, number | string>, string[]>(`SELECT ${cols.join(", ")}`).get(...binds);
 
-  return `${pageDigest}|r=${row?.r_n ?? 0}:${row?.r_head ?? 0}:${row?.l_n ?? 0}|s=${row?.s_n ?? 0}:${row?.s_head ?? 0}|g=${row?.g_agg ?? ""}|p=${row?.p_n ?? 0}:${row?.d_n ?? 0}:${row?.c_n ?? 0}`;
+  return `${pageDigest}|r=${row?.r_agg ?? ""}:${row?.l_n ?? 0}|s=${hasSearchFts ? 1 : 0}:${row?.s_agg ?? ""}|g=${row?.g_agg ?? ""}|si=${row?.si_agg ?? ""}|p=${row?.p_n ?? 0}:${row?.pb_n ?? 0}:${row?.d_n ?? 0}:${row?.c_n ?? 0}|pc=${row?.pc_agg ?? ""}|cs=${row?.cs_n ?? 0}`;
 }
 
 /** Cacheable permitted canon IDs/paths for search under one caller-visible snapshot. */
@@ -195,8 +238,9 @@ export function cachedSearchCanonScope(
   const key = stamp === null
     ? null
     : `${resolve(ctx.vaultPath)}|${stamp}|${grantCacheKey(ctx, grant)}`;
-  if (key !== null) {
-    const cached = canonScopeCache.get(key);
+  const scopeCache = key === null ? null : dbCache(canonScopeByDb, ctx.db);
+  if (key !== null && scopeCache !== null) {
+    const cached = scopeCache.get(key);
     if (cached !== undefined) {
       return { canonIds: [...cached.canonIds], canonPaths: [...cached.canonPaths], stamp };
     }
@@ -207,8 +251,8 @@ export function cachedSearchCanonScope(
   const canonPaths = index.pages
     .filter((page) => authorize(grant, pageScope(ctx, page, grant)).allow)
     .map((page) => page.relPath);
-  if (key !== null) {
-    lruSet(canonScopeCache, key, { canonIds: [...canonIds], canonPaths: [...canonPaths] }, MAX_SCOPE_CACHE);
+  if (key !== null && scopeCache !== null) {
+    lruSet(scopeCache, key, { canonIds: [...canonIds], canonPaths: [...canonPaths] }, MAX_SCOPE_CACHE);
   }
   return { canonIds, canonPaths, stamp };
 }
@@ -227,11 +271,15 @@ export function visibleIndexDegraded(
   const stamp = pages === index.pages
     ? (precomputedStamp !== undefined ? precomputedStamp : visibleCanonStamp(ctx, grant, index))
     : null;
+  const graphLayerStamp = layer === "graph"
+    ? `|ge=${tableExists(ctx.db, "graph_edges") ? 1 : 0}:${readDerivedMeta(ctx.db, "graph")?.rebuilt_at ?? "none"}`
+    : "";
   const cacheKey = stamp === null
     ? null
-    : `${resolve(ctx.vaultPath)}|${layer}|${stamp}|${grantCacheKey(ctx, grant)}`;
-  if (cacheKey !== null) {
-    const cached = indexDegradedCache.get(cacheKey);
+    : `${resolve(ctx.vaultPath)}|${layer}|${stamp}${graphLayerStamp}|${grantCacheKey(ctx, grant)}`;
+  const degradedCache = cacheKey === null ? null : dbCache(indexDegradedByDb, ctx.db);
+  if (cacheKey !== null && degradedCache !== null) {
+    const cached = degradedCache.get(cacheKey);
     if (cached !== undefined) return cached;
   }
 
@@ -287,8 +335,8 @@ export function visibleIndexDegraded(
     degraded = !readDerivedMeta(ctx.db, "graph") && permitted.some(page => (access === undefined ? pageDecision(index, grant, page, readAccess) : access.decision(page)).allow);
   }
 
-  if (cacheKey !== null) {
-    lruSet(indexDegradedCache, cacheKey, degraded, MAX_INDEX_HEALTH_CACHE);
+  if (cacheKey !== null && degradedCache !== null) {
+    lruSet(degradedCache, cacheKey, degraded, MAX_INDEX_HEALTH_CACHE);
   }
   return degraded;
 }
@@ -299,8 +347,9 @@ export function visibleLedgerIndexMissing(ctx: ServeContext, grant: Grant): bool
   const cacheKey = ownerStamp === null
     ? null
     : `${resolve(ctx.vaultPath)}|ledger|${ownerStamp}|${grantCacheKey(ctx, grant)}`;
-  if (cacheKey !== null) {
-    const cached = ledgerMissingCache.get(cacheKey);
+  const missingCache = cacheKey === null ? null : dbCache(ledgerMissingByDb, ctx.db);
+  if (cacheKey !== null && missingCache !== null) {
+    const cached = missingCache.get(cacheKey);
     if (cached !== undefined) return cached;
   }
   const missing = timelineSelection(ctx.db, {
@@ -311,8 +360,8 @@ export function visibleLedgerIndexMissing(ctx: ServeContext, grant: Grant): bool
     ...(grant.until === null ? {} : { until: grant.until }),
     source: { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall", deny_classes: denyClassesOf(grant) },
   }).length > 0;
-  if (cacheKey !== null) {
-    lruSet(ledgerMissingCache, cacheKey, missing, MAX_INDEX_HEALTH_CACHE);
+  if (cacheKey !== null && missingCache !== null) {
+    lruSet(missingCache, cacheKey, missing, MAX_INDEX_HEALTH_CACHE);
   }
   return missing;
 }

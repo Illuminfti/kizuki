@@ -302,5 +302,21 @@ describe("MemT-1.0 MCP tools & context_packet integration", () => {
     };
     expect(personalStats.total).toBe(1);
     expect(personalStats.verified).toBe(1);
+
+    // Cross-sensitivity dedup isolation: a personal-ceiling caller recording
+    // identical text to a private experience must NEVER match, merge, or leak it.
+    const isolatedRec = payloadOf(
+      await call(personalClient, "memt_experience", {
+        action: "record",
+        domain: "kettle-ops",
+        scope_key: "secret",
+        sensitivity: "personal",
+        condition: "private owner-only calibration step",
+        recommendation: "do not expose to personal ceiling stats",
+        outcome: "observed",
+      }),
+    );
+    expect(isolatedRec["deduplicated"]).toBe(false);
+    expect((isolatedRec["experience"] as { sensitivity: string }).sensitivity).toBe("personal");
   });
 });

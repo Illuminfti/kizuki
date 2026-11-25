@@ -109,9 +109,18 @@ const MAX_SINGLE_CACHED_BODY_BYTES = 131_072;
 const MEMO_IDLE_TTL_MS = 120_000;
 const MAX_OWNER_DECISION_CACHE = 512;
 const memos = new Map<string, VaultMemo>();
-const ownerDecisionCache = new Map<string, ReturnType<typeof pageSnapshotDecision>>();
+let ownerDecisionByDb = new WeakMap<Database, Map<string, ReturnType<typeof pageSnapshotDecision>>>();
 const servingCacheTrimmers: (() => void)[] = [];
 let memoIdleTimer: ReturnType<typeof setTimeout> | null = null;
+
+function ownerDecisionMap(db: Database): Map<string, ReturnType<typeof pageSnapshotDecision>> {
+  let cache = ownerDecisionByDb.get(db);
+  if (cache === undefined) {
+    cache = new Map();
+    ownerDecisionByDb.set(db, cache);
+  }
+  return cache;
+}
 
 export function registerServingCacheTrimmer(trimmer: () => void): void {
   servingCacheTrimmers.push(trimmer);
@@ -122,7 +131,7 @@ function scheduleMemoIdleTrim(): void {
   memoIdleTimer = setTimeout(() => {
     memoIdleTimer = null;
     memos.clear();
-    ownerDecisionCache.clear();
+    ownerDecisionByDb = new WeakMap();
     for (const trimmer of servingCacheTrimmers) trimmer();
   }, MEMO_IDLE_TTL_MS);
   memoIdleTimer.unref?.();
@@ -134,7 +143,7 @@ export function trimServingCaches(): void {
     memoIdleTimer = null;
   }
   memos.clear();
-  ownerDecisionCache.clear();
+  ownerDecisionByDb = new WeakMap();
   for (const trimmer of servingCacheTrimmers) trimmer();
 }
 
@@ -523,31 +532,31 @@ function ownerPageDecisionStamp(db: Database): string | null {
       parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) || ':' || COALESCE(SUM(deleted = 1), 0) || ':' || COALESCE(SUM(origin <> 'external'), 0) || ':' || COALESCE(SUM(sensitivity_hint = 'private'), 0) || ':' || COALESCE(SUM(sensitivity_hint = 'personal'), 0) || ':' || COALESCE(SUM(sensitivity_hint IS NULL OR sensitivity_hint NOT IN ('public', 'personal', 'private')), 0) FROM events) AS ev_agg");
     }
     if (tableExists(db, "canon_receipts")) {
-      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) || ':' || COALESCE(SUM(reverted_by IS NOT NULL), 0) FROM canon_receipts) AS cr_agg");
+      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) || ':' || COALESCE(SUM(reverted_by IS NOT NULL), 0) || ':' || COALESCE(SUM(receipt_state = 'erased'), 0) FROM canon_receipts) AS cr_agg");
     }
     if (tableExists(db, "canon_source_survivor_lineage")) {
-      parts.push("(SELECT COUNT(*) FROM canon_source_survivor_lineage) AS sl_cnt");
+      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) FROM canon_source_survivor_lineage) AS sl_cnt");
     }
     if (tableExists(db, "canon_holds")) {
-      parts.push("(SELECT COUNT(*) FROM canon_holds) AS ch_cnt");
+      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) FROM canon_holds) AS ch_cnt");
     }
     if (tableExists(db, "canon_write_intents")) {
-      parts.push("(SELECT COUNT(*) FROM canon_write_intents) AS cwi_cnt");
+      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) FROM canon_write_intents) AS cwi_cnt");
     }
     if (tableExists(db, "canon_projection_obligations")) {
-      parts.push("(SELECT COUNT(*) FROM canon_projection_obligations) AS cpo_cnt");
+      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) FROM canon_projection_obligations) AS cpo_cnt");
     }
     if (tableExists(db, "purge_batches")) {
-      parts.push("(SELECT COUNT(*) FROM purge_batches WHERE state <> 'ready') AS pb_cnt");
+      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) FROM purge_batches WHERE state <> 'ready') AS pb_cnt");
     }
     if (tableExists(db, "event_purges")) {
-      parts.push("(SELECT COUNT(*) FROM event_purges) AS ep_cnt");
+      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) FROM event_purges) AS ep_cnt");
     }
     if (tableExists(db, "event_classes")) {
-      parts.push("(SELECT COUNT(*) FROM event_classes) AS ec_cnt");
+      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(event_id), '') FROM event_classes) AS ec_cnt");
     }
     if (tableExists(db, "canon_page_classes")) {
-      parts.push("(SELECT COUNT(*) FROM canon_page_classes) AS cpc_cnt");
+      parts.push("(SELECT COUNT(*) || ':' || COALESCE(SUM(credential), 0) FROM canon_page_classes) AS cpc_cnt");
     }
     if (tableExists(db, "source_grants")) {
       parts.push("(SELECT COALESCE(group_concat(source_key || ':' || revision || ':' || status || ':' || length(policy)), '') FROM source_grants) AS sg_agg");
@@ -661,8 +670,9 @@ export function pageSnapshotDecision(
   | { allow: true; sensitivity: Sensitivity; taint: PageTaint; evidence: Extract<LivePageEvidence, { admitted: true }> }
   | { allow: false; reason: DenyReason } {
   const cacheKey = historicalSnapshot ? null : ownerDecisionCacheKey(sourceCtx, grant, page, read);
-  if (cacheKey !== null) {
-    const cached = ownerDecisionCache.get(cacheKey);
+  const decisionCache = cacheKey === null ? null : ownerDecisionMap(sourceCtx.db);
+  if (cacheKey !== null && decisionCache !== null) {
+    const cached = decisionCache.get(cacheKey);
     if (cached !== undefined) return cloneDecision(cached);
   }
   // Both labels are read first so the served chunk carries narrowed types
@@ -670,11 +680,11 @@ export function pageSnapshotDecision(
   // owner included: an unstamped page may be verbatim capture, and serving
   // it as canon would hand a reader capture dressed as produced prose.
   const store = (result: ReturnType<typeof pageSnapshotDecision>): ReturnType<typeof pageSnapshotDecision> => {
-    if (cacheKey !== null) {
-      if (ownerDecisionCache.size >= MAX_OWNER_DECISION_CACHE) {
-        ownerDecisionCache.delete(ownerDecisionCache.keys().next().value!);
+    if (cacheKey !== null && decisionCache !== null) {
+      if (decisionCache.size >= MAX_OWNER_DECISION_CACHE) {
+        decisionCache.delete(decisionCache.keys().next().value!);
       }
-      ownerDecisionCache.set(cacheKey, cloneDecision(result));
+      decisionCache.set(cacheKey, cloneDecision(result));
     }
     return result;
   };

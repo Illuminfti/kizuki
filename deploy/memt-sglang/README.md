@@ -32,7 +32,7 @@ mkdir -p ~/.config/kizuki && chmod 700 ~/.config/kizuki
 cat > ~/.config/kizuki/memt-tunnel.env <<'EOF'
 MEMT_SSH_TARGET=root@<runpod-ip>
 MEMT_SSH_PORT=<runpod-ssh-port>
-MEMT_SSH_KEY=/home/ubuntu/.ssh/id_ed25519
+MEMT_SSH_KEY=~/.ssh/id_ed25519
 MEMT_LOCAL_PORT=30000
 MEMT_REMOTE_PORT=30000
 EOF
