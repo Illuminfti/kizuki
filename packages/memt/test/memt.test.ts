@@ -1011,6 +1011,82 @@ describe("ExperienceBank procedural memory", () => {
       bank.close();
     }
   });
+
+  test("vector cache stays fresh across separate SQLite connections via PRAGMA data_version and countExperiences respects ceilings", () => {
+    const sharedPath = join(tempRoot, "cross-conn-memt.sqlite");
+    const bankA = new ExperienceBank({ dbPath: sharedPath });
+    const bankB = new ExperienceBank({ dbPath: sharedPath });
+    try {
+      const e1 = bankA.recordExperience({
+        domain: "ops",
+        scope_key: "cache",
+        sensitivity: "public",
+        condition: "Initial public cache note",
+        recommendation: "Warm cache vector A",
+        outcome: "verified",
+        citations: ["event:cc_1"],
+        embedding: [1, 0, 0, 0],
+      });
+
+      // Warm bankA's in-memory vector cache
+      const initialHits = bankA.searchExperiences({
+        query: "",
+        queryVector: [1, 0, 0, 0],
+        sensitivityCeiling: "private",
+        limit: 5,
+      });
+      expect(initialHits.map((h) => h.experience.id)).toEqual([e1.experience.id]);
+
+      // Write via separate connection bankB -> PRAGMA data_version increments on bankA
+      const e2 = bankB.recordExperience({
+        domain: "ops",
+        scope_key: "secret-cache",
+        sensitivity: "private",
+        condition: "Cross-connection private cache note",
+        recommendation: "Return vector B on private queries",
+        outcome: "observed",
+        citations: ["event:cc_2"],
+        embedding: [0, 1, 0, 0],
+      });
+
+      const refreshedHits = bankA.searchExperiences({
+        query: "",
+        queryVector: [0, 1, 0, 0],
+        sensitivityCeiling: "private",
+        limit: 5,
+      });
+      expect(refreshedHits.map((h) => h.experience.id)).toEqual([e2.experience.id]);
+
+      // Aggregate counts respect sensitivity ceiling accurately
+      expect(bankA.countExperiences({ sensitivityCeiling: "public" })).toEqual({
+        total: 1,
+        uninternalized: 1,
+        verified: 1,
+        observed: 0,
+        failed: 0,
+      });
+      expect(bankA.countExperiences({ sensitivityCeiling: "private" })).toEqual({
+        total: 2,
+        uninternalized: 2,
+        verified: 1,
+        observed: 1,
+        failed: 0,
+      });
+
+      // Purge via bankB -> bankA vector cache drops e2 immediately
+      bankB.purgeBySourceRefs(["cc_2"]);
+      const afterPurge = bankA.searchExperiences({
+        query: "",
+        queryVector: [0, 1, 0, 0],
+        sensitivityCeiling: "private",
+        limit: 5,
+      });
+      expect(afterPurge.length).toBe(0);
+    } finally {
+      bankA.close();
+      bankB.close();
+    }
+  });
 });
 
 describe("MemtEngine dual-system hybrid engine", () => {
@@ -1034,6 +1110,16 @@ describe("MemtEngine dual-system hybrid engine", () => {
     });
     expect(withEnv.url).toBe("http://127.0.0.1:31000");
     expect(withEnv.apiKey).toBe("test-secret-token");
+
+    // Updating serve.toml invalidates the stat-keyed config cache immediately
+    writeFileSync(
+      join(vault, ".kizuki", "serve.toml"),
+      `[memt]\nenabled = true\nurl = "http://127.0.0.1:32000"\nprobe_timeout_ms = 1100\nrrf_k = 72\n`,
+    );
+    const updatedToml = loadMemtConfig(vault, {});
+    expect(updatedToml.url).toBe("http://127.0.0.1:32000");
+    expect(updatedToml.probeTimeoutMs).toBe(1100);
+    expect(updatedToml.rrfK).toBe(72);
   });
 
   test("native-gpu mode internalizes experiences, validates snapshots, recalls with RRF, and enforces purge totality", async () => {

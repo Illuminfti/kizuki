@@ -284,5 +284,23 @@ describe("MemT-1.0 MCP tools & context_packet integration", () => {
     expect(packetData.result.data.packetMd).toContain("## Procedural Memory (MemT-1.0)");
     expect(packetData.result.data.packetMd).toContain("check Ada kettle readiness checklist");
     expect(packetData.result.data.tokens).toBeLessThanOrEqual(packetData.result.data.budgetTokens);
+
+    // memt_status reports exact aggregate experience_stats respecting caller ceiling
+    engine.experiences.recordExperience({
+      domain: "kettle-ops",
+      scope_key: "secret",
+      sensitivity: "private",
+      condition: "private owner-only calibration step",
+      recommendation: "do not expose to personal ceiling stats",
+      outcome: "verified",
+      confidence: 0.99,
+    });
+    const personalStatus = payloadOf(await call(personalClient, "memt_status", {}));
+    const personalStats = personalStatus["experience_stats"] as {
+      total: number;
+      verified: number;
+    };
+    expect(personalStats.total).toBe(1);
+    expect(personalStats.verified).toBe(1);
   });
 });

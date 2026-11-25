@@ -70,6 +70,16 @@ export function defaultMemtSnapshotDir(vaultPath: string): string {
   return join(vaultPath, ".kizuki", "memt", "snapshots");
 }
 
+export function canonicalSourceRef(ref: string): string {
+  const trimmed = ref.trim();
+  if (trimmed.length === 0) return "";
+  if (trimmed.startsWith("event:")) {
+    const raw = trimmed.slice("event:".length);
+    if (raw.length > 0) return raw;
+  }
+  return trimmed;
+}
+
 export function normalizeSourceRefVariants(ref: string): string[] {
   const trimmed = ref.trim();
   if (trimmed.length === 0) return [];
@@ -155,11 +165,21 @@ CREATE INDEX IF NOT EXISTS idx_experiences_domain_scope
 CREATE INDEX IF NOT EXISTS idx_experiences_dedup
   ON experiences(dedup_key);
 
-CREATE INDEX IF NOT EXISTS idx_experiences_sensitivity
-  ON experiences(sensitivity);
+CREATE INDEX IF NOT EXISTS idx_experiences_filter
+  ON experiences(sensitivity, outcome, domain);
 
-CREATE INDEX IF NOT EXISTS idx_experiences_internalized
-  ON experiences(internalized_in_snapshot);
+CREATE INDEX IF NOT EXISTS idx_experiences_uninternalized
+  ON experiences(outcome, domain, sensitivity, confidence DESC)
+  WHERE internalized_in_snapshot IS NULL;
+
+CREATE TABLE IF NOT EXISTS experience_sources (
+  experience_id TEXT NOT NULL REFERENCES experiences(id) ON DELETE CASCADE,
+  source_ref TEXT NOT NULL,
+  PRIMARY KEY (experience_id, source_ref)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_experience_sources_ref
+  ON experience_sources(source_ref);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS experiences_fts USING fts5(
   id UNINDEXED,
@@ -170,6 +190,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS experiences_fts USING fts5(
   verification,
   tokenize = 'unicode61 remove_diacritics 2'
 );
+
+INSERT INTO experiences_fts(experiences_fts, rank)
+  VALUES('rank', 'bm25(0.0, 2.5, 2.0, 3.0, 2.5, 1.0)');
 `;
 
 function enforceFileMode0600(filePath: string): void {
@@ -183,6 +206,47 @@ function enforceFileMode0600(filePath: string): void {
       }
     }
   }
+}
+
+function backfillExperienceSourcesIfNeeded(db: Database): void {
+  const needsBackfill =
+    db
+      .query<{ ok: number }, []>(
+        `SELECT 1 AS ok FROM experiences
+         WHERE citations_json != '[]' AND citations_json != ''
+           AND NOT EXISTS (SELECT 1 FROM experience_sources LIMIT 1)
+         LIMIT 1`,
+      )
+      .get() !== null;
+  if (!needsBackfill) return;
+
+  const rows = db
+    .query<{ id: string; citations_json: string }, []>(
+      "SELECT id, citations_json FROM experiences WHERE citations_json != '[]' AND citations_json != ''",
+    )
+    .all();
+  if (rows.length === 0) return;
+
+  const insert = db.query(
+    "INSERT OR IGNORE INTO experience_sources (experience_id, source_ref) VALUES (?, ?)",
+  );
+  const tx = db.transaction(() => {
+    for (const row of rows) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(row.citations_json);
+      } catch {
+        continue;
+      }
+      if (!Array.isArray(parsed)) continue;
+      for (const item of parsed) {
+        if (typeof item !== "string") continue;
+        const ref = canonicalSourceRef(item);
+        if (ref.length > 0) insert.run(row.id, ref);
+      }
+    }
+  });
+  tx();
 }
 
 export interface OpenMemtRegistryOptions {
@@ -215,7 +279,14 @@ export function openMemtRegistryDb(
     db.exec("PRAGMA journal_mode = WAL");
     db.exec("PRAGMA foreign_keys = ON");
     db.exec("PRAGMA synchronous = NORMAL");
+    db.exec("PRAGMA temp_store = MEMORY");
+    db.exec("PRAGMA cache_size = -16000");
+    db.exec("PRAGMA wal_autocheckpoint = 2000");
+    if (dbPath !== ":memory:" && dbPath !== "") {
+      db.exec("PRAGMA mmap_size = 67108864");
+    }
     db.exec(REGISTRY_SCHEMA_SQL);
+    backfillExperienceSourcesIfNeeded(db);
     enforceFileMode0600(dbPath);
     return db;
   } catch (error) {
