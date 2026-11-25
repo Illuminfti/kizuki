@@ -1,4 +1,4 @@
-import { personStatements } from "../collectors/person";
+import { typedKindStatements } from "../collectors/typed-kinds";
 import { createRedactor } from "../../serving/redact";
 import type { Database } from "bun:sqlite";
 import {
@@ -12,10 +12,10 @@ import { authorizedClaimSql } from "../policy-sql";
 import { knownPermittedAndUnheldSql, knownValidSql } from "../known/cutoff";
 import { recordWorldDependencies } from "../dependencies";
 import { eligibleWorldClaim, type Eligible } from "./eligible";
-import { claimVisibleSql, WorldProjectionBudgetError, type ReadFrame } from "./frame";
+import { claimVisibleSql, MAX_CARD_RELATIONS, WorldProjectionBudgetError, type ReadFrame } from "./frame";
 import { group, type Cluster, type Grouper } from "./group";
 
-const MAX_RELATIONS = 128;
+const MAX_RELATIONS = MAX_CARD_RELATIONS;
 const DISCOVERY_SCAN = 256;
 /** The existing discovery wire grammar's label bound per match. */
 const MAX_MATCH_LABELS = 256;
@@ -112,19 +112,20 @@ const claimsAboutMembers: Collector = (frame, cluster) => {
   const rows = cluster.members.flatMap((handle) => {
     const anchor = anchorOf(frame.ctx.db, handle);
     if (anchor === null) return [];
-    return candidates
-      .all(
-        ...claim.bindings,
-        ...time.bindings,
-        anchor.kind,
-        anchor.id,
-        rawSubjectNamespace(anchor),
-        anchor.kind,
-        anchor.id,
-        rawSubjectNamespace(anchor),
-        ...admitted.bindings,
-        labels,
-      );
+    const found = candidates.all(
+      ...claim.bindings,
+      ...time.bindings,
+      anchor.kind,
+      anchor.id,
+      rawSubjectNamespace(anchor),
+      anchor.kind,
+      anchor.id,
+      rawSubjectNamespace(anchor),
+      ...admitted.bindings,
+      labels,
+    );
+    if (found.length > MAX_RELATIONS) frame.collectorOverflow = true;
+    return found;
   });
   // Apply the shared claim limit only after merging member candidates. Member
   // order cannot hide the anchor or change which remaining claims are served.
@@ -135,7 +136,7 @@ const claimsAboutMembers: Collector = (frame, cluster) => {
 /** Ordered. A workstream adds one line under its marker. */
 export const COLLECTORS: readonly Collector[] = [
   claimsAboutMembers,
-  personStatements,
+  typedKindStatements,
   // slot: ident
 ];
 
@@ -159,12 +160,21 @@ export function collectCard(
 ): CardCollection | null {
   const anchor = anchorOf(frame.ctx.db, cluster.anchor);
   if (anchor === null) return null;
-  const candidates = [
-    ...new Set(collectors.flatMap((collect) => collect(frame, cluster, kind))),
-  ];
+  const previousOverflow = frame.collectorOverflow;
+  frame.collectorOverflow = false;
+  let candidates: string[];
+  let collectorOverflow = false;
+  try {
+    candidates = [
+      ...new Set(collectors.flatMap((collect) => collect(frame, cluster, kind))),
+    ];
+    collectorOverflow = frame.collectorOverflow;
+  } finally {
+    frame.collectorOverflow = previousOverflow;
+  }
   frame.stats.rowsExamined += candidates.length;
   const items: Eligible[] = [];
-  let overflow = false;
+  let overflow = collectorOverflow;
   for (const claimId of candidates) {
     const item = verifyClaim(frame, claimId);
     if (item === null) continue;

@@ -75,10 +75,10 @@ export type { EnvelopeV2 } from "../serving/types";
 export { PACKET_V2_SCHEMA } from "../serving/v2/context-packet";
 export type { ContextPacketArgsV2, ContextPacketDataV2, PacketContentV2 } from "../serving/v2/context-packet";
 
-export { inspectSourceCoverage, readSourceCoverage } from "./coverage";
+export { inspectSourceCoverage, inspectWorldKindCoverage, readSourceCoverage, readWorldKindCoverage } from "./coverage";
 export { verifyWorldCopy } from "./verify";
 export type { WorldIntegrityReport } from "./verify";
-export type { SourceCoverageReport } from "./coverage";
+export type { SourceCoverageReport, WorldKindCoverageEntry, WorldKindCoverageReport } from "./coverage";
 export type { ScanCoverage, PassCoverage } from "../contracts/source-coverage";
 
 export * from "../contracts/attention";

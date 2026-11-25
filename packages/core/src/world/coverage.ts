@@ -292,9 +292,9 @@ export function readWorldKindCoverage(ctx: ServeContext): WorldKindCoverageRepor
           LIMIT ${KIND_COVERAGE_SCAN_LIMIT + 1}`,
       )
     : null;
-  const assertionCountQuery = hasWorldTables
-    ? db.query<{ n: number }, (string | number)[]>(
-        `SELECT count(DISTINCT c.claim_id) AS n
+  const assertionQuery = hasWorldTables
+    ? db.query<{ claim_id: string }, (string | number)[]>(
+        `SELECT DISTINCT c.claim_id
            FROM semantic_bindings b
            CROSS JOIN claim_v2_semantics c
              ON c.subject_kind=b.raw_kind AND c.subject_id=b.raw_id
@@ -304,19 +304,22 @@ export function readWorldKindCoverage(ctx: ServeContext): WorldKindCoverageRepor
             AND c.discriminator='assertion'
             AND base.status='live'
             AND ${claimFilter!.sql}
-            AND ${admittedFilter!.sql}`,
+            AND ${admittedFilter!.sql}
+          ORDER BY c.claim_id
+          LIMIT ${KIND_COVERAGE_SCAN_LIMIT + 1}`,
       )
     : null;
 
   const kinds: WorldKindCoverageEntry[] = registryKinds.map((spec) => {
     const population_enabled = spec.population.some((path) => path !== "extraction" || spec.offeredToProducer);
     const verifiedHandles = new Set<string>();
+    const verifiedClaims = new Set<string>();
     const sources = new Set<string>();
     let truncated = false;
+    const budget = { bytes: 0 };
     if (classificationQuery !== null && claimFilter !== null && admittedFilter !== null) {
       const rows = classificationQuery.all(spec.vocabularyId, ...claimFilter.bindings, ...admittedFilter.bindings);
       if (rows.length > KIND_COVERAGE_SCAN_LIMIT) truncated = true;
-      const budget = { bytes: 0 };
       for (const row of rows.slice(0, KIND_COVERAGE_SCAN_LIMIT)) {
         try {
           const item = eligibleWorldClaim(ctx, row.claim_id, { kind: "all" }, budget);
@@ -330,6 +333,7 @@ export function readWorldKindCoverage(ctx: ServeContext): WorldKindCoverageRepor
           )
             continue;
           verifiedHandles.add(row.handle_id);
+          verifiedClaims.add(row.claim_id);
           for (const support of item.supports) {
             if (support.row.support_origin === "source") sources.add(support.row.source_key);
           }
@@ -342,10 +346,31 @@ export function readWorldKindCoverage(ctx: ServeContext): WorldKindCoverageRepor
         }
       }
     }
-    const live_assertions =
-      verifiedHandles.size > 0 && assertionCountQuery !== null && claimFilter !== null && admittedFilter !== null
-        ? assertionCountQuery.get(JSON.stringify([...verifiedHandles]), ...claimFilter.bindings, ...admittedFilter.bindings)?.n ?? 0
-        : 0;
+    let live_assertions = 0;
+    if (verifiedHandles.size > 0 && assertionQuery !== null && claimFilter !== null && admittedFilter !== null) {
+      const assertionRows = assertionQuery.all(
+        JSON.stringify([...verifiedHandles]),
+        ...claimFilter.bindings,
+        ...admittedFilter.bindings,
+      );
+      if (assertionRows.length > KIND_COVERAGE_SCAN_LIMIT) truncated = true;
+      for (const row of assertionRows.slice(0, KIND_COVERAGE_SCAN_LIMIT)) {
+        if (verifiedClaims.has(row.claim_id)) {
+          live_assertions += 1;
+          continue;
+        }
+        try {
+          const item = eligibleWorldClaim(ctx, row.claim_id, { kind: "all" }, budget);
+          if (item !== null) live_assertions += 1;
+        } catch (error) {
+          if (error instanceof WorldProjectionBudgetError) {
+            truncated = true;
+            break;
+          }
+          throw error;
+        }
+      }
+    }
     const state = verifiedHandles.size > 0 || population_enabled ? "active" : "dark";
     const gaps: SourceCoverageGap[] = [
       ...new Set<SourceCoverageGap>([

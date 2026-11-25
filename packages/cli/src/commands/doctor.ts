@@ -1,5 +1,10 @@
 import type { Database } from "bun:sqlite";
-import { inspectSourceCoverage, type SourceCoverageReport } from "@kizuki/core/world";
+import {
+  inspectSourceCoverage,
+  inspectWorldKindCoverage,
+  type SourceCoverageReport,
+  type WorldKindCoverageReport,
+} from "@kizuki/core/world";
 import { sourceCoverageLines } from "../source-coverage";
 import { closeHostConnector } from "../connections";
 import { existsSync, readFileSync } from "node:fs";
@@ -126,6 +131,7 @@ interface DoctorReport {
   ledger: ReturnType<typeof inspectLedgerHealth>;
   runtime: SqliteRuntime;
   canon_recovery: ReturnType<typeof inspectCanonRecoveryDetail>;
+  world_kinds: WorldKindCoverageReport;
   memt: DoctorMemtReport;
   ok: boolean;
 }
@@ -615,6 +621,7 @@ async function collect(
     problems.length === 0;
 
   const { live: liveClaims, filed: filedClaims } = readDoctorSampleClaims(ctx.db);
+  const worldKinds = inspectWorldKindCoverage(ctx.db);
   const memt = await inspectMemtForDoctor(vaultPath, env);
 
   return {
@@ -638,6 +645,7 @@ async function collect(
     ledger,
     runtime: readSqliteRuntime(ctx.db),
     canon_recovery: canonRecovery,
+    world_kinds: worldKinds,
     memt,
     ok: ok && ledger.ok,
   };
@@ -667,6 +675,9 @@ function printHuman(io: CliIo, report: DoctorReport): void {
     `derived search=${derived.search.rebuilt_at ?? "never"} docs=${derived.search.doc_count} watermark=${clean(derived.search.ledger_watermark ?? "none")} graph=${derived.graph.rebuilt_at ?? "never"} docs=${derived.graph.doc_count} watermark=${clean(derived.graph.ledger_watermark ?? "none")}`,
   );
   io.out(report.serve.stores.vector_layer.detail);
+  io.out(
+    `world kinds active=${report.world_kinds.active_kinds}/${report.world_kinds.total_kinds} populated=${report.world_kinds.populated_kinds}/${report.world_kinds.total_kinds} offered=${report.world_kinds.offered_kinds}/${report.world_kinds.total_kinds}`,
+  );
   io.out(report.memt.detail);
   const stores = report.serve.stores;
   if (stores.skipped_pages_total > 0) {

@@ -6,12 +6,18 @@
  */
 import { expect, setDefaultTimeout, test } from "bun:test";
 import { OWNER, OWNER_AGENT_GRANT, addAgent, authenticate } from "../../src/agents";
+import { insertClaim } from "../../src/claims/store";
+import { EXTRACT_RESPONSE_V2_SCHEMA, type ProduceInputV2, type RichClaimDraft } from "../../src/contracts/producer-v2";
 import { createWorldRegistry, type WorldVocabularyModule } from "../../src/contracts/world-kinds";
 import { WORLD_REGISTRY, WORLD_VOCABULARY_MODULES, withWorldRegistry } from "../../src/contracts/world-vocabulary";
 import { openLedger } from "../../src/ledger/db";
-import { serveWorldView } from "@kizuki/core/world";
+import { accept } from "../../src/ledger/ledger";
+import { prepareWorldDrafts } from "../../src/producer/world-drafts";
+import { serveCorrect } from "../../src/serving/correct";
+import { serveWorldView, type FrameworkCard, type PersonCard, type QuestionCard, type SituationCardV2 } from "@kizuki/core/world";
 import type { ServeContext } from "../../src/serving/types";
-import { collectReadFrames, withWorldPipeline } from "@kizuki/core/testing";
+import { collectReadFrames } from "@kizuki/core/testing";
+import { ulid } from "../../src/util/ulid";
 import {
   ALL_WORLD_KINDS,
   TYPED_EXTRACTION_KINDS,
@@ -21,21 +27,20 @@ import {
 import {
   SINGLE_VALUED_WORLD_PREDICATES,
   conflictEnricher,
-  independenceEnricher,
   kindQualificationEnricher,
   procedureEnricher,
-  summarizeKindQualification,
 } from "../../src/world/enrich";
 import { inspectWorldKindCoverage, readWorldKindCoverage } from "../../src/world/coverage";
 import { WorldHistoryUnavailable } from "../../src/world/known/cutoff";
-import { collectCard } from "../../src/world/pipeline/collect";
-import { enrich } from "../../src/world/pipeline/enrich";
-import { newReadFrame } from "../../src/world/pipeline/frame";
-import { readWorldMatches } from "../../src/world/pipeline/read";
+import { COLLECTORS, collectCard } from "../../src/world/pipeline/collect";
+import { ENRICHERS } from "../../src/world/pipeline/enrichers";
+import { MAX_CARD_RELATIONS, newReadFrame } from "../../src/world/pipeline/frame";
+import { readWorldCard, readWorldMatches } from "../../src/world/pipeline/read";
 import { worldNamespace } from "../../src/world/references";
+import { validEvent } from "../fixtures";
 import { artifactFixture } from "../helpers/artifact-fixture";
 import { testClock } from "../helpers/clock";
-import { worldSeed } from "../helpers/world-seed";
+import { enrollSource, worldSeed } from "../helpers/world-seed";
 import { cardFixture } from "./card-fixture";
 
 setDefaultTimeout(120_000);
@@ -192,16 +197,6 @@ test("asserted-time bounds are inclusive and denied labels cannot consume candid
   }
 });
 
-/** Test registry with all extraction-populated world kinds enabled for producer population checks. */
-function withAllKindsOffered(): ReturnType<typeof createWorldRegistry> {
-  const modules: WorldVocabularyModule[] = WORLD_VOCABULARY_MODULES.map((module) =>
-    module.kind !== null && module.kind.population.includes("extraction")
-      ? { ...module, kind: { ...module.kind, offeredToProducer: true } }
-      : module,
-  );
-  return createWorldRegistry(modules);
-}
-
 const EXTRACTION_NINE_SEEDS: readonly {
   readonly kind: Exclude<(typeof ALL_WORLD_KINDS)[number], "artifact_version">;
   readonly subject: string;
@@ -218,9 +213,98 @@ const EXTRACTION_NINE_SEEDS: readonly {
   { kind: "decision", subject: "decision:ten-d1", label: "Adopt strict verification" },
 ];
 
-test("all ten world kinds are registered and coverage reports dark vs active transitions accurately", async () => {
+/** Populate one extraction kind through the real v2 draft grounding and writer seam on WORLD_REGISTRY. */
+async function admitExtractedKind(
+  db: ReturnType<typeof openLedger>,
+  sourceKey: string,
+  item: (typeof EXTRACTION_NINE_SEEDS)[number],
+): Promise<string[]> {
+  const spec = WORLD_REGISTRY.kind(item.kind)!;
+  const text = `${item.label} is evidenced in this synthetic extraction record.`;
+  const stored = accept(
+    db,
+    {
+      ...validEvent(),
+      connector_id: "world.extract-fixture",
+      source_record_id: ulid(),
+      text,
+      sensitivity_hint: "public",
+      subjects: [{ subject_id: item.subject, role: "about" }],
+    },
+    { source: { source_key: sourceKey, expected_revision: 1 } },
+  );
+  if (stored.status !== "stored") throw new Error(`event store failed for ${item.kind}`);
+  const event = stored.event;
+  const acceptedAt = db.query<{ accepted_at: string }, [string]>("SELECT accepted_at FROM events WHERE event_id=?").get(event.event_id)!.accepted_at;
+  const span = { event_id: event.event_id, start_utf16: 0, end_utf16: item.label.length };
+  const ref = { kind: "supplied" as const, id: item.subject, namespace: { connector_id: "world.extract-fixture", source_key: sourceKey } };
+  const input: ProduceInputV2 = {
+    events: [{ event_id: event.event_id, text }],
+    supplied_refs: [{ id: "s1", anchors: [span] }],
+    vocabulary_refs: [spec.vocabularyId],
+    predicates: [
+      { id: "world.kind", object_kinds: ["vocabulary"] },
+      { id: spec.labelPredicate, object_kinds: ["literal"] },
+    ],
+    budget: { max_calls: 1, max_input_tokens: 1000, max_output_tokens: 1000 },
+  };
+  const claims: RichClaimDraft[] = [
+    {
+      id: "c-kind",
+      subject: { kind: "supplied", id: "s1" },
+      predicate: "world.kind",
+      object: { kind: "vocabulary", ref: { kind: "vocabulary", id: spec.vocabularyId } },
+      perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] },
+      context: [],
+      polarity: "positive",
+      body: `${item.label} is a ${item.kind}.`,
+      valid_from: null,
+      valid_to: null,
+      temporal_basis: "unknown",
+      confidence: 0.9,
+      sensitivity: "public",
+      anchors: [span],
+    },
+    {
+      id: "c-label",
+      subject: { kind: "supplied", id: "s1" },
+      predicate: spec.labelPredicate,
+      object: { kind: "literal", value: item.label },
+      perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] },
+      context: [],
+      polarity: "positive",
+      body: item.label,
+      valid_from: null,
+      valid_to: null,
+      temporal_basis: "unknown",
+      confidence: 0.9,
+      sensitivity: "public",
+      anchors: [span],
+    },
+  ];
+  const prepared = prepareWorldDrafts({ schema: EXTRACT_RESPONSE_V2_SCHEMA, mentions: [], claims }, input, {
+    events: [{ ...event, accepted_at: acceptedAt, source_key: sourceKey, subjects: [ref] }],
+    supplied_refs: new Map([["s1", ref]]),
+    model_ref: "synthetic-extract-v2",
+  });
+  expect(prepared.dropped).toEqual([]);
+  expect(prepared.drafts).toHaveLength(2);
+  const claimIds: string[] = [];
+  for (const draft of prepared.drafts) {
+    const res = await insertClaim({ db }, draft);
+    if (res.outcome !== "stored" && res.outcome !== "duplicate") throw new Error(`insertClaim failed for ${item.kind}`);
+    claimIds.push(res.claim.claim_id);
+  }
+  return claimIds;
+}
+
+test("all ten world kinds populate through the real extraction draft path on WORLD_REGISTRY", async () => {
   expect([...WORLD_REGISTRY.kinds.map((k) => k.id)].sort()).toEqual([...ALL_WORLD_KINDS].sort());
   expect(TYPED_EXTRACTION_KINDS).toHaveLength(7);
+  expect(COLLECTORS).toContain(typedKindStatements);
+  expect(ENRICHERS).toContain(kindQualificationEnricher);
+  expect(ENRICHERS).toContain(conflictEnricher);
+  expect(ENRICHERS).toContain(procedureEnricher);
 
   const db = openLedger(":memory:");
   let artifacts: Awaited<ReturnType<typeof artifactFixture>> | undefined;
@@ -235,31 +319,14 @@ test("all ten world kinds are registered and coverage reports dark vs active tra
       expect(entry.state).toBe("dark");
       expect(entry.gaps).toEqual(["coverage"]);
       expect(entry.classified_handles).toBe(0);
+      expect(entry.live_assertions).toBe(0);
     }
 
-    // With all extraction kinds enabled in an isolated test registry, 10/10 kinds are active even when empty.
-    withWorldRegistry(withAllKindsOffered(), () => {
-      const enabled = inspectWorldKindCoverage(db);
-      expect(enabled.total_kinds).toBe(10);
-      expect(enabled.active_kinds).toBe(10);
-      expect(enabled.offered_kinds).toBe(9);
-      for (const entry of enabled.kinds) {
-        expect(entry.state).toBe("active");
-        expect(entry.gaps).toEqual([]);
-      }
-      const ctx = ownerCtx(db);
-      db.transaction(() => {
-        const ns = worldNamespace(db, OWNER);
-        for (const kind of ALL_WORLD_KINDS) {
-          const page = readWorldMatches(newReadFrame(ctx, ns, { kind: "all" }), kind, "", null, 100);
-          expect(page.coverage).toMatchObject({ status: "complete_for_query", gaps: [] });
-        }
-      }).immediate();
-    });
-
-    // Populating all 10 kinds (9 extraction kinds + connector-captured artifact_version) activates 10/10 kinds.
+    // Populate all 9 extraction kinds through prepareWorldDrafts -> insertClaim on the real WORLD_REGISTRY,
+    // plus connector-captured artifact_version for 10/10 populated and active kinds.
+    const sourceKey = enrollSource(db, "world.extract-fixture", "public");
     for (const item of EXTRACTION_NINE_SEEDS) {
-      await worldSeed(db, { kind: item.kind, subject: item.subject, label: item.label, discover: false });
+      await admitExtractedKind(db, sourceKey, item);
     }
     artifacts = await artifactFixture(db);
     const captured = await artifacts.capture("Synthetic release artifact bytes.");
@@ -293,32 +360,55 @@ test("all ten world kinds are registered and coverage reports dark vs active tra
   }
 });
 
-test("tampered support admissions cannot activate dark typed extraction kinds in coverage", async () => {
+test("tampered support admissions cannot activate dark kinds or inflate live_assertions in coverage", async () => {
   const db = openLedger(":memory:");
   try {
-    for (const kind of ["question", "commitment", "decision", "procedure", "skill", "framework", "person"] as const) {
+    // 1. Tampered world.kind admission cannot classify a handle or activate a dark kind.
+    for (const kind of TYPED_EXTRACTION_KINDS) {
       const seed = await worldSeed(db, {
         kind,
-        subject: `${kind}:tampered`,
+        subject: `${kind}:tampered-kind`,
         label: `Tampered ${kind}`,
         discover: false,
       });
       db.query("UPDATE claim_v2_support SET admission=json_set(admission,'$.semantic.polarity','negative') WHERE claim_id=?")
         .run(seed.claims[0]!);
     }
-    const report = readWorldKindCoverage(ownerCtx(db));
+    const darkReport = readWorldKindCoverage(ownerCtx(db));
     for (const kind of TYPED_EXTRACTION_KINDS) {
-      const entry = report.kinds.find((item) => item.kind === kind)!;
+      const entry = darkReport.kinds.find((item) => item.kind === kind)!;
       expect(entry.classified_handles).toBe(0);
+      expect(entry.live_assertions).toBe(0);
       expect(entry.state).toBe("dark");
       expect(entry.gaps).toEqual(["coverage"]);
     }
+
+    // 2. Tampered non-classification assertion on a validly classified handle must be excluded from live_assertions.
+    const validSeed = await worldSeed(db, {
+      kind: "question",
+      subject: "question:valid-handle",
+      label: "Valid handle question",
+      predicates: [
+        { predicate: "question.status", object: { kind: "vocabulary", ref: { kind: "vocabulary", id: "question/open" } } },
+      ],
+      discover: false,
+    });
+    const before = readWorldKindCoverage(ownerCtx(db)).kinds.find((item) => item.kind === "question")!;
+    expect(before.classified_handles).toBe(1);
+    expect(before.live_assertions).toBe(3);
+
+    db.query("UPDATE claim_v2_support SET admission=json_set(admission,'$.semantic.polarity','negative') WHERE claim_id=?")
+      .run(validSeed.claims[2]!);
+    const after = readWorldKindCoverage(ownerCtx(db)).kinds.find((item) => item.kind === "question")!;
+    expect(after.classified_handles).toBe(1);
+    expect(after.live_assertions).toBe(2);
+    expect(after.state).toBe("active");
   } finally {
     db.close();
   }
 });
 
-test("typed kind collectors gather authorized context claims across all 7 kinds and enforce history coverage", async () => {
+test("registered COLLECTORS gather context claims across all 7 kinds, enforce history coverage, and report overflow", async () => {
   const f = await cardFixture();
   try {
     const contextKinds = ["question", "procedure", "skill", "framework", "commitment", "decision"] as const;
@@ -347,16 +437,16 @@ test("typed kind collectors gather authorized context claims across all 7 kinds 
       contextClaims.set(kind, linked.stored.claim.claim_id);
     }
 
+    // Collect directly through the production COLLECTORS list (no test-only pipeline override).
     f.db.transaction(() => {
       const ns = worldNamespace(f.db, OWNER);
       for (const kind of TYPED_EXTRACTION_KINDS) {
         const spec = WORLD_REGISTRY.kind(kind)!;
         const handle = handles.get(kind)!;
         const frame = newReadFrame(f.ctx, ns, { kind: "all" });
-        const ids = TYPED_KIND_COLLECTORS[kind](frame, { anchor: handle, members: [handle], resolution: "distinct" }, spec);
-        expect(ids).toContain(contextClaims.get(kind)!);
-        expect(typedKindStatements(frame, { anchor: handle, members: [handle], resolution: "distinct" }, spec)).toEqual(ids);
-        // Mismatched kind returns empty.
+        const collected = collectCard(frame, { anchor: handle, members: [handle], resolution: "distinct" }, spec, COLLECTORS)!;
+        expect(collected.items.map((item) => item.claimId)).toContain(contextClaims.get(kind)!);
+        expect(collected.overflow).toBe(false);
         expect(TYPED_KIND_COLLECTORS[kind](frame, { anchor: handle, members: [handle], resolution: "distinct" }, WORLD_REGISTRY.kind("concept")!)).toEqual([]);
       }
     }).immediate();
@@ -370,7 +460,7 @@ test("typed kind collectors gather authorized context claims across all 7 kinds 
     f.db.transaction(() => {
       const ns = worldNamespace(f.db, OWNER);
       const missingFrame = newReadFrame(f.ctx, ns, { kind: "all" }, undefined, { kind: "recorded", at: "2030-01-01T00:00:00Z", sequence: maxSeq });
-      expect(() => typedKindStatements(missingFrame, { anchor: questionHandle, members: [questionHandle], resolution: "distinct" }, questionSpec))
+      expect(() => collectCard(missingFrame, { anchor: questionHandle, members: [questionHandle], resolution: "distinct" }, questionSpec, COLLECTORS))
         .toThrow(WorldHistoryUnavailable);
     }).immediate();
 
@@ -378,65 +468,134 @@ test("typed kind collectors gather authorized context claims across all 7 kinds 
     f.db.transaction(() => {
       const ns = worldNamespace(f.db, OWNER);
       const baselineFrame = newReadFrame(f.ctx, ns, { kind: "all" }, undefined, { kind: "recorded", at: "2030-01-01T00:00:00Z", sequence: maxSeq });
-      const baselineIds = typedKindStatements(baselineFrame, { anchor: questionHandle, members: [questionHandle], resolution: "distinct" }, questionSpec);
-      expect(baselineIds).toContain(questionClaimId);
+      const baselineCollected = collectCard(baselineFrame, { anchor: questionHandle, members: [questionHandle], resolution: "distinct" }, questionSpec, COLLECTORS)!;
+      expect(baselineCollected.items.map((item) => item.claimId)).toContain(questionClaimId);
       expect(baselineFrame.historyBaseline).toBe(true);
+    }).immediate();
+
+    // Overflow bound: >MAX_CARD_RELATIONS context claims triggers collectorOverflow -> collectCard overflow,
+    // even when one candidate fails support verification so fewer than MAX_CARD_RELATIONS items remain eligible.
+    const overflowSubject = "question:ctx-overflow";
+    await f.write("world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/question" } }, { subject: overflowSubject });
+    await f.write("question.text", { kind: "literal", value: "Overflow question" }, { subject: overflowSubject });
+    const contextIds: string[] = [];
+    for (let i = 0; i < MAX_CARD_RELATIONS + 2; i += 1) {
+      const res = await f.write("concept.example", { kind: "literal", value: `Context claim ${i}` }, {
+        subject: "topic:bayes", context: [overflowSubject],
+      });
+      if (res.stored.outcome !== "stored" && res.stored.outcome !== "duplicate") throw new Error("overflow context claim failed");
+      contextIds.push(res.stored.claim.claim_id);
+    }
+    // Tamper 5 context claims so eligible items stay < MAX_CARD_RELATIONS while SQL still hits MAX_CARD_RELATIONS + 1.
+    for (const badId of contextIds.slice(0, 5)) {
+      f.db.query("UPDATE claim_v2_support SET admission=json_set(admission,'$.semantic.polarity','negative') WHERE claim_id=?").run(badId);
+    }
+    const overflowHandle = f.db.query<{ handle_id: string }, [string]>("SELECT handle_id FROM semantic_bindings WHERE raw_id=?").get(overflowSubject)!.handle_id;
+    f.db.transaction(() => {
+      const ns = worldNamespace(f.db, OWNER);
+      const frame = newReadFrame(f.ctx, ns, { kind: "all" });
+      const collected = collectCard(frame, { anchor: overflowHandle, members: [overflowHandle], resolution: "distinct" }, questionSpec, COLLECTORS)!;
+      expect(collected.overflow).toBe(true);
+      expect(frame.collectorOverflow).toBe(false);
     }).immediate();
   } finally {
     f.dispose();
   }
 });
 
-test("conflict, procedure, and qualification enrichers cover all 7 typed extraction kinds accurately", async () => {
+test("registered ENRICHERS detect overlapping status conflicts, allow non-overlapping status history, and guard person grounding", async () => {
   expect([...SINGLE_VALUED_WORLD_PREDICATES]).toEqual(expect.arrayContaining([
     "concept.definition", "learning.assistance", "question.status", "commitment.status", "decision.status", "framework.lifecycle",
   ]));
 
   const f = await cardFixture();
   try {
-    // 1. Conflicting single-valued statuses across question, commitment, decision, and framework.
-    const conflictCases = [
-      { kind: "question", subject: "question:c1", predicate: "question.status", a: "question/open", b: "question/resolved" },
-      { kind: "commitment", subject: "commitment:c1", predicate: "commitment.status", a: "commitment/open", b: "commitment/dropped" },
-      { kind: "decision", subject: "decision:c1", predicate: "decision.status", a: "decision/decided", b: "decision/reversed" },
-      { kind: "framework", subject: "framework:c1", predicate: "framework.lifecycle", a: "framework/adopted", b: "framework/rejected" },
-    ] as const;
+    // 1. Overlapping positive statuses conflict through the real readWorldCard / ENRICHERS pipeline.
+    await f.write("world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/question" } }, { subject: "question:c1" });
+    await f.write("question.text", { kind: "literal", value: "Competing question" }, { subject: "question:c1" });
+    await f.write("question.status", { kind: "vocabulary", ref: { kind: "vocabulary", id: "question/open" } }, { subject: "question:c1" });
+    await f.write("question.status", { kind: "vocabulary", ref: { kind: "vocabulary", id: "question/resolved" } }, { subject: "question:c1" });
 
-    for (const item of conflictCases) {
-      const spec = WORLD_REGISTRY.kind(item.kind)!;
-      await f.write("world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: spec.vocabularyId } }, { subject: item.subject });
-      await f.write(spec.labelPredicate, { kind: "literal", value: `Case ${item.kind}` }, { subject: item.subject });
-      await f.write(item.predicate, { kind: "vocabulary", ref: { kind: "vocabulary", id: item.a } }, { subject: item.subject });
-      await f.write(item.predicate, { kind: "vocabulary", ref: { kind: "vocabulary", id: item.b } }, { subject: item.subject });
+    await f.write("world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/framework" } }, { subject: "framework:c1" });
+    await f.write("framework.label", { kind: "literal", value: "Competing framework" }, { subject: "framework:c1" });
+    await f.write("framework.lifecycle", { kind: "vocabulary", ref: { kind: "vocabulary", id: "framework/adopted" } }, { subject: "framework:c1" });
+    await f.write("framework.lifecycle", { kind: "vocabulary", ref: { kind: "vocabulary", id: "framework/rejected" } }, { subject: "framework:c1" });
 
-      const handle = f.db.query<{ handle_id: string }, [string]>("SELECT handle_id FROM semantic_bindings WHERE raw_id=?").get(item.subject)!.handle_id;
-      f.db.transaction(() => {
-        const ns = worldNamespace(f.db, OWNER);
-        const frame = newReadFrame(f.ctx, ns, { kind: "all" });
-        const collected = collectCard(frame, { anchor: handle, members: [handle], resolution: "distinct" }, spec, [
-          (fr, cl, kd) => withWorldPipeline({ collectors: [typedKindStatements] }, () => {
-            const all = f.db.query<{ claim_id: string }, [string]>(
-              "SELECT claim_id FROM claim_v2_semantics WHERE subject_id=? ORDER BY claim_id",
-            ).all(item.subject).map((row) => row.claim_id);
-            return [...all, ...typedKindStatements(fr, cl, kd)];
-          }),
-        ])!;
-        const body = enrich(frame, collected.items, [conflictEnricher, independenceEnricher, procedureEnricher, kindQualificationEnricher]);
-        const statuses = body.claims.filter((c) => c.relation.predicate === item.predicate);
-        expect(statuses).toHaveLength(2);
-        expect(statuses.every((c) => c.relation.conflict === "present")).toBe(true);
+    const qHandle = f.db.query<{ handle_id: string }, [string]>("SELECT handle_id FROM semantic_bindings WHERE raw_id=?").get("question:c1")!.handle_id;
+    const fHandle = f.db.query<{ handle_id: string }, [string]>("SELECT handle_id FROM semantic_bindings WHERE raw_id=?").get("framework:c1")!.handle_id;
+    f.db.transaction(() => {
+      const ns = worldNamespace(f.db, OWNER);
+      const qCard = readWorldCard(newReadFrame(f.ctx, ns, { kind: "all" }), qHandle, "question") as QuestionCard | null;
+      if (qCard === null || qCard.schema !== "kizuki.question-card/v1") throw new Error("question card missing");
+      expect(qCard.statusEvidence).toHaveLength(2);
+      expect(qCard.statusEvidence.every((r) => r.conflict === "present")).toBe(true);
 
-        const summary = summarizeKindQualification(body);
-        expect(summary).toMatchObject({
-          kind: item.kind,
-          vocabularyId: spec.vocabularyId,
-          qualified: true,
-          conflictCount: 2,
-        });
-      }).immediate();
-    }
+      const fwCard = readWorldCard(newReadFrame(f.ctx, ns, { kind: "all" }), fHandle, "framework") as FrameworkCard | null;
+      if (fwCard === null || fwCard.schema !== "kizuki.framework-card/v1") throw new Error("framework card missing");
+      expect(fwCard.lifecycle).toHaveLength(2);
+      expect(fwCard.lifecycle.every((r) => r.conflict === "present")).toBe(true);
+    }).immediate();
 
-    // 2. Multi-valued person.role stays non-conflicting for distinct positive values, conflicts only on opposite polarity.
+    // 2. Legitimate non-overlapping question.status and commitment.status histories are NOT marked as conflicts.
+    await f.write("world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/question" } }, { subject: "question:hist" });
+    await f.write("question.text", { kind: "literal", value: "Historical question" }, { subject: "question:hist" });
+    await f.write("question.status", { kind: "vocabulary", ref: { kind: "vocabulary", id: "question/open" } }, {
+      subject: "question:hist", from: "2025-01-01T00:00:00Z", until: "2026-01-01T00:00:00Z",
+    });
+    await f.write("question.status", { kind: "vocabulary", ref: { kind: "vocabulary", id: "question/resolved" } }, {
+      subject: "question:hist", from: "2026-01-01T00:00:00Z", until: null,
+    });
+
+    await f.write("world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/situation" } }, { subject: "project:hist-sit" });
+    await f.write("situation.label", { kind: "literal", value: "History situation" }, { subject: "project:hist-sit" });
+    await f.write("world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/commitment" } }, { subject: "commitment:hist" });
+    await f.write("commitment.label", { kind: "literal", value: "Historical commitment" }, { subject: "commitment:hist" });
+    await f.write("situation.has_commitment", { kind: "subject", ref: f.ref("commitment:hist") }, { subject: "project:hist-sit" });
+    await f.write("commitment.status", { kind: "vocabulary", ref: { kind: "vocabulary", id: "commitment/open" } }, {
+      subject: "commitment:hist", from: "2025-01-01T00:00:00Z", until: "2026-01-01T00:00:00Z",
+    });
+    await f.write("commitment.status", { kind: "vocabulary", ref: { kind: "vocabulary", id: "commitment/done" } }, {
+      subject: "commitment:hist", from: "2026-01-01T00:00:00Z", until: null,
+    });
+
+    const qHistHandle = f.db.query<{ handle_id: string }, [string]>("SELECT handle_id FROM semantic_bindings WHERE raw_id=?").get("question:hist")!.handle_id;
+    const sitHistHandle = f.db.query<{ handle_id: string }, [string]>("SELECT handle_id FROM semantic_bindings WHERE raw_id=?").get("project:hist-sit")!.handle_id;
+    f.db.transaction(() => {
+      const ns = worldNamespace(f.db, OWNER);
+      const qHistCard = readWorldCard(newReadFrame(f.ctx, ns, { kind: "all" }), qHistHandle, "question") as QuestionCard | null;
+      if (qHistCard === null || qHistCard.schema !== "kizuki.question-card/v1") throw new Error("question history card missing");
+      expect(qHistCard.statusEvidence).toHaveLength(2);
+      expect(qHistCard.statusEvidence.map((r) => r.conflict)).toEqual(["none_observed", "none_observed"]);
+
+      const sitCard = readWorldCard(newReadFrame(f.ctx, ns, { kind: "all" }), sitHistHandle, "situation", "kizuki.situation-card/v2") as SituationCardV2 | null;
+      if (sitCard === null || sitCard.schema !== "kizuki.situation-card/v2") throw new Error("situation v2 history card missing");
+      const histStatuses = sitCard.uncertainty.filter((r) => r.predicate === "commitment.status");
+      expect(histStatuses).toHaveLength(2);
+      expect(histStatuses.map((r) => r.conflict)).toEqual(["none_observed", "none_observed"]);
+    }).immediate();
+
+    // 3. Owner correction replacing question.status keeps conflict none_observed.
+    await f.write("world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/question" } }, { subject: "question:corr" });
+    await f.write("question.text", { kind: "literal", value: "Corrected question" }, { subject: "question:corr" });
+    await f.write("question.status", { kind: "vocabulary", ref: { kind: "vocabulary", id: "question/open" } }, { subject: "question:corr" });
+    const qCorrFound = serveWorldView(f.ctx, { operation: "find_questions", label: "Corrected question", valid: { kind: "all" }, knownAt: { kind: "current" } }).data;
+    if (!("result" in qCorrFound) || !("data" in qCorrFound.result) || !("matches" in qCorrFound.result.data)) throw new Error("corrected question missing");
+    const qCorrRef = qCorrFound.result.data.matches[0]!.ref;
+    const qCorrBefore = serveWorldView(f.ctx, { operation: "question", question: qCorrRef, valid: { kind: "all" }, knownAt: { kind: "current" } }).data;
+    if (!("result" in qCorrBefore) || !("data" in qCorrBefore.result) || qCorrBefore.result.data.schema !== "kizuki.question-card/v1") throw new Error("question card missing");
+    await serveCorrect(f.ctx, {
+      statement: "Resolved now.",
+      target: { world_claim: qCorrBefore.result.data.statusEvidence[0]!.claim },
+      mode: "replace_object",
+      object: { kind: "vocabulary", id: "question/resolved" },
+    });
+    const qCorrAfter = serveWorldView(f.ctx, { operation: "question", question: qCorrRef, valid: { kind: "all" }, knownAt: { kind: "current" } }).data;
+    if (!("result" in qCorrAfter) || !("data" in qCorrAfter.result) || qCorrAfter.result.data.schema !== "kizuki.question-card/v1") throw new Error("question card after correction missing");
+    expect(qCorrAfter.result.data.statusEvidence).toHaveLength(1);
+    expect(qCorrAfter.result.data.statusEvidence[0]!.conflict).toBe("none_observed");
+
+    // 4. Multi-valued person.role stays non-conflicting for distinct positive values through real readWorldCard,
+    // and kindQualificationEnricher flags non-supplied person classifications with a coverage gap.
     await f.write("world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/person" } }, { subject: "person:multi" });
     await f.write("person.label", { kind: "literal", value: "Multi Role" }, { subject: "person:multi" });
     await f.write("person.role", { kind: "literal", value: "Reviewer" }, { subject: "person:multi" });
@@ -445,19 +604,23 @@ test("conflict, procedure, and qualification enrichers cover all 7 typed extract
     f.db.transaction(() => {
       const ns = worldNamespace(f.db, OWNER);
       const personFrame = newReadFrame(f.ctx, ns, { kind: "all" });
-      const personCollected = collectCard(personFrame, { anchor: personHandle, members: [personHandle], resolution: "distinct" }, WORLD_REGISTRY.kind("person")!, [
-        () => f.db.query<{ claim_id: string }, [string]>("SELECT claim_id FROM claim_v2_semantics WHERE subject_id=? ORDER BY claim_id").all("person:multi").map((r) => r.claim_id),
-      ])!;
-      const personBody = enrich(personFrame, personCollected.items, [conflictEnricher, independenceEnricher, kindQualificationEnricher]);
-      const roles = personBody.claims.filter((c) => c.relation.predicate === "person.role");
-      expect(roles.map((r) => r.relation.conflict)).toEqual(["none_observed", "none_observed"]);
-      expect(summarizeKindQualification(personBody)).toMatchObject({
-        kind: "person",
-        qualified: true,
-        requiresSuppliedSubject: true,
-        suppliedSubjectValid: true,
-        conflictCount: 0,
+      const personCard = readWorldCard(personFrame, personHandle, "person") as PersonCard | null;
+      if (personCard === null || personCard.schema !== "kizuki.person-card/v1") throw new Error("person card missing");
+      expect(personCard.roles.map((r) => r.conflict)).toEqual(["none_observed", "none_observed"]);
+      expect(personCard.coverage.gaps).not.toContain("coverage");
+
+      // Simulate a restored non-supplied person classification reaching kindQualificationEnricher.
+      const collected = collectCard(personFrame, { anchor: personHandle, members: [personHandle], resolution: "distinct" }, WORLD_REGISTRY.kind("person")!, COLLECTORS)!;
+      const badKind = collected.classification[0]!;
+      const body = kindQualificationEnricher(personFrame, {
+        claims: [{
+          eligible: { ...badKind, semantic: { ...badKind.semantic, subject: { kind: "occurrence", id: "occ-legacy" } } },
+          relation: personCard.roles[0]!,
+        }],
+        gaps: [],
+        summary: null,
       });
+      expect(body.gaps).toEqual(["coverage"]);
     }).immediate();
   } finally {
     f.dispose();

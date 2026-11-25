@@ -9,7 +9,7 @@ import type { Grouper } from "../../src/world/pipeline/group";
 import { canonicalBytes, checkNoninterference, HIDDEN_MUTATIONS, type ReadCase } from "../helpers/noninterference";
 import { worldSeed } from "../helpers/world-seed";
 import { validateConceptCard, type ConceptCard } from "../../src/contracts/concept-card";
-import { TYPED_EXTRACTION_KINDS, typedKindStatements } from "../../src/world/collectors";
+import { TYPED_EXTRACTION_KINDS } from "../../src/world/collectors";
 import { identityGrouper } from "../../src/world/identity";
 import { newReadFrame } from "../../src/world/pipeline/frame";
 import { readWorldMatches } from "../../src/world/pipeline/read";
@@ -264,22 +264,20 @@ test("all 7 typed extraction kinds stay distinct under identity grouping and dis
   }
 });
 
-test("typedKindStatements collector preserves noninterference under hidden mutations", async () => {
+test("registered typedKindStatements collector preserves noninterference under hidden mutations", async () => {
   const leaks = await checkNoninterference({
     mutations: HIDDEN_MUTATIONS.filter((mutation) =>
       ["hidden claim", "hidden source revoke", "hidden identity merge", "hidden purge"].includes(mutation.name)),
     cases: (scene) => [
       {
-        name: "concept with typedKindStatements",
-        run: (ctx) => withWorldPipeline({ collectors: [typedKindStatements] }, () =>
+        name: "concept with registered COLLECTORS",
+        run: (ctx) =>
           serveWorldView(ctx, { operation: "concept", concept: scene.refs.concept, valid: { kind: "all" }, knownAt: { kind: "current" } }),
-        ),
       },
       {
-        name: "situation with typedKindStatements",
-        run: (ctx) => withWorldPipeline({ collectors: [typedKindStatements] }, () =>
+        name: "situation with registered COLLECTORS",
+        run: (ctx) =>
           serveWorldView(ctx, { operation: "situation", situation: scene.refs.situation, valid: { kind: "all" }, knownAt: { kind: "current" } }),
-        ),
       },
     ],
   });

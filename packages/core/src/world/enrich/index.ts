@@ -3,8 +3,4 @@ export { SINGLE_VALUED_WORLD_PREDICATES, conflictEnricher, validOverlap } from "
 export { independenceEnricher } from "./independence";
 export { procedureEnricher } from "./procedure";
 export { summaryEnricher } from "./summary";
-export {
-  kindQualificationEnricher,
-  summarizeKindQualification,
-  type KindQualificationSummary,
-} from "./typed-kinds";
+export { kindQualificationEnricher } from "./typed-kinds";
