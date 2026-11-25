@@ -17,6 +17,7 @@ import {
   setGrant,
   shapeArguments,
 } from "../../src/agents";
+import { recordImmediateAudit } from "../../src/agents/audit";
 
 function accessRows(db: ReturnType<typeof agentsDb>, name: string) {
   return listAudit(db, name, { kind: "access" });
@@ -596,5 +597,56 @@ describe("listAuditPage", () => {
       listAudit(db, "reader-1", { limit: MAX_AUDIT_PAGE + 50, kind: "access" }),
     ).toHaveLength(4);
     db.close();
+  });
+});
+
+describe("recordImmediateAudit", () => {
+  test("persists a complete owner audit row atomically and rolls back on trigger or beforeCommit fault", () => {
+    const db = agentsDb();
+    try {
+      const at = "2026-03-01T12:34:56.789Z";
+      const id = recordImmediateAudit(
+        db,
+        OWNER,
+        "search",
+        { query: "kettle", limit: 10 },
+        [{ id: "page:ada", sensitivity: "public", taint: "clean", authority: null, provenance_count: 1 }],
+        [{ id: "page:secret", reason: "above_ceiling" }],
+        at,
+      );
+      const stored = listAudit(db, "owner", { kind: "access", limit: 5 });
+      expect(stored).toHaveLength(1);
+      expect(stored[0]).toMatchObject({
+        audit_id: id,
+        agent_id: "owner",
+        tool: "search",
+        grant_epoch: null,
+        at,
+        served: [{ id: sha256("page:ada"), sensitivity: "public", taint: "clean", authority: null, provenance_count: 1 }],
+        denied: [{ id: sha256("page:secret"), reason: "above_ceiling" }],
+      });
+      expect(stored[0]?.query_shape["limit"]).toBe(10);
+      expect(stored[0]?.query_shape["query"]).toEqual({ len: 6, sha256: sha256("kettle") });
+
+      expect(() =>
+        recordImmediateAudit(db, OWNER, "search", {}, [], [], at, {
+          beforeCommit: () => {
+            throw new Error("custody_unavailable");
+          },
+        }),
+      ).toThrow("custody_unavailable");
+      expect(listAudit(db, "owner", { kind: "access", limit: 5 })).toHaveLength(1);
+
+      db.exec("CREATE TRIGGER reject_immediate_update BEFORE UPDATE ON agent_audit BEGIN SELECT RAISE(ABORT, 'synthetic update fault'); END");
+      expect(() => recordImmediateAudit(db, OWNER, "search", {}, [], [], at)).toThrow("synthetic update fault");
+      expect(listAudit(db, "owner", { kind: "access", limit: 5 })).toHaveLength(1);
+      db.exec("DROP TRIGGER reject_immediate_update");
+
+      db.exec("CREATE TRIGGER ignore_immediate_update BEFORE UPDATE ON agent_audit BEGIN SELECT RAISE(IGNORE); END");
+      expect(() => recordImmediateAudit(db, OWNER, "search", {}, [], [], at)).toThrow("update was not recorded");
+      expect(listAudit(db, "owner", { kind: "access", limit: 5 })).toHaveLength(1);
+    } finally {
+      db.close();
+    }
   });
 });
