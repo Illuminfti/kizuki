@@ -9,6 +9,11 @@ import type { Grouper } from "../../src/world/pipeline/group";
 import { canonicalBytes, checkNoninterference, HIDDEN_MUTATIONS, type ReadCase } from "../helpers/noninterference";
 import { worldSeed } from "../helpers/world-seed";
 import { validateConceptCard, type ConceptCard } from "../../src/contracts/concept-card";
+import { TYPED_EXTRACTION_KINDS, typedKindStatements } from "../../src/world/collectors";
+import { identityGrouper } from "../../src/world/identity";
+import { newReadFrame } from "../../src/world/pipeline/frame";
+import { readWorldMatches } from "../../src/world/pipeline/read";
+import { worldNamespace } from "../../src/world/references";
 
 setDefaultTimeout(120_000);
 beforeEach(() => setSystemTime(new Date("2030-01-01T00:00:00.000Z")));
@@ -189,4 +194,94 @@ test("group size is bounded after authorization and an oversized visible group r
   } finally {
     db.close();
   }
+});
+
+test("all 7 typed extraction kinds stay distinct under identity grouping and discover cleanly across grants", async () => {
+  const db = openLedger(":memory:");
+  try {
+    const first = await worldSeed(db, { subject: "topic:anchor", label: "Anchor concept", discover: false });
+    const seeded = [
+      { kind: "person", subject: "person:grp-ada", label: "Ada Reviewer", visible: true },
+      { kind: "question", subject: "question:grp-q1", label: "Why calibrate?", visible: true },
+      { kind: "procedure", subject: "procedure:grp-p1", label: "Verify release", visible: true },
+      { kind: "skill", subject: "skill:grp-s1", label: "Verification craft", visible: true },
+      { kind: "framework", subject: "framework:grp-f1", label: "Release checklist", visible: true },
+      { kind: "commitment", subject: "commitment:grp-c1", label: "Ship verification", visible: true },
+      { kind: "decision", subject: "decision:grp-d1", label: "Require proof", visible: true },
+      { kind: "person", subject: "person:grp-hidden", label: "Hidden Ada", visible: false },
+      { kind: "question", subject: "question:grp-hidden", label: "Hidden calibrate?", visible: false },
+      { kind: "procedure", subject: "procedure:grp-hidden", label: "Hidden verify", visible: false },
+      { kind: "skill", subject: "skill:grp-hidden", label: "Hidden craft", visible: false },
+      { kind: "framework", subject: "framework:grp-hidden", label: "Hidden checklist", visible: false },
+      { kind: "commitment", subject: "commitment:grp-hidden", label: "Hidden verification", visible: false },
+      { kind: "decision", subject: "decision:grp-hidden", label: "Hidden proof", visible: false },
+    ] as const;
+
+    for (const item of seeded) {
+      await worldSeed(db, {
+        kind: item.kind,
+        subject: item.subject,
+        label: item.label,
+        floor: item.visible ? "public" : "private",
+        discover: false,
+      });
+    }
+
+    db.transaction(() => {
+      const ns = worldNamespace(db, first.ctx.principal);
+      for (const kind of TYPED_EXTRACTION_KINDS) {
+        const visibleItem = seeded.find((item) => item.kind === kind && item.visible)!;
+        const handle = handleOf(db, visibleItem.subject);
+        const cluster = identityGrouper(newReadFrame(first.ctx, ns, { kind: "all" }), {
+          anchor: handle,
+          members: [handle],
+          resolution: "distinct",
+        });
+        expect(cluster).toEqual({ anchor: handle, members: [handle], resolution: "distinct" });
+      }
+    }).immediate();
+
+    const visibleSubjects = seeded.filter((item) => item.visible).map((item) => item.subject);
+    const agent = addAgent(db, "typed-discovery-reader", {
+      ...OWNER_AGENT_GRANT,
+      ceiling: "public",
+      subjects: visibleSubjects,
+    });
+    const restrictedCtx: ServeContext = { ...first.ctx, principal: authenticate(db, agent.token)! };
+    db.transaction(() => {
+      const restrictedNs = worldNamespace(db, restrictedCtx.principal);
+      for (const kind of TYPED_EXTRACTION_KINDS) {
+        const visibleItem = seeded.find((item) => item.kind === kind && item.visible)!;
+        const allVisible = readWorldMatches(newReadFrame(restrictedCtx, restrictedNs, { kind: "all" }), kind, "", null, 100);
+        expect(allVisible.matches).toHaveLength(1);
+        expect(allVisible.matches[0]!.labels).toEqual([visibleItem.label]);
+        const hiddenQuery = readWorldMatches(newReadFrame(restrictedCtx, restrictedNs, { kind: "all" }), kind, "Hidden", null, 100);
+        expect(hiddenQuery.matches).toEqual([]);
+      }
+    }).immediate();
+  } finally {
+    db.close();
+  }
+});
+
+test("typedKindStatements collector preserves noninterference under hidden mutations", async () => {
+  const leaks = await checkNoninterference({
+    mutations: HIDDEN_MUTATIONS.filter((mutation) =>
+      ["hidden claim", "hidden source revoke", "hidden identity merge", "hidden purge"].includes(mutation.name)),
+    cases: (scene) => [
+      {
+        name: "concept with typedKindStatements",
+        run: (ctx) => withWorldPipeline({ collectors: [typedKindStatements] }, () =>
+          serveWorldView(ctx, { operation: "concept", concept: scene.refs.concept, valid: { kind: "all" }, knownAt: { kind: "current" } }),
+        ),
+      },
+      {
+        name: "situation with typedKindStatements",
+        run: (ctx) => withWorldPipeline({ collectors: [typedKindStatements] }, () =>
+          serveWorldView(ctx, { operation: "situation", situation: scene.refs.situation, valid: { kind: "all" }, knownAt: { kind: "current" } }),
+        ),
+      },
+    ],
+  });
+  expect(leaks).toEqual([]);
 });
