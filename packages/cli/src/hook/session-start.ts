@@ -13,6 +13,7 @@ import {
   readServeEndpoint,
   readServeProcessMarker,
   dispatchServeTool,
+  ServeError,
 } from "@kizuki/core";
 import type { Principal } from "@kizuki/core";
 import { ENVELOPE_V2_SCHEMA, PACKET_V2_SCHEMA } from "@kizuki/core/world";
@@ -216,17 +217,23 @@ async function readInProcess(io: CliIo, options: SessionStartOptions, request: R
     const principal = principalFor(io, ctx.db, options.tokenRef);
     if (principal === null) return "denied" as const;
     const standing = await bearerFor(io, ctx.vaultPath, undefined);
-    const envelope = await dispatchServeTool(
-      {
-        db: ctx.db,
-        vaultPath: ctx.vaultPath,
-        principal,
-        ...(standing === null ? {} : { servingSecrets: [standing] }),
-        ...(ctx.retrievalUnavailable ? { retrievalUnavailable: ctx.retrievalUnavailable } : {}),
-      },
-      "context_packet", request, { response_contract: ENVELOPE_V2_SCHEMA },
-    );
-    return usableContext(envelope.data);
+    try {
+      const envelope = await dispatchServeTool(
+        {
+          db: ctx.db,
+          vaultPath: ctx.vaultPath,
+          principal,
+          ...(standing === null ? {} : { servingSecrets: [standing] }),
+          ...(ctx.retrievalUnavailable ? { retrievalUnavailable: ctx.retrievalUnavailable } : {}),
+        },
+        "context_packet", request, { response_contract: ENVELOPE_V2_SCHEMA },
+      );
+      return usableContext(envelope.data);
+    } catch (error) {
+      // A budget below the packet's mandatory header leaves no room for context; the header size varies per run.
+      if (error instanceof ServeError && error.code === "invalid_arguments") return null;
+      throw error;
+    }
   }, { retrieval: "none" });
   if (context === "denied") return { skip: "denied" };
   return context === null ? { skip: "empty" } : outputFor(options.harness, context);
