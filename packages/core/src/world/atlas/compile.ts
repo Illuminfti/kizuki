@@ -3,6 +3,7 @@ import { coverage as validCoverage, type Coverage, type ViewGap, type Relation }
 import { projectedRelations } from "../slice/providers";
 import type { ClaimsOp, ViewToken, WorldFrame, WorldObjectRef, WorldOpData, WorldRecord, WorldWhen } from "../ops/types";
 import type { WorldEvidenceSource } from "../ops/evidence-types";
+import { WorldProjectionBudgetError } from "../pipeline/frame";
 
 export interface AtlasQuery { readonly panel: AtlasPanelName; readonly focus: { readonly operation: AtlasObjectOperation; readonly ref: WorldObjectRef; readonly card?: "kizuki.situation-card/v2" } | null; readonly baselineView: ViewToken | null }
 type PanelName = Exclude<AtlasPanelName, "home">;
@@ -33,7 +34,14 @@ export function compileAtlas(frame: WorldFrame, query: AtlasQuery, when: WorldWh
   };
   const body = (input: WorldRecord): { data: WorldOpData | null; reason: AtlasPanel["reason"]; coverage: Coverage } => {
     if (!has(String(input.operation))) return { data: null, reason: "not_landed", coverage: cov(when, ["coverage"]) };
-    const result = read(input);
+    // A child read is its own savepoint. One that spends the shared allowance
+    // costs its panel, never the panels already composed.
+    let result: ReturnType<typeof read>;
+    try { result = read(input); }
+    catch (error) {
+      if (!(error instanceof WorldProjectionBudgetError)) throw error;
+      return { data: null, reason: "budget", coverage: cov(when, ["coverage"]) };
+    }
     if ("status" in result) return { data: null, reason: null, coverage: cov(when) };
     const value = result.result;
     if (value.status === "unavailable") return { data: null, reason: value.reason, coverage: cov(when, ["coverage"]) };
@@ -50,6 +58,8 @@ export function compileAtlas(frame: WorldFrame, query: AtlasQuery, when: WorldWh
     if (data.matches.length > 4 || data.cursor !== null) gaps.add("traversal_limit");
     for (const match of data.matches.slice(0, 4)) {
       const card = body({ operation, [operation]: match.ref, ...(operation === "situation" ? { card: "kizuki.situation-card/v2" } : {}) });
+      // Cards already read stay served; the cut is stated as a traversal limit.
+      if (card.reason === "budget") { gaps.add("traversal_limit"); break; }
       card.coverage.gaps.forEach(gap => gaps.add(gap));
       if (card.reason) return panel(name, cov(when, [...gaps, "coverage"]), [], card.reason);
       if (!card.data) continue;
@@ -88,7 +98,12 @@ export function compileAtlas(frame: WorldFrame, query: AtlasQuery, when: WorldWh
     const target = frame.registry.find(op => op.name === focus.operation) as ClaimsOp | undefined;
     if (!target?.readObject) return panel(name, cov(when, ["coverage"]), [], "not_landed");
     const of = { operation: focus.operation, [nodeKey(focus.operation)]: focus.ref, ...(focus.card ? { card: focus.card } : {}) };
-    const result = read({ operation: "diff", of, priorView: baselineView }, true);
+    let result: ReturnType<typeof read>;
+    try { result = read({ operation: "diff", of, priorView: baselineView }, true); }
+    catch (error) {
+      if (!(error instanceof WorldProjectionBudgetError)) throw error;
+      return panel(name, cov(when, ["coverage"]), [], "budget");
+    }
     if ("status" in result || result.result.status === "new_view_required") return panel(name, cov(when, ["coverage"]), [], "baseline_unusable");
     const value = result.result;
     if (value.status === "unavailable") return panel(name, cov(when, ["coverage"]), [], value.reason);
@@ -125,9 +140,14 @@ export function compileAtlas(frame: WorldFrame, query: AtlasQuery, when: WorldWh
     const concepts = browse(name, "concept", true), situations = browse(name, "situation", true);
     const gaps = new Set([...concepts.coverage.gaps, ...situations.coverage.gaps]);
     if (concepts.entries.length + situations.entries.length > 4) gaps.add("traversal_limit");
-    return panel(name, cov(when, gaps), [...concepts.entries, ...situations.entries].slice(0, 4), concepts.reason ?? situations.reason);
+    const entries = [...concepts.entries, ...situations.entries].slice(0, 4), reason = concepts.reason ?? situations.reason;
+    // One unavailable half does not withhold the other half's stale cards.
+    if (reason && entries.length) gaps.add("coverage");
+    return panel(name, cov(when, gaps), entries, entries.length ? null : reason);
   };
   const panels = (query.panel === "home" ? ATLAS_PROVIDER_SLOTS : [query.panel]).map(one);
+  // Nothing but spent allowance to show: the request itself is over budget.
+  if (panels.every(one => one.reason === "budget")) throw new WorldProjectionBudgetError();
   const coverage = cov(when, panels.flatMap(one => one.coverage.gaps));
   return { data: { schema: ATLAS_SCHEMA, panel: query.panel, panels, coverage }, quoted };
 }
