@@ -1,3 +1,6 @@
+// Compiled workers enter the same executable. Load the private worker bootstrap before command dispatch.
+import "@kizuki/retrieval-pg/worker-entry";
+
 export interface CliIo {
   env: Record<string, string | undefined>;
   vaultOverride: string | null;
@@ -456,7 +459,7 @@ const doctorCommand: Command = lazyCommand(
 const serveCommand: Command = lazyCommand(
   {
     name: "serve",
-    usage: "serve [--once] [--no-http] [--port N] [--json] [--install] [--uninstall] | serve status [--json] | serve stop | serve run <rail> [--json] | serve run sync --canon-only [--json] | serve retry-skipped [--json] | serve replay-empty --plan FILE --plan-sha256 SHA256 [--json] | serve backfill-source --plan FILE --plan-sha256 SHA256 [--json]",
+    usage: "serve [--once] [--no-http] [--port N] [--json] [--install] [--uninstall] | serve status [--json] | serve health [--json] | serve stop | serve run <rail> [--json] | serve run sync --canon-only [--json] | serve retry-skipped [--json] | serve replay-empty --plan FILE --plan-sha256 SHA256 [--json] | serve backfill-source --plan FILE --plan-sha256 SHA256 [--json]",
     summary: "run the always-on loop, or install it as a user service",
     schema: {
       options: ["--port", "--crash-after", "--plan", "--plan-sha256"],

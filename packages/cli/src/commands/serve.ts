@@ -17,6 +17,8 @@ import {
   SourceBackfillError,
   PRODUCER_V2_CONTRACT,
   ServeStopError,
+  OWNER,
+  serveHealth,
   runRail,
   runServeDaemon,
   serveExecHint,
@@ -26,10 +28,11 @@ import {
 } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
 import { LedgerMigrationRequiredError, withReadVault, withVault } from "../context";
+import { liveReadDaemon } from "./daemon-read";
 import { jsonEnvelope } from "../output";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 import { serveSupervisorHost } from "../service-host";
-import { embeddingConfigured } from "../retrieval-runtime";
+import { embeddingConfigured, openConfiguredRetrieval } from "../retrieval-runtime";
 import { configuredModelBinding, createServeRuntime, inspectModelBinding } from "../serve-runtime";
 import { runServiceCustodyBroker, startServiceCustody, ServiceCustodyError, type ServiceCustodyHandle } from "@kizuki/core/internal";
 import { untilLedgerFree } from "../startup-wait";
@@ -51,7 +54,7 @@ export const SERVE_SCHEMA = {
 export const serveCommand: Command = {
   name: "serve",
   usage:
-    "serve [--once] [--no-http] [--port N] [--json] [--install] [--uninstall] | serve status [--json] | serve stop | serve run <rail> [--json] | serve run sync --canon-only [--json] | serve retry-skipped [--json] | serve replay-empty --plan FILE --plan-sha256 SHA256 [--json] | serve backfill-source --plan FILE --plan-sha256 SHA256 [--json]",
+    "serve [--once] [--no-http] [--port N] [--json] [--install] [--uninstall] | serve status [--json] | serve health [--json] | serve stop | serve run <rail> [--json] | serve run sync --canon-only [--json] | serve retry-skipped [--json] | serve replay-empty --plan FILE --plan-sha256 SHA256 [--json] | serve backfill-source --plan FILE --plan-sha256 SHA256 [--json]",
   summary: "run the always-on loop, or install it as a user service",
   schema: SERVE_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
@@ -116,6 +119,21 @@ export const serveCommand: Command = {
         // failure exits 1 and the start limit bounds any real loop.
         return mode === "--service-custody" ? serviceStartupExit(error.reason) : 1;
       }
+    }
+    if (verb === "health") {
+      if (parsed.positionals.length !== 1 || parsed.options.size !== 0 || [...parsed.flags].some(flag => flag !== "--json"))
+        throw new UsageError("serve health [--json]");
+      const remote = liveReadDaemon(io);
+      const envelope = await withReadVault(
+        remote ? { ...io, vaultOverride: remote.vaultPath } : io,
+        async ctx => remote ? remote.health() : serveHealth({ db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER }),
+        { retrieval: "none", audit: remote === undefined },
+      );
+      const data = envelope.data;
+      if (!data) throw new Error("health snapshot unavailable");
+      if (parsed.flags.has("--json")) io.out(jsonEnvelope("serve", "ok", envelope));
+      else io.out(`events=${data.events} servable_pages=${data.pages.servable} live_claims=${data.live_claims}`);
+      return 0;
     }
     // Stop is a file control request, so it must not acquire SQLite's writer.
     if (verb === "stop") {
@@ -256,6 +274,14 @@ export const serveCommand: Command = {
       if (verb !== undefined) throw new UsageError(this.usage);
 
       const crashAfter = parsed.options.get("--crash-after");
+      let hydration: Promise<void> | undefined;
+      let startupFailure: unknown;
+      const retrieval = daemon ? await openConfiguredRetrieval(ctx.vaultPath, undefined, {
+        backgroundStartup: ready => {
+          hydration = ready;
+          void ready.catch(error => { startupFailure = error; stop.abort(); });
+        },
+      }) : ctx.retrieval;
       const result = await runServeDaemon(ctx.db, ctx.vaultPath, {
         once: parsed.flags.has("--once"),
         http: !parsed.flags.has("--no-http"),
@@ -266,9 +292,15 @@ export const serveCommand: Command = {
         process: thisProcess(),
         ...(daemon ? { signal: stop.signal, onStarted: () => { started = true; } } : {}),
         log: line => io.err(line),
-        acquireRuntime: ({ signal }) => createServeRuntime({ ...ctx, env: io.env, err: io.err, configurationErrorMode: "disable-model", signal }),
-        ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }),
-      });
+        acquireRuntime: async ({ signal }) => {
+          await hydration;
+          signal.throwIfAborted();
+          return createServeRuntime({ ...ctx, ...(retrieval === undefined ? {} : { retrieval }),
+            env: io.env, err: io.err, configurationErrorMode: "disable-model", signal });
+        },
+        ...(retrieval === undefined ? {} : { retrieval }),
+      }).finally(async () => { if (daemon) await retrieval?.close(); });
+      if (startupFailure !== undefined) throw startupFailure;
       completed = true;
       if (parsed.flags.has("--json")) {
         io.out(
@@ -289,7 +321,7 @@ export const serveCommand: Command = {
       }
       if (result.http !== null) await result.http.stop();
       return 0;
-    }, { retrieval: canonOnly || replayEmpty || sourceBackfill || verb === "status" || verb === "retry-skipped" || parsed.flags.has("--install") || parsed.flags.has("--uninstall") ? "none" : "required",
+    }, { retrieval: daemon || canonOnly || replayEmpty || sourceBackfill || verb === "status" || verb === "retry-skipped" || parsed.flags.has("--install") || parsed.flags.has("--uninstall") ? "none" : "required",
       ...(daemon ? { nonblockingSeal: true } : {}),
     });
     // The long-running loop outwaits a held ledger; every other verb reports it.

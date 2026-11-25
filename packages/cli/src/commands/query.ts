@@ -2,10 +2,11 @@ import type { SearchHit } from "@kizuki/core";
 import { OWNER, retrievalDocId, serveSearch } from "@kizuki/core";
 import { ENVELOPE_V2_SCHEMA } from "@kizuki/core/world";
 import { UsageError, parseArguments, requirePositional } from "../args";
-import { withReadVault, withVault } from "../context";
+import { withReadVault, withVault, type ReadVaultContext, type VaultContext } from "../context";
 import { indexFreshness } from "../derived";
 import { clean, jsonEnvelope } from "../output";
 import { RESPONSE_CONTRACT_BOUND, RESPONSE_CONTRACT_OPTION, cliResultV2, contractFailure, responseContract, serveV2 } from "../response-contract";
+import { liveReadDaemon } from "./daemon-read";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 
 const SCOPES = ["canon", "ledger", "all"] as const;
@@ -58,29 +59,28 @@ export const queryCommand: Command = {
     const fullText = parsed.flags.has("--full-text");
     const contract = responseContract(parsed.options);
 
-    // The scoped envelope issues its principal reference, which is a ledger write.
-    if (contract !== undefined) {
-      return withVault(io, async (ctx) => {
-        // An unsupported selector goes straight to Core's audited refusal,
-        // even when the derived index is behind the ledger.
-        const freshness = contract === ENVELOPE_V2_SCHEMA
-          ? indexFreshness(ctx.db, ctx.vaultPath)
-          : undefined;
-        if (freshness !== undefined && !freshness.fresh && !allowDegraded) {
-          io.err(
-            `error: search index is stale (${freshness.degraded.join(", ")}); run a sync/import or pass --degraded`,
-          );
-          return 1;
-        }
-        const envelope = await serveV2(
-          {
-            db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER,
-            ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }), ...(ctx.retrievalUnavailable ? { retrievalUnavailable: ctx.retrievalUnavailable } : {}),
-          },
-          "search",
-          { query: text, scope: rawScope, limit, ...(fullText ? { full_text: true } : {}) },
-          contract,
-        );
+    const request = { query: text, scope: rawScope as SearchScope, limit, ...(fullText ? { full_text: true } : {}) };
+    const daemon = liveReadDaemon(io);
+
+    const read = async (ctx: ReadVaultContext | VaultContext): Promise<number> => {
+      // Unsupported selectors go through Core's audited refusal even when the index is stale.
+      const freshness = contract === undefined || contract === ENVELOPE_V2_SCHEMA
+        ? indexFreshness(ctx.db, ctx.vaultPath)
+        : undefined;
+      if (freshness !== undefined && !freshness.fresh && !allowDegraded) {
+        io.err(`error: search index is stale (${freshness.degraded.join(", ")}); run a sync/import or pass --degraded`);
+        return 1;
+      }
+      const serve = {
+        db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER,
+        ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }),
+        ...(ctx.retrievalUnavailable ? { retrievalUnavailable: ctx.retrievalUnavailable } : {}),
+      };
+      if (contract !== undefined) {
+        const envelope = daemon === undefined
+          ? await serveV2(serve, "search", request, contract)
+          : await daemon.searchV2(request, contract);
+        if ("assertCurrent" in ctx) ctx.assertCurrent();
         const served = (envelope.data as { degraded?: string[] } | null)?.degraded ?? [];
         const degraded = [...new Set([...(freshness?.degraded ?? []), ...served])];
         if (degraded.length > 0) io.err(`degraded=${degraded.join(",")}`);
@@ -92,22 +92,9 @@ export const queryCommand: Command = {
         for (const chunk of envelope.canon) io.out(`page ${chunk.sensitivity} ${clean(chunk.title)} ${clean(chunk.excerpt)}`);
         for (const chunk of envelope.quoted) io.out(`event-version-ref:${chunk.eventVersion.token} ${chunk.occurred.kind === "known" ? chunk.occurred.from : "unknown time"} ${clean(chunk.text)}`);
         return 0;
-      }, { retrieval: "optional" }).catch((error: unknown) => contractFailure(io, "query", parsed.flags.has("--json"), error));
-    }
-
-    return withReadVault(io, async (ctx) => {
-      const freshness = indexFreshness(ctx.db, ctx.vaultPath);
-      if (!freshness.fresh && !allowDegraded) {
-        io.err(
-          `error: search index is stale (${freshness.degraded.join(", ")}); run a sync/import or pass --degraded`,
-        );
-        return 1;
       }
 
-      const envelope = await serveSearch({
-        db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER,
-        ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }), ...(ctx.retrievalUnavailable ? { retrievalUnavailable: ctx.retrievalUnavailable } : {}),
-      }, { query: text, scope: rawScope as SearchScope, limit, ...(fullText ? { full_text: true } : {}) });
+      const envelope = daemon === undefined ? await serveSearch(serve, request) : await daemon.search(request);
       const hits: (SearchHit & { truncated?: true })[] = [
         ...envelope.canon.map((chunk, index): SearchHit => ({
           doc_id: retrievalDocId("page", chunk.page_id), scope: "canon", title: chunk.title,
@@ -125,10 +112,10 @@ export const queryCommand: Command = {
           coverage: envelope.data?.coverage?.[chunk.event_id] ?? 1,
         })),
       ];
-      ctx.assertCurrent();
+      if ("assertCurrent" in ctx) ctx.assertCurrent();
       const withheld = envelope.denied.reduce((sum, item) => sum + item.count, 0);
       const hasWithheld = envelope.has_withheld === true;
-      const degraded = [...new Set([...freshness.degraded, ...(envelope.data?.degraded ?? [])])];
+      const degraded = [...new Set([...(freshness?.degraded ?? []), ...(envelope.data?.degraded ?? [])])];
       if (withheld > 0) io.err(`withheld=${withheld} (excluded by access policy)`);
       if (degraded.length > 0) io.err(`degraded=${degraded.join(",")}`);
 
@@ -148,6 +135,16 @@ export const queryCommand: Command = {
       }
       for (const hit of hits) io.out(formatHit(hit));
       return 0;
-    }, { audit: true, retrieval: "bound" });
+    };
+
+    const readIo = daemon === undefined ? io : { ...io, vaultOverride: daemon.vaultPath };
+    if (contract === undefined) {
+      return withReadVault(readIo, read, { audit: daemon === undefined, retrieval: daemon === undefined ? "bound" : "none" });
+    }
+    // Scoped references need a writer. The daemon owns that write when it serves the query.
+    const scoped = daemon === undefined
+      ? withVault(io, read, { retrieval: "optional" })
+      : withReadVault(readIo, read, { retrieval: "none" });
+    return scoped.catch(error => contractFailure(io, "query", parsed.flags.has("--json"), error));
   },
 };
