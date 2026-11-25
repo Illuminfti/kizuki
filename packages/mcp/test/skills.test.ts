@@ -7,7 +7,7 @@ test("MCP and real HTTP expose read-only knowledge with unchanged tool count", a
   try {
     await f.file(0, "outcome.self_report");
     const client = await connectClient(f.ctx, close), listed = await client.listTools();
-    expect(listed.tools).toHaveLength(10);
+    expect(listed.tools).toHaveLength(14);
     expect(listed.tools.map(tool => tool.name)).not.toContain("report_outcome");
     expect(Buffer.byteLength(JSON.stringify(listed))).toBeLessThan(40 * 1024);
     for (const input of [

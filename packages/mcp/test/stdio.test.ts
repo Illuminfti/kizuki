@@ -109,6 +109,10 @@ describe("the stdio process entry", () => {
       "world_view",
       "propose",
       "correct",
+      "memt_status",
+      "memt_recall",
+      "memt_experience",
+      "memt_snapshot",
     ]);
     expect(result.stderr.trim()).toBe(
       "kizuki-mcp ready principal=owner tools=10",

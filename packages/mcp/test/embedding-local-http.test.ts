@@ -109,6 +109,7 @@ describe("kizuki-mcp with a configured local embedding server", () => {
     const reply = await call(vault, [
       { name: "search", arguments: { query: "teapot", scope: "all" } },
       { name: "context_packet", arguments: { query: "teapot", purpose: "recall", budget_tokens: 1000 } },
+      { name: "context_packet", arguments: { query: "samovar", purpose: "recall", budget_tokens: 1000 } },
     ]);
     expect(reply.code).toBe(0);
     const search = answer(reply, 2);
@@ -117,15 +118,19 @@ describe("kizuki-mcp with a configured local embedding server", () => {
     expect(JSON.stringify(search)).toContain("the public kettle is on");
     expect(search?.structuredContent?.schema).toBe("kizuki.envelope/v2");
     expect(search?.structuredContent?.data?.["gaps"]).not.toContain("retrieval_unavailable");
-    const packet = answer(reply, 3);
-    expect(packet?.isError).not.toBe(true);
-    // Packets nominate canon pages only, and this vault serves none: an empty match is not a lost vector lane.
-    expect(packet?.structuredContent?.schema).toBe("kizuki.envelope/v2");
-    const packetData = packet?.structuredContent?.data as { result: { status: string; reasons?: string[] } };
-    expect(["current", "incomplete"]).toContain(packetData.result.status);
-    expect(packetData.result.reasons ?? []).not.toContain("storage");
-    // Each call embedded its query once, on the loopback server and nowhere else.
-    expect(server.requests.filter((request) => request.body.input[0] === "teapot")).toHaveLength(2);
+    for (const id of [3, 4]) {
+      const packet = answer(reply, id);
+      expect(packet?.isError).not.toBe(true);
+      // Packets nominate canon pages only, and this vault serves none: an empty match is not a lost vector lane.
+      expect(packet?.structuredContent?.schema).toBe("kizuki.envelope/v2");
+      const packetData = packet?.structuredContent?.data as { result: { status: string; reasons?: string[] } };
+      expect(["current", "incomplete"]).toContain(packetData.result.status);
+      expect(packetData.result.reasons ?? []).not.toContain("storage");
+    }
+    // Each distinct query embedded once on the loopback server (with the repeated
+    // "teapot" query served from the in-session embedding cache) and nowhere else.
+    expect(server.requests.filter((request) => request.body.input[0] === "teapot")).toHaveLength(1);
+    expect(server.requests.filter((request) => request.body.input[0] === "samovar")).toHaveLength(1);
     expect(reply.stderr).not.toContain("retrieval-unavailable");
   });
 

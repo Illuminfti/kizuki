@@ -271,8 +271,9 @@ async function stdioClient(vault: string, token: string): Promise<ContinuityClie
     const tools = (listed.result as { tools?: { name: string; outputSchema?: ListedSchema }[] } | undefined)?.tools;
     expect(tools?.length).toBeGreaterThan(0);
     for (const tool of tools ?? []) {
-      if (tool.name === "system_health") {
-        expect(tool.outputSchema?.properties?.schema).toEqual({ const: "kizuki.envelope/v1" });
+      if (tool.name.startsWith("memt_")) {
+        expect(tool.outputSchema?.required).toContain("schema");
+        expect(tool.outputSchema?.properties?.schema).toEqual({ type: "string" });
       } else if (tool.name === "world_view") {
         expect(Object.keys(tool.outputSchema?.properties ?? {}).sort()).toEqual(["at", "canon", "data", "principal", "quoted", "schema", "tool"]);
       } else {

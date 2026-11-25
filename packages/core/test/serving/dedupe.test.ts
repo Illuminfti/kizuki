@@ -79,4 +79,45 @@ describe("CanonicalQuoteCollector", () => {
     expect(collector.folded).toBe(1);
     expect(out).toEqual([{ event_id: "01EV2", text: "v2" }]);
   });
+
+  test("preserves distinct source_record_ids with identical text and timestamp when no external message id matches", () => {
+    const collector = new CanonicalQuoteCollector<{ event_id: string; text: string }>();
+    const out: { event_id: string; text: string }[] = [];
+    expect(collector.admit(
+      { event_id: "01EV1", connector_id: "c", kind: "message", occurred_at: "2026-09-01T00:00:00Z", source_record_id: "rec-1", text_hash: "abc", accepted_at: "2026-09-01T00:00:01Z" },
+      { event_id: "01EV1", text: "same" },
+      out,
+      10,
+    )).toBe(true);
+    expect(collector.admit(
+      { event_id: "01EV2", connector_id: "c", kind: "message", occurred_at: "2026-09-01T00:00:00Z", source_record_id: "rec-2", text_hash: "abc", accepted_at: "2026-09-01T00:00:02Z" },
+      { event_id: "01EV2", text: "same" },
+      out,
+      10,
+    )).toBe(true);
+    expect(collector.folded).toBe(0);
+    expect(out).toEqual([
+      { event_id: "01EV1", text: "same" },
+      { event_id: "01EV2", text: "same" },
+    ]);
+  });
+
+  test("falls back to content+timestamp folding only when source_record_id and external message id are absent", () => {
+    const collector = new CanonicalQuoteCollector<{ event_id: string; text: string }>();
+    const out: { event_id: string; text: string }[] = [];
+    expect(collector.admit(
+      { event_id: "01EV1", connector_id: "c", kind: "message", occurred_at: "2026-09-01T00:00:00Z", text_hash: "abc", accepted_at: "2026-09-01T00:00:01Z" },
+      { event_id: "01EV1", text: "dup" },
+      out,
+      10,
+    )).toBe(true);
+    expect(collector.admit(
+      { event_id: "01EV2", connector_id: "c", kind: "message", occurred_at: "2026-09-01T00:00:00Z", text_hash: "abc", accepted_at: "2026-09-01T00:00:02Z" },
+      { event_id: "01EV2", text: "dup" },
+      out,
+      10,
+    )).toBe(false);
+    expect(collector.folded).toBe(1);
+    expect(out).toEqual([{ event_id: "01EV2", text: "dup" }]);
+  });
 });

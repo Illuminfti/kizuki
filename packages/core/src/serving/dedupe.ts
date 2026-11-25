@@ -114,7 +114,11 @@ export function canonicalMessageKeys(source: DeduplicableSource): string[] {
       }
     }
   }
-  if (typeof source.text_hash === "string" && source.text_hash.length > 0) {
+  // Fall back to content+timestamp deduplication only when the capture carries
+  // neither an explicit source_record_id nor an external message identity; two
+  // events with distinct source_record_ids and no shared external message id
+  // are distinct records even if their text and timestamp coincide.
+  if (keys.length === 0 && typeof source.text_hash === "string" && source.text_hash.length > 0) {
     keys.push(`dup:${source.connector_id}\0${source.kind}\0${source.occurred_at}\0${source.text_hash}`);
   }
   if (keys.length === 0) {
