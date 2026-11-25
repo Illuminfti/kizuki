@@ -126,6 +126,53 @@ function checkedArtifact(path: string): BuildInfo {
   return build;
 }
 
+/**
+ * Enforces that a freshly initialized vault's `doctor --json` envelope is healthy
+ * with zero degraded flags, zero warnings, zero problems, and healthy serve/ledger.
+ */
+export function assertCleanDoctorEnvelope(stdout: string, exitCode: number): void {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout) as unknown;
+  } catch {
+    throw new ArtifactProofError("doctor-invalid-json");
+  }
+  if (!isObject(parsed) || parsed.schema !== "kizuki.cli.doctor/v1") {
+    throw new ArtifactProofError("doctor-invalid-schema");
+  }
+  if (exitCode !== 0 || parsed.status !== "ok") {
+    throw new ArtifactProofError("doctor-unhealthy");
+  }
+  if (!Array.isArray(parsed.degraded) || parsed.degraded.length !== 0) {
+    throw new ArtifactProofError("doctor-degraded");
+  }
+  if (!Array.isArray(parsed.warnings) || parsed.warnings.length !== 0) {
+    throw new ArtifactProofError("doctor-warnings");
+  }
+  const data = parsed.data;
+  if (
+    !isObject(data) ||
+    data.ok !== true ||
+    !Array.isArray(data.problems) ||
+    data.problems.length !== 0 ||
+    !isObject(data.ledger) ||
+    data.ledger.ok !== true ||
+    !isObject(data.serve) ||
+    data.serve.ok !== true ||
+    !Array.isArray(data.serve.failures) ||
+    data.serve.failures.length !== 0
+  ) {
+    throw new ArtifactProofError("doctor-unhealthy");
+  }
+}
+
+/** Rejects spurious degraded diagnostics emitted on stderr during fresh-user commands. */
+export function assertNoDegradedDiagnostics(id: string, stderr: string): void {
+  if (/\bdegraded[=:]/.test(stderr)) {
+    throw new ArtifactProofError(`${id}-degraded`);
+  }
+}
+
 function run(
   executable: string,
   cwd: string,
@@ -150,6 +197,8 @@ function run(
   };
   steps.push(step);
   if (result.exitCode !== 0) throw new Error(`${id} exited ${result.exitCode}`);
+  const stderr = new TextDecoder().decode(result.stderr);
+  assertNoDegradedDiagnostics(id, stderr);
   return new TextDecoder().decode(result.stdout);
 }
 
@@ -235,8 +284,12 @@ export async function runArtifactProof(args: ProofArgs): Promise<string> {
       steps.push(step);
       const result = await collectEngineProcess(join(copiedArtifact, binary), command, execution, env, kind === "mcp");
       step.exit_code = result.exit_code;
-      if (kind === "cli") engineObservations.kizuki = parseDoctorObservation(result.stdout, result.exit_code, packageHashes[binary]!);
-      else engineObservations.kizuki_mcp = mcpObservationFromOutput(result.stdout, packageHashes[binary]!);
+      if (kind === "cli") {
+        engineObservations.kizuki = parseDoctorObservation(result.stdout, result.exit_code, packageHashes[binary]!);
+        assertCleanDoctorEnvelope(result.stdout, result.exit_code);
+      } else {
+        engineObservations.kizuki_mcp = mcpObservationFromOutput(result.stdout, packageHashes[binary]!);
+      }
       requireUnchangedPackage();
       step.passed = true;
     }

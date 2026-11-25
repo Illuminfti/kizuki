@@ -109,6 +109,41 @@ export function resolveCompiledCredentials(
   return { names: names.sort(), define };
 }
 
+const UNIX_EPOCH_SECONDS = /^(?:0|[1-9][0-9]{0,12})$/;
+
+/**
+ * Resolves a deterministic build timestamp for reproducible release artifacts.
+ * Precedence: validated SOURCE_DATE_EPOCH, then the exact Git commit timestamp
+ * of the clean source revision, then wall-clock time as a last resort.
+ */
+export function resolveBuildTimestamp(
+  environment: Readonly<Record<string, string | undefined>>,
+  commitEpochSeconds?: string,
+): Date {
+  const raw = environment.SOURCE_DATE_EPOCH;
+  if (raw !== undefined) {
+    if (!UNIX_EPOCH_SECONDS.test(raw)) {
+      throw new Error("SOURCE_DATE_EPOCH must be a non-negative integer Unix timestamp in seconds");
+    }
+    const timestamp = new Date(Number(raw) * 1000);
+    if (Number.isNaN(timestamp.getTime())) {
+      throw new Error("SOURCE_DATE_EPOCH is out of valid date range");
+    }
+    return timestamp;
+  }
+  if (commitEpochSeconds !== undefined) {
+    if (!UNIX_EPOCH_SECONDS.test(commitEpochSeconds)) {
+      throw new Error("build metadata needs a valid source commit timestamp");
+    }
+    const timestamp = new Date(Number(commitEpochSeconds) * 1000);
+    if (Number.isNaN(timestamp.getTime())) {
+      throw new Error("build metadata source commit timestamp is out of range");
+    }
+    return timestamp;
+  }
+  return new Date();
+}
+
 /**
  * What `kizuki version` reports for a release binary. Both values are compiled
  * in, never read from the environment at run time.
@@ -141,8 +176,10 @@ export function packagedQuickStart(input: { version: string; target: ReleaseTarg
     '  mkdir -p "$HOME/.local/bin"',
     '  ln -sf "$PWD/kizuki" "$HOME/.local/bin/kizuki"',
     '  ln -sf "$PWD/kizuki-mcp" "$HOME/.local/bin/kizuki-mcp"',
-    'Ensure "$HOME/.local/bin" is in PATH. Always run serve --install from this real',
-    "version folder rather than a moving symlink; see the upgrade runbook below.",
+    '  export PATH="$HOME/.local/bin:$PATH"',
+    'Add that export to your shell profile (~/.bashrc or ~/.zshrc). Always run',
+    "serve --install from this real version folder rather than a moving symlink;",
+    "see the upgrade runbook below.",
     "",
     "Keep both executables together in their final folder before setup.",
     "Use a graphical desktop with a default web browser. Linux requires",
@@ -266,7 +303,8 @@ if (import.meta.main) {
     }
   }
   requireBuildState();
-  const metadata = buildMetadataDefines(sourceSha, new Date());
+  const commitEpoch = gitText(["show", "-s", "--format=%ct", sourceSha]);
+  const metadata = buildMetadataDefines(sourceSha, resolveBuildTimestamp(process.env, commitEpoch));
   const staging = mkdtempSync(join(dist, ".kizuki-release-"));
 
   const binaries = [

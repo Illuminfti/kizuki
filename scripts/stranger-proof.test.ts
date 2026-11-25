@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseBuildInfo, parseProofArgs, proofEnvironment, requireFixture, runArtifactProof } from "./stranger-proof";
+import { assertCleanDoctorEnvelope, assertNoDegradedDiagnostics, parseBuildInfo, parseProofArgs, proofEnvironment, requireFixture, runArtifactProof } from "./stranger-proof";
 import { writePackageFixture } from "./release-package-fixture";
 import { checksumManifest, CURRENT_PACKAGE_FILES, packageFileLimit } from "./release-artifacts";
 import { nativeReleaseTarget, releaseTarget } from "./release-targets";
@@ -61,6 +61,35 @@ describe("artifact proof", () => {
       passed: false,
       timeout_ms: 0,
     }]);
+  });
+
+  test("assertCleanDoctorEnvelope enforces healthy doctor JSON with zero degraded flags and zero warnings", () => {
+    const healthy = {
+      schema: "kizuki.cli.doctor/v1",
+      status: "ok",
+      degraded: [] as string[],
+      warnings: [] as string[],
+      data: {
+        ok: true,
+        problems: [] as unknown[],
+        ledger: { ok: true },
+        serve: { ok: true, failures: [] as unknown[] },
+      },
+    };
+    expect(() => assertCleanDoctorEnvelope(JSON.stringify(healthy), 0)).not.toThrow();
+    expect(() => assertCleanDoctorEnvelope(JSON.stringify({ ...healthy, degraded: ["index-behind-ledger"] }), 0)).toThrow("doctor-degraded");
+    expect(() => assertCleanDoctorEnvelope(JSON.stringify({ ...healthy, warnings: ["stale"] }), 0)).toThrow("doctor-warnings");
+    expect(() => assertCleanDoctorEnvelope(JSON.stringify({ ...healthy, status: "error" }), 1)).toThrow("doctor-unhealthy");
+    expect(() => assertCleanDoctorEnvelope(JSON.stringify({ ...healthy, data: { ...healthy.data, problems: [{ page: "-", error: "drift" }] } }), 0)).toThrow("doctor-unhealthy");
+    expect(() => assertCleanDoctorEnvelope(JSON.stringify({ ...healthy, data: { ...healthy.data, serve: { ok: false, failures: ["unit masked"] } } }), 0)).toThrow("doctor-unhealthy");
+    expect(() => assertCleanDoctorEnvelope("{invalid", 0)).toThrow("doctor-invalid-json");
+  });
+
+  test("assertNoDegradedDiagnostics rejects spurious degraded stderr flags", () => {
+    expect(() => assertNoDegradedDiagnostics("query", "")).not.toThrow();
+    expect(() => assertNoDegradedDiagnostics("query", "0 hits\n")).not.toThrow();
+    expect(() => assertNoDegradedDiagnostics("restored-query", "degraded=index-behind-ledger\n")).toThrow("restored-query-degraded");
+    expect(() => assertNoDegradedDiagnostics("import", "degraded: derived-index\n")).toThrow("import-degraded");
   });
 
   test("writes a failure receipt for missing or malformed artifacts", async () => {
