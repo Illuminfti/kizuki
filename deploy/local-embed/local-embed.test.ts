@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { OWNER, runRail, serveSearch } from "../../packages/core/src/index";
 import { openVaultDb } from "../../packages/cli/src/context";
@@ -7,6 +8,50 @@ import { openConfiguredRetrieval } from "../../packages/cli/src/retrieval-runtim
 import { createHelpers, fixtureConsent } from "../../packages/cli/test/helpers";
 
 setDefaultTimeout(180_000);
+
+const MODEL_ID = "BAAI/bge-small-en-v1.5";
+
+function hasCachedModelSnapshot(modelId: string): boolean {
+  const hubDir = process.env.HF_HUB_CACHE || join(homedir(), ".cache", "huggingface", "hub");
+  const modelRoot = join(hubDir, `models--${modelId.replaceAll("/", "--")}`);
+  const snapshotsDir = join(modelRoot, "snapshots");
+  if (!existsSync(snapshotsDir)) return false;
+  const refMain = join(modelRoot, "refs", "main");
+  if (existsSync(refMain)) {
+    try {
+      const commit = readFileSync(refMain, "utf8").trim();
+      if (commit.length > 0 && existsSync(join(snapshotsDir, commit))) return true;
+    } catch {
+      // fall through to directory scan
+    }
+  }
+  try {
+    return readdirSync(snapshotsDir).some((entry) => {
+      try {
+        return statSync(join(snapshotsDir, entry)).isDirectory();
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return false;
+  }
+}
+
+function hasLocalEmbedPrereqs(): boolean {
+  if (!hasCachedModelSnapshot(MODEL_ID)) return false;
+  const probe = Bun.spawnSync(
+    [
+      "python3",
+      "-c",
+      "import numpy\ntry:\n import onnxruntime\nexcept Exception:\n import torch\n",
+    ],
+    { stdout: "ignore", stderr: "ignore" },
+  );
+  return probe.exitCode === 0;
+}
+
+const HAS_LOCAL_EMBED = hasLocalEmbedPrereqs();
 
 const helpers = createHelpers();
 let proc: ReturnType<typeof Bun.spawn> | null = null;
@@ -63,6 +108,7 @@ const GOLDEN: ReadonlyArray<{
 ];
 
 beforeAll(async () => {
+  if (!HAS_LOCAL_EMBED) return;
   const script = join(import.meta.dir, "server.py");
   proc = Bun.spawn(
     [
@@ -113,7 +159,9 @@ afterAll(() => {
   helpers.cleanup();
 });
 
-test("real local CPU BAAI/bge-small-en-v1.5 server enables vector layer in doctor, embed-backfill, and zero-keyword-overlap semantic search", async () => {
+test.skipIf(!HAS_LOCAL_EMBED)(
+  "real local CPU BAAI/bge-small-en-v1.5 server enables vector layer in doctor, embed-backfill, and zero-keyword-overlap semantic search",
+  async () => {
   const f = helpers.tempVault();
   const notesDir = join(f.root, "notes");
   mkdirSync(notesDir, { recursive: true });
@@ -204,7 +252,9 @@ prompt_doc = "{title}\\n\\n{text}"
   }
 });
 
-test("local-embed server exposes LRU cache telemetry in /health and serves repeated texts from cache", async () => {
+test.skipIf(!HAS_LOCAL_EMBED)(
+  "local-embed server exposes LRU cache telemetry in /health and serves repeated texts from cache",
+  async () => {
   const healthBefore = (await (await fetch(`http://127.0.0.1:${serverPort}/health`)).json()) as {
     cache_hits: number;
     cache_misses: number;

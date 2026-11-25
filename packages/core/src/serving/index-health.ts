@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import type { Database } from "bun:sqlite";
 import { authorize, sensitivity, denyClassesOf, type Grant } from "../agents";
+import { auditRowChanges } from "../agents/audit";
 import { canonReadGeneration } from "../canon/write-intent";
 import { purgeReadEpoch } from "../derived-holds";
 import { readDerivedMeta } from "../derived-meta";
@@ -45,54 +46,17 @@ registerServingCacheTrimmer(() => {
   canonScopeByDb = new WeakMap();
 });
 
-/** Owner-only cache of table presence keyed by SQLite schema_version. */
-const ownerTableCache = new WeakMap<Database, { schema: number; sql: string | null }>();
-
 /**
- * Owner-only global content version stamp (ignores `agent_audit` writes).
+ * Owner-only global content version stamp (ignores committed `agent_audit` writes).
  * Never used for scoped agents so hidden mutations cannot invalidate agent caches.
  */
 export function ownerDbStamp(db: Database, allowReadTransaction = false): string | null {
   if (!allowReadTransaction && db.inTransaction) return null;
-  const ver = db.query<{ data_version: number; schema_version: number }, []>(
-    "SELECT (SELECT data_version FROM pragma_data_version) AS data_version, (SELECT schema_version FROM pragma_schema_version) AS schema_version",
+  const ver = db.query<{ dv: number; sv: number; tc: number }, []>(
+    "SELECT (SELECT data_version FROM pragma_data_version) AS dv, (SELECT schema_version FROM pragma_schema_version) AS sv, total_changes() AS tc",
   ).get();
-  const schema = ver?.schema_version ?? -1;
-  let cached = ownerTableCache.get(db);
-  if (cached === undefined || cached.schema !== schema) {
-    const parts: string[] = [];
-    if (tableExists(db, "events")) {
-      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) || ':' || COALESCE(SUM(deleted = 1), 0) FROM events) AS ev_agg");
-    }
-    if (tableExists(db, "search_documents")) {
-      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) FROM search_documents WHERE scope='ledger') AS sd_l_agg");
-      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) FROM search_documents) AS sd_agg");
-    }
-    if (tableExists(db, "search_docs")) {
-      parts.push("(SELECT COUNT(*) FROM search_docs WHERE scope='ledger') AS sdocs_l_cnt");
-    }
-    if (tableExists(db, "canon_receipts")) {
-      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) FROM canon_receipts) AS cr_agg");
-    }
-    if (tableExists(db, "event_purges")) {
-      parts.push("(SELECT COUNT(*) FROM event_purges) AS ep_cnt");
-    }
-    if (tableExists(db, "event_classes")) {
-      parts.push("(SELECT COUNT(*) FROM event_classes) AS ec_cnt");
-    }
-    if (tableExists(db, "claims")) {
-      parts.push("(SELECT COUNT(*) || ':' || COALESCE(SUM(status = 'live'), 0) FROM claims) AS cl_agg");
-    }
-    if (tableExists(db, "canon_holds")) {
-      parts.push("(SELECT COUNT(*) FROM canon_holds) AS ch_cnt");
-    }
-    cached = { schema, sql: parts.length === 0 ? null : `SELECT ${parts.join(", ")}` };
-    ownerTableCache.set(db, cached);
-  }
-  const counts = cached.sql === null
-    ? ""
-    : Object.values(db.query<Record<string, number | string>, []>(cached.sql).get() ?? {}).join(":");
-  return `${ver?.data_version ?? 0}:${schema}:${canonReadGeneration(db)}:${sourcePolicyEpoch(db)}:${purgeReadEpoch(db)}:${claimsEpoch(db)}:${counts}`;
+  if (ver === null) return null;
+  return `${ver.dv}:${ver.sv}:${ver.tc - auditRowChanges(db)}:${canonReadGeneration(db)}:${sourcePolicyEpoch(db)}:${purgeReadEpoch(db)}:${claimsEpoch(db)}`;
 }
 
 export function grantCacheKey(ctx: ServeContext, grant: Grant): string {
@@ -164,7 +128,7 @@ export function visibleCanonStamp(
   const cols: string[] = [];
   const binds: string[] = [];
   if (hasReceipts) {
-    cols.push("(SELECT count(*) || ':' || coalesce(max(rowid), 0) || ':' || coalesce(sum(reverted_by IS NOT NULL), 0) || ':' || coalesce(sum(receipt_state = 'erased'), 0) FROM canon_receipts WHERE page_path IN (SELECT value FROM json_each(?))) AS r_agg");
+    cols.push("(SELECT count(*) || ':' || coalesce(max(rowid), 0) || ':' || coalesce(sum(reverted_by IS NOT NULL), 0) || ':' || coalesce(sum(receipt_state = 'erased'), 0) || ':' || coalesce(group_concat(receipt_id || ':' || coalesce(after_hash, '') || ':' || coalesce(reverted_by, '') || ':' || coalesce(receipt_state, '')), '') FROM canon_receipts WHERE page_path IN (SELECT value FROM json_each(?))) AS r_agg");
     binds.push(pathsJson);
   }
   if (hasLineage) {

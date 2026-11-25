@@ -44,7 +44,7 @@ function addEvent(db: ReturnType<typeof openLedger>, id: string): string {
   return res.event.event_id;
 }
 
-function writePage(
+function writeFixturePage(
   vault: string,
   relPath: string,
   id: string,
@@ -97,12 +97,12 @@ test("batched doctorVault and inspectServeDoctor match unbatched derivedPageSkip
     // Corrupt evCorrupt text directly (dropping trigger check not needed: text is mutable).
     db.query("UPDATE events SET text = 'tampered' WHERE event_id = ?").run(evCorrupt);
 
-    const hGood = writePage(vault, "facts/good.md", "fact:good", [evGood]);
-    writePage(vault, "facts/unreceipted.md", "fact:unreceipted", [evUnreceipted]);
-    const hTomb = writePage(vault, "facts/tombstoned.md", "fact:tombstoned", [evTombstoned]);
-    const hCorrupt = writePage(vault, "facts/corrupt.md", "fact:corrupt", [evCorrupt]);
-    writePage(vault, "facts/missing-ev.md", "fact:missing", ["01JMISSING0000000000000000"]);
-    writePage(vault, "facts/archived.md", "fact:archived", [], "archived");
+    const hGood = writeFixturePage(vault, "facts/good.md", "fact:good", [evGood]);
+    writeFixturePage(vault, "facts/unreceipted.md", "fact:unreceipted", [evUnreceipted]);
+    const hTomb = writeFixturePage(vault, "facts/tombstoned.md", "fact:tombstoned", [evTombstoned]);
+    const hCorrupt = writeFixturePage(vault, "facts/corrupt.md", "fact:corrupt", [evCorrupt]);
+    writeFixturePage(vault, "facts/missing-ev.md", "fact:missing", ["01JMISSING0000000000000000"]);
+    writeFixturePage(vault, "facts/archived.md", "fact:archived", [], "archived");
 
     const insertReceipt = db.prepare(
       `INSERT INTO canon_receipts (

@@ -12,6 +12,7 @@ import { placeholders } from "../util/sql";
 import { canonPageRecoveryPending, canonReadGeneration } from "../canon/write-intent";
 import { ceilingSql, requireCeiling, instantPairSql, instantBoundPair } from "../query/sql";
 import { authorize, sensitivity, denyClassesOf } from "../agents";
+import { auditRowChanges } from "../agents/audit";
 import type { DenyReason, Grant, Sensitivity, Servable } from "../agents";
 import type { AuthorityTier } from "../contracts/proposal";
 import { getWorldCanonReceipt } from "../canon/receipts";
@@ -184,8 +185,9 @@ function vaultMemo(vaultPath: string): VaultMemo {
  */
 function receiptStamp(db: Database, pages: readonly CanonPage[]): string {
   const paths = JSON.stringify(pages.map(page => page.relPath));
-  const receipts = db.query<{ n: number; head: number }, [string]>(`
-    SELECT count(*) AS n, coalesce(max(rowid), 0) AS head FROM canon_receipts
+  const receipts = db.query<{ agg: string }, [string]>(`
+    SELECT count(*) || ':' || coalesce(max(rowid), 0) || ':' || coalesce(group_concat(receipt_id || ':' || coalesce(after_hash, '') || ':' || coalesce(reverted_by, '') || ':' || coalesce(receipt_state, '')), '') AS agg
+    FROM canon_receipts
     WHERE page_path IN (SELECT value FROM json_each(?))
   `).get(paths)!;
   const lineage = tableExists(db, "canon_source_survivor_lineage")
@@ -193,7 +195,7 @@ function receiptStamp(db: Database, pages: readonly CanonPage[]): string {
       SELECT count(*) AS n FROM canon_source_survivor_lineage
       WHERE child_receipt_id IN (SELECT receipt_id FROM canon_receipts WHERE page_path IN (SELECT value FROM json_each(?)))
     `).get(paths)!.n : 0;
-  return `${receipts.n}:${receipts.head}:${lineage}`;
+  return `${receipts.agg}:${lineage}`;
 }
 
 /** Durable receipt labels isolate failures in paths the reader cannot see. */
@@ -511,87 +513,18 @@ export function createPageReadAccess(
   };
 }
 
-/** Owner-only cache of table presence for page-decision DB stamping. */
-const ownerPageStampTableCache = new WeakMap<Database, { schema: number; sql: string | null }>();
-
 /**
  * Owner-only comprehensive DB stamp covering all tables read by page/evidence
  * authorization (including typed world-canon support), while ignoring
- * `agent_audit` writes. Never used for scoped agents.
+ * committed `agent_audit` writes on the same handle. Never used for scoped agents.
  */
 function ownerPageDecisionStamp(db: Database): string | null {
   if (db.inTransaction) return null;
-  const ver = db.query<{ data_version: number; schema_version: number }, []>(
-    "SELECT (SELECT data_version FROM pragma_data_version) AS data_version, (SELECT schema_version FROM pragma_schema_version) AS schema_version",
+  const ver = db.query<{ dv: number; sv: number; tc: number }, []>(
+    "SELECT (SELECT data_version FROM pragma_data_version) AS dv, (SELECT schema_version FROM pragma_schema_version) AS sv, total_changes() AS tc",
   ).get();
-  const schema = ver?.schema_version ?? -1;
-  let cached = ownerPageStampTableCache.get(db);
-  if (cached === undefined || cached.schema !== schema) {
-    const parts: string[] = [];
-    if (tableExists(db, "events")) {
-      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) || ':' || COALESCE(SUM(deleted = 1), 0) || ':' || COALESCE(SUM(origin <> 'external'), 0) || ':' || COALESCE(SUM(sensitivity_hint = 'private'), 0) || ':' || COALESCE(SUM(sensitivity_hint = 'personal'), 0) || ':' || COALESCE(SUM(sensitivity_hint IS NULL OR sensitivity_hint NOT IN ('public', 'personal', 'private')), 0) FROM events) AS ev_agg");
-    }
-    if (tableExists(db, "canon_receipts")) {
-      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) || ':' || COALESCE(SUM(reverted_by IS NOT NULL), 0) || ':' || COALESCE(SUM(receipt_state = 'erased'), 0) FROM canon_receipts) AS cr_agg");
-    }
-    if (tableExists(db, "canon_source_survivor_lineage")) {
-      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) FROM canon_source_survivor_lineage) AS sl_cnt");
-    }
-    if (tableExists(db, "canon_holds")) {
-      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) FROM canon_holds) AS ch_cnt");
-    }
-    if (tableExists(db, "canon_write_intents")) {
-      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) FROM canon_write_intents) AS cwi_cnt");
-    }
-    if (tableExists(db, "canon_projection_obligations")) {
-      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) FROM canon_projection_obligations) AS cpo_cnt");
-    }
-    if (tableExists(db, "purge_batches")) {
-      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) FROM purge_batches WHERE state <> 'ready') AS pb_cnt");
-    }
-    if (tableExists(db, "event_purges")) {
-      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(rowid), 0) FROM event_purges) AS ep_cnt");
-    }
-    if (tableExists(db, "event_classes")) {
-      parts.push("(SELECT COUNT(*) || ':' || COALESCE(MAX(event_id), '') FROM event_classes) AS ec_cnt");
-    }
-    if (tableExists(db, "canon_page_classes")) {
-      parts.push("(SELECT COUNT(*) || ':' || COALESCE(SUM(credential), 0) FROM canon_page_classes) AS cpc_cnt");
-    }
-    if (tableExists(db, "source_grants")) {
-      parts.push("(SELECT COALESCE(group_concat(source_key || ':' || revision || ':' || status || ':' || length(policy)), '') FROM source_grants) AS sg_agg");
-    }
-    if (tableExists(db, "source_store_inventory")) {
-      parts.push("(SELECT COALESCE(group_concat(source_key || ':' || COALESCE(erasure_report, '') || ':' || payload_complete), '') FROM source_store_inventory) AS ssi_agg");
-    }
-    if (tableExists(db, "source_event_bindings")) {
-      parts.push("(SELECT COUNT(*) FROM source_event_bindings) AS seb_cnt");
-    }
-    if (tableExists(db, "claims")) {
-      parts.push("(SELECT COUNT(*) || ':' || COALESCE(SUM(status = 'live'), 0) FROM claims) AS cl_agg");
-    }
-    if (tableExists(db, "claim_v2_support")) {
-      parts.push("(SELECT COUNT(*) || ':' || COALESCE(SUM(length(admission)), 0) FROM claim_v2_support) AS c2s_agg");
-    }
-    if (tableExists(db, "claim_v2_support_events")) {
-      parts.push("(SELECT COUNT(*) FROM claim_v2_support_events) AS c2se_cnt");
-    }
-    if (tableExists(db, "claim_v2_semantics")) {
-      parts.push("(SELECT COUNT(*) FROM claim_v2_semantics) AS c2m_cnt");
-    }
-    if (tableExists(db, "semantic_bindings")) {
-      parts.push("(SELECT COUNT(*) FROM semantic_bindings) AS sb_cnt");
-    }
-    if (tableExists(db, "semantic_allocations")) {
-      parts.push("(SELECT COUNT(*) FROM semantic_allocations) AS sa_cnt");
-    }
-    cached = { schema, sql: parts.length === 0 ? null : `SELECT ${parts.join(", ")}` };
-    ownerPageStampTableCache.set(db, cached);
-  }
-  const counts = cached.sql === null
-    ? ""
-    : Object.values(db.query<Record<string, number | string>, []>(cached.sql).get() ?? {}).join(":");
-  return `${ver?.data_version ?? 0}:${schema}:${canonReadGeneration(db)}:${sourcePolicyEpoch(db)}:${purgeReadEpoch(db)}:${claimsEpoch(db)}:${counts}`;
+  if (ver === null) return null;
+  return `${ver.dv}:${ver.sv}:${ver.tc - auditRowChanges(db)}:${canonReadGeneration(db)}:${sourcePolicyEpoch(db)}:${purgeReadEpoch(db)}:${claimsEpoch(db)}`;
 }
 
 function ownerDecisionCacheKey(
