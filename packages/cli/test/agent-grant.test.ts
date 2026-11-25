@@ -163,3 +163,24 @@ test("a grant may name a subject id with spaces, as an importer mapping writes i
     "--operation-id", "helper-subject-2", "--json"), 2);
   expect(refused.error?.code).toBe("invalid_grant");
 });
+
+test("agent list reads cleanly while a concurrent writer holds a WAL transaction and grant rejects non-object JSON", () => {
+  const f = setup();
+  const { Database } = require("bun:sqlite") as typeof import("bun:sqlite");
+  const writer = new Database(join(f.vault, ".kizuki", "kizuki.db"));
+  writer.exec("PRAGMA busy_timeout=0; BEGIN IMMEDIATE");
+  try {
+    const listed = json(f.cli("agent", "list", "--json"), 0);
+    expect(listed.data.agents).toHaveLength(1);
+    expect(listed.data.agents[0].name).toBe("helper");
+  } finally {
+    writer.close();
+  }
+  for (const [index, bad] of [[], null, 42, "string"].entries()) {
+    const refused = json(
+      f.cli("agent", "grant", "helper", "--grant", f.write(`non-object-${index}.json`, bad), "--operation-id", `non-obj-${index}`, "--json"),
+      2,
+    );
+    expect(refused.error?.code).toBe("invalid_grant");
+  }
+});

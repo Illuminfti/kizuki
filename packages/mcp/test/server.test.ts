@@ -7,7 +7,10 @@ import { enrollSource } from "../../core/test/helpers/world-seed";
 import { validEvent } from "../../core/test/fixtures";
 import type { CanonChunk, RetrievalPort, ServeContext } from "@kizuki/core";
 import { listClaims } from "@kizuki/core";
-import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import type { MemtEngine } from "@kizuki/memt";
+import { createServer } from "../src/server";
 import { recordedPage } from "../../core/test/helpers/recorded-page";
 import { call, connectClient, envelopeOf, errorOf, pageIds, resolvedCanon, captured, claimId } from "./client";
 import type { ToolCallResult } from "./client";
@@ -513,5 +516,72 @@ describe("the stdio MCP server over a real client", () => {
     expect(text).not.toContain("cause");
     expect(text).not.toContain("kettle is on");
     expect(errorOf(result).error).toBe("invalid_arguments");
+  });
+
+  test("concurrent tools/list and mixed core + MemT calls complete cleanly", async () => {
+    const running = live();
+    const client = await connect(running.agent("reader-personal"));
+    const [listA, listB, searchRes, healthRes, packetRes, memtRes] = await Promise.all([
+      client.listTools(),
+      client.listTools(),
+      call(client, "search", { query: "kettle" }),
+      call(client, "system_health", {}),
+      call(client, "context_packet", { purpose: "recall", query: "kettle", budget_tokens: 600 }),
+      call(client, "memt_status", {}),
+    ]);
+    expect(listA.tools.map((t) => t.name)).toEqual(listB.tools.map((t) => t.name));
+    expect(searchRes.isError).toBeUndefined();
+    expect(healthRes.isError).toBeUndefined();
+    expect(packetRes.isError).toBeUndefined();
+    expect(memtRes.isError).toBeUndefined();
+    expect(envelopeOf(searchRes)["schema"]).toBe("kizuki.envelope/v2");
+    expect(envelopeOf(healthRes)["schema"]).toBe("kizuki.envelope/v2");
+    expect(envelopeOf(packetRes)["schema"]).toBe("kizuki.envelope/v2");
+  });
+
+  test("transient MemT errors degrade gracefully on context_packet/system_health and map SQLITE_BUSY to busy on memt tools", async () => {
+    const running = live();
+    const busyError = Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY" });
+    const failingMemt = {
+      isGpuOnline: false,
+      status: async () => { throw busyError; },
+      experiences: {
+        countExperiences: () => { throw busyError; },
+        searchExperiences: () => { throw busyError; },
+      },
+      snapshots: {
+        listSnapshots: () => { throw busyError; },
+      },
+      close: async () => {},
+    } as unknown as MemtEngine;
+
+    const server = createServer(running.agent("reader-personal"), { memtEngine: failingMemt });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "memt-degrade-test", version: "0" });
+    open.push(async () => {
+      await client.close();
+      await server.close();
+    });
+    await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);
+
+    const packet = await call(client, "context_packet", { purpose: "recall", query: "kettle", budget_tokens: 600 });
+    expect(packet.isError).toBeUndefined();
+    expect(envelopeOf(packet)["schema"]).toBe("kizuki.envelope/v2");
+
+    const health = await call(client, "system_health", {});
+    expect(health.isError).toBeUndefined();
+    const healthData = envelopeOf(health)["data"] as { memt: { status: string; mode: string } };
+    expect(healthData.memt.status).toBe("unavailable");
+
+    const status = await call(client, "memt_status", {});
+    expect(status.isError).toBe(true);
+    const refusal = JSON.parse(status.content[0]?.text ?? "{}") as {
+      error: string;
+      message: string;
+      retry_after_seconds: number | null;
+    };
+    expect(refusal.error).toBe("busy");
+    expect(refusal.retry_after_seconds).toBe(1);
+    expect(refusal.message).not.toContain("database is locked");
   });
 });

@@ -9,15 +9,33 @@ import type { Database } from "bun:sqlite";
 import { accept, addAgent, getClaim, OWNER_AGENT_GRANT } from "../../src/index";
 import { MAX_HTTP_BODY_BYTES } from "../../src/serve/request-body";
 
-async function withHttp(run: (post: (body: string | Uint8Array, tool?: string, token?: string) => Promise<Response>, db: Database) => Promise<void>): Promise<void> {
+async function withHttp(
+  run: (
+    post: (
+      body: string | Uint8Array | null,
+      tool?: string,
+      token?: string,
+      opts?: { method?: string; path?: string; auth?: boolean },
+    ) => Promise<Response>,
+    db: Database,
+    vaultPath: string,
+  ) => Promise<void>,
+): Promise<void> {
   const vaultPath = mkdtempSync(join(tmpdir(), "kizuki-http-hostile-"));
   initVault(vaultPath);
   const db = openLedger(join(vaultPath, ".kizuki/kizuki.db"));
   const server = startServeHttp({ db, vaultPath, token: "synthetic-http-token" });
   try {
-    await run((body, tool = "system_health", token = "synthetic-http-token") => fetch(`${server.url}/v1/${tool}`, {
-      method: "POST", headers: { authorization: `Bearer ${token}` }, body: typeof body === "string" ? body : new Uint8Array(body),
-    }), db);
+    await run((body, tool = "system_health", token = "synthetic-http-token", opts) => {
+      const method = opts?.method ?? "POST";
+      const path = opts?.path ?? `/v1/${tool}`;
+      const headers: Record<string, string> = opts?.auth === false ? {} : { authorization: `Bearer ${token}` };
+      return fetch(`${server.url}${path}`, {
+        method,
+        headers,
+        ...(body === null ? {} : { body: typeof body === "string" ? body : new Uint8Array(body) }),
+      });
+    }, db, vaultPath);
   } finally {
     await server.stop();
     db.close();
@@ -113,5 +131,57 @@ test("HTTP refuses deep JSON but ignores structural punctuation inside strings",
   await withHttp(async post => {
     expect((await post('{"padding":' + '['.repeat(65) + '0' + ']'.repeat(65) + '}')).status).toBe(400);
     expect((await post(JSON.stringify({ padding: '[{"brackets":"\\"}]'.repeat(100) }))).status).toBe(200);
+  });
+});
+
+test("HTTP handles concurrent mixed loopback requests across owner and scoped agent cleanly", async () => {
+  const { worldFixture } = await import("../serving/world-fixture");
+  await withHttp(async (post, db) => {
+    await worldFixture(db);
+    const agent = addAgent(db, "concurrent-http-reader", { ...OWNER_AGENT_GRANT, rate_limit_per_minute: 120 });
+    const responses = await Promise.all([
+      post(null, undefined, undefined, { method: "GET", path: "/health", auth: false }),
+      post(null, undefined, undefined, { method: "GET", path: "/v1/health", auth: false }),
+      post(null, undefined, undefined, { method: "GET", path: "/v1/health" }),
+      post(null, undefined, agent.token, { method: "GET", path: "/v1/health" }),
+      ...Array.from({ length: 4 }, () => post("{}", "system_health")),
+      ...Array.from({ length: 4 }, () => post(JSON.stringify({ query: "Bayesian" }), "search", agent.token)),
+      ...Array.from({ length: 4 }, () =>
+        post(
+          JSON.stringify({ operation: "find_concepts", label: "Bayesian", valid: { kind: "all" }, knownAt: { kind: "current" } }),
+          "world_view",
+          agent.token,
+        ),
+      ),
+    ]);
+    for (const response of responses) {
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as { ok: boolean };
+      expect(body.ok).toBe(true);
+    }
+  });
+});
+
+test("HTTP emits Retry-After header on 429 rate-limited and 503 busy refusals", async () => {
+  const { Database } = await import("bun:sqlite");
+  await withHttp(async (post, db, vaultPath) => {
+    const slow = addAgent(db, "rate-limited-http-agent", { ...OWNER_AGENT_GRANT, rate_limit_per_minute: 1 });
+    const first = await post(JSON.stringify({ query: "hello" }), "search", slow.token);
+    expect(first.status).toBe(200);
+    const limited = await post(JSON.stringify({ query: "hello" }), "search", slow.token);
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers.get("retry-after"))).toBeGreaterThanOrEqual(1);
+    expect(await limited.json()).toMatchObject({ ok: false, error: { code: "rate_limited", retryable: false } });
+
+    const locker = new Database(join(vaultPath, ".kizuki", "kizuki.db"));
+    locker.exec("PRAGMA busy_timeout=0; BEGIN EXCLUSIVE");
+    try {
+      const busy = await post("{}", "system_health");
+      expect(busy.status).toBe(503);
+      expect(busy.headers.get("retry-after")).toBe("1");
+      expect(await busy.json()).toMatchObject({ ok: false, error: { code: "busy", retryable: true, retry_after_seconds: 1 } });
+    } finally {
+      locker.close();
+    }
   });
 });
