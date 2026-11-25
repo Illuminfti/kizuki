@@ -26,11 +26,16 @@ function api() {
   if (!((process.platform === "linux" && process.arch === "x64") || (process.platform === "darwin" && process.arch === "arm64")) || process.geteuid === undefined) fail("unsupported");
   try { return native ??= loadOwnedDirectoryNative(); } catch { fail("native_unavailable"); }
 }
+const DOT_BYTES = Buffer.from(".\0");
 function nameBytes(name: string): Buffer {
-  const bytes = Buffer.from(name);
-  if (!bytes.length || bytes.length > 255 || bytes.includes(0) || name.includes("/") || name.includes("\\") ||
-      name === "." || name === ".." || bytes.toString("utf8") !== name) fail("invalid_path");
-  return Buffer.concat([bytes, Buffer.from([0])]);
+  const byteLength = Buffer.byteLength(name, "utf8");
+  if (!byteLength || byteLength > 255 || name.includes("/") || name.includes("\\") ||
+      name === "." || name === ".." || name.includes("\0")) fail("invalid_path");
+  const bytes = Buffer.allocUnsafe(byteLength + 1);
+  bytes.write(name, 0, byteLength, "utf8");
+  bytes[byteLength] = 0;
+  if (bytes.subarray(0, byteLength).toString("utf8") !== name) fail("invalid_path");
+  return bytes;
 }
 function parts(path: string): string[] {
   if (typeof path !== "string" || Buffer.byteLength(path) > 4096) fail("invalid_path");
@@ -181,8 +186,7 @@ class NativeCanonFiles implements CanonFiles {
     // Reopening the root through its captured absolute path validates its name;
     // child resolution below uses only the retained root descriptor.
     this.#assertCurrent();
-    const dot = Buffer.from(".\0");
-    let fd = result(api().symbols.openChild(this.#fd, ptr(dot), 1));
+    let fd = result(api().symbols.openChild(this.#fd, ptr(DOT_BYTES), 1));
     if (fd < 0) fail("io");
     try {
       for (const name of components) {

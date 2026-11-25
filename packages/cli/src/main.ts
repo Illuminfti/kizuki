@@ -1,15 +1,55 @@
 #!/usr/bin/env bun
+import { writeSync } from "node:fs";
 import { UsageError, extractVault } from "./args";
 import { COMMANDS } from "./commands/index";
 import type { CliIo, Command } from "./commands/index";
-import { printCommandHelp, printRootHelp, usageLines } from "./help";
 import { lookupCommandHelp } from "./option-schema";
-import { errorText, writeAll } from "./output";
-import { createInterface } from "node:readline/promises";
+import { INVOCATION } from "./runtime";
 import {
   isRetiredOwnerGateVerb,
   retiredOwnerGateMessage,
 } from "./retired";
+
+/** Keep cold CLI startup free of @kizuki/tui and @kizuki/core until a command needs them. */
+function writeAll(fd: number, text: string): void {
+  const bytes = Buffer.from(text);
+  let offset = 0;
+  while (offset < bytes.length) {
+    try {
+      offset += writeSync(fd, bytes, offset);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "EPIPE") return;
+      if (code !== "EAGAIN") throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
+    }
+  }
+}
+
+function errorText(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message === "app_browser_unavailable") {
+    const desktop = process.platform === "linux"
+      ? "Use a graphical Linux desktop with a default web browser and /usr/bin/xdg-open (usually supplied by xdg-utils)."
+      : process.platform === "darwin"
+        ? "Use your macOS desktop with a default web browser and /usr/bin/open available."
+        : "The local app requires a supported Linux desktop or macOS with a default web browser.";
+    return `${message}: ${desktop} Check the default browser, then retry the app command. --no-open is diagnostic; its printed address does not sign you in.`;
+  }
+  if (message === "canon_files_unsafe") {
+    return `${message}: the workspace or a folder above it is a symlink, is not owned by you, or is writable by another user or group. Make each folder yours and not group- or world-writable (for example chmod go-w FOLDER), then run the same command again.`;
+  }
+  return message;
+}
+
+function usageLines(command: Command, error: UsageError): string[] {
+  const message = error.message;
+  return [
+    `error: ${message.length > 0 && message !== command.usage ? message : "invalid arguments"}`,
+    `usage: kizuki ${command.usage}`,
+    `Try \`${INVOCATION} help ${command.name}\` for flags and examples.`,
+  ];
+}
 
 function processEnv(): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = {};
@@ -128,6 +168,7 @@ export async function readVisiblePrompt(question: string): Promise<string> {
   if (process.stdin.isTTY !== true) {
     throw new UsageError("interactive sign-in requires a terminal");
   }
+  const { createInterface } = await import("node:readline/promises");
   const reader = createInterface({ input: process.stdin, output: process.stderr, terminal: true });
   const controller = new AbortController();
   const onSigint = (): void => controller.abort();
@@ -198,10 +239,12 @@ async function dispatch(argv: string[]): Promise<number> {
   const args = extracted.rest.slice(1);
 
   if (verb === undefined) {
+    const { printRootHelp } = await import("./help");
     printRootHelp(io.err, COMMANDS);
     return 2;
   }
   if (verb === "help" || verb === "--help") {
+    const { printCommandHelp, printRootHelp } = await import("./help");
     const json = args.includes("--json");
     const names = args.filter((token) => token !== "--json");
     if (names.length === 0) {
@@ -244,12 +287,14 @@ async function dispatch(argv: string[]): Promise<number> {
 
   const command = COMMANDS.find((entry) => entry.name === verb);
   if (command === undefined) {
+    const { printRootHelp } = await import("./help");
     io.err(`unknown verb: ${verb}`);
     printRootHelp(io.err, COMMANDS);
     return 2;
   }
 
   if (args.includes("--help") && !(verb === "hook" && args[0] === "session-start")) {
+    const { printCommandHelp } = await import("./help");
     const json = args.includes("--json");
     const rest = args.filter((token) => token !== "--help" && token !== "--json");
     const topic = rest.length === 0 ? command : lookupCommandHelp(command.name, rest);

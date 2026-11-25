@@ -1,4 +1,5 @@
 import { dlopen, FFIType, ptr } from "bun:ffi";
+import type { BigIntStats } from "node:fs";
 import { closeSync, lstatSync, readFileSync, readSync, realpathSync, statfsSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 
@@ -51,13 +52,14 @@ export class CapacityInventory {
   private readonly resolvedVault: string;
   private readonly mountTable: string;
   private readonly rootIdentity: string;
-  private readonly device: number;
+  private readonly device: bigint;
+  private readonly pathBuf = Buffer.allocUnsafe(4096);
 
   constructor(readonly vault: string) {
     if (process.platform !== "linux") throw new Error("resource notifications unavailable");
     this.resolvedVault = resolve(vault);
     this.root = realpathSync(vault);
-    const root = lstatSync(this.root);
+    const root = lstatSync(this.root, { bigint: true });
     if (!root.isDirectory() || !LOCAL_FILESYSTEMS.has(statfsSync(this.root).type)) throw new Error("unqualified filesystem");
     this.device = root.dev;
     this.rootIdentity = `${root.dev}:${root.ino}`;
@@ -79,27 +81,44 @@ export class CapacityInventory {
     this.watches.clear(); this.byPath.clear(); this.retired.clear(); this.sizes.clear();
   }
 
-  private watch(path: string, directory: boolean): void {
-    if (this.fd < 0) return;
-    const absolute = join(this.root, path);
-    const stat = lstatSync(absolute);
-    if (stat.dev !== this.device || stat.isSymbolicLink() || (directory ? !stat.isDirectory() : !stat.isFile())) throw new Error("inventory identity");
-    const identity = `${stat.dev}:${stat.ino}`;
-    const previous = this.byPath.get(path);
-    if (previous !== undefined && this.watches.get(previous)?.identity === identity) {
-      if (!directory) this.size(path, stat.size);
-      return;
+  private encodePath(absolute: string): Buffer {
+    const len = Buffer.byteLength(absolute, "utf8");
+    if (len + 1 <= this.pathBuf.length) {
+      this.pathBuf.write(absolute, 0, len, "utf8");
+      this.pathBuf[len] = 0;
+      return this.pathBuf;
     }
-    if (previous !== undefined) this.remove(path);
+    return Buffer.from(`${absolute}\0`);
+  }
+
+  private watch(path: string, directory: boolean): BigIntStats | null {
+    if (this.fd < 0) return null;
+    const absolute = path === "" ? this.root : path.startsWith("/") ? join(this.root, path) : `${this.root}/${path}`;
+    const previous = this.byPath.get(path);
+    if (previous !== undefined) {
+      const stat = lstatSync(absolute, { bigint: true });
+      if (stat.dev !== this.device || stat.isSymbolicLink() || (directory ? !stat.isDirectory() : !stat.isFile())) throw new Error("inventory identity");
+      const identity = `${stat.dev}:${stat.ino}`;
+      if (this.watches.get(previous)?.identity === identity) {
+        if (!directory) this.size(path, Number(stat.size));
+        return stat;
+      }
+      this.remove(path);
+    }
     if (this.watches.size >= MAX_WATCHES) throw new Error("resource watch bound");
-    const encoded = Buffer.from(`${absolute}\0`);
+    const encoded = this.encodePath(absolute);
     const wd = native!.symbols.inotify_add_watch(this.fd, ptr(encoded), MASK | DONT_FOLLOW | (directory ? ONLYDIR : 0));
     if (wd < 0 || this.watches.has(wd)) throw new Error("resource watch alias or limit");
+    const watched = lstatSync(absolute, { bigint: true });
+    if (watched.dev !== this.device || watched.isSymbolicLink() || (directory ? !watched.isDirectory() : !watched.isFile())) {
+      throw new Error("inventory identity");
+    }
+    const identity = `${watched.dev}:${watched.ino}`;
+    if (path === "" && identity !== this.rootIdentity) throw new Error("resource watch replaced");
     this.watches.set(wd, { path, directory, identity });
     this.byPath.set(path, wd);
-    const watched = lstatSync(absolute);
-    if (`${watched.dev}:${watched.ino}` !== identity || watched.isSymbolicLink()) throw new Error("resource watch replaced");
-    if (!directory) this.size(path, watched.size);
+    if (!directory) this.size(path, Number(watched.size));
+    return watched;
   }
 
   private size(path: string, size: number): void {
@@ -121,10 +140,12 @@ export class CapacityInventory {
   }
 
   /** Called by the existing walk BEFORE it enumerates a directory or reads a file. */
-  observe(path: string, directory: boolean, relPath?: string): void {
-    if (this.fd < 0) return;
-    try { this.watch(relPath ?? relative(this.resolvedVault, path).split(sep).join("/"), directory); }
-    catch { this.close(); }
+  observe(path: string, directory: boolean, relPath?: string): BigIntStats | null {
+    if (this.fd < 0) return null;
+    try {
+      const stat = this.watch(relPath ?? relative(this.resolvedVault, path).split(sep).join("/"), directory);
+      return this.root === this.resolvedVault ? stat : null;
+    } catch { this.close(); return null; }
   }
 
   private drain(): Set<string> {
@@ -185,7 +206,7 @@ export class CapacityInventory {
   current(): CapacityBound | null {
     if (!this.ready || this.fd < 0) return null;
     try {
-      const root = lstatSync(this.root);
+      const root = lstatSync(this.root, { bigint: true });
       if (realpathSync(this.vault) !== this.root || `${root.dev}:${root.ino}` !== this.rootIdentity || mounts() !== this.mountTable) throw new Error("inventory root changed");
       for (let round = 0; round < 4; round++) {
         const dirty = this.drain();

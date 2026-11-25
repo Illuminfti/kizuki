@@ -983,4 +983,47 @@ describe("help", () => {
       expect(result.stderr).toContain("usage: kizuki version");
     }
   });
+
+  test("lazy COMMANDS metadata stays identical to every command module", async () => {
+    const modules = await Promise.all([
+      import("../src/commands/app").then((m) => m.appCommand),
+      import("../src/commands/agent").then((m) => m.agentCommand),
+      import("../src/commands/init").then((m) => m.initCommand),
+      import("../src/commands/connect").then((m) => m.connectCommand),
+      import("../src/commands/backfill").then((m) => m.backfillCommand),
+      import("../src/commands/sync").then((m) => m.syncCommand),
+      import("../src/commands/import").then((m) => m.importCommand),
+      import("../src/commands/models").then((m) => m.modelsCommand),
+      import("../src/commands/audit").then((m) => m.auditCommand),
+      import("../src/commands/tell").then((m) => m.tellCommand),
+      import("../src/commands/undo").then((m) => m.undoCommand),
+      import("../src/commands/query").then((m) => m.queryCommand),
+      import("../src/commands/context").then((m) => m.contextCommand),
+      import("../src/commands/hook").then((m) => m.hookCommand),
+      import("../src/commands/world").then((m) => m.worldCommand),
+      import("../src/commands/memt").then((m) => m.memtCommand),
+      import("../src/commands/attention").then((m) => m.attentionCommand),
+      import("../src/commands/verify").then((m) => m.verifyCommand),
+      import("../src/commands/doctor").then((m) => m.doctorCommand),
+      import("../src/commands/serve").then((m) => m.serveCommand),
+      import("../src/commands/purge").then((m) => m.purgeCommand),
+      import("../src/commands/backup").then((m) => m.backupCommand),
+      import("../src/commands/export").then((m) => m.exportCommand),
+      import("../src/commands/restore").then((m) => m.restoreCommand),
+      import("../src/commands/rebuild").then((m) => m.rebuildCommand),
+      import("../src/commands/recover").then((m) => m.recoverCommand),
+      import("../src/commands/reflex").then((m) => m.reflexCommand),
+      import("../src/commands/version").then((m) => m.versionCommand),
+      import("../src/commands/parity").then((m) => m.parityCommand),
+    ]);
+    expect(COMMANDS.length).toBe(modules.length);
+    for (let i = 0; i < COMMANDS.length; i += 1) {
+      const lazy = COMMANDS[i]!;
+      const loaded = modules[i]!;
+      expect(lazy.name).toBe(loaded.name);
+      expect(lazy.usage).toBe(loaded.usage);
+      expect(lazy.summary).toBe(loaded.summary);
+      expect(lazy.schema).toEqual(loaded.schema);
+    }
+  });
 });
