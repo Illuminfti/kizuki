@@ -522,6 +522,8 @@ export function restoreSnapshot(
     }
     const db = openLedger(ledgerPath);
     try {
+      // Unpublished staging holds INCOMPLETE; defer full sync until pre-publication checkpoint.
+      db.exec("PRAGMA synchronous = NORMAL");
       db.transaction(() => {
         const recovery = inspectCanonRecovery(db);
         if (recovery.pending || recovery.projection_pending > 0)
@@ -588,6 +590,8 @@ export function restoreSnapshot(
       };
       if (report.doctor.invalid > 0)
         throw new Error(`restored vault fails doctor: ${report.doctor.invalid} invalid page(s)`);
+      db.exec("PRAGMA synchronous = FULL");
+      db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
       db.close();
       unlinkSync(join(staging, INCOMPLETE));
       fsyncDirectory(staging);

@@ -450,7 +450,8 @@ export function applyCanonWriteOwned(
   const supplied: Claim[] = Array.isArray(claim) ? [...(claim as readonly Claim[])] : [claim as Claim];
   const target = targetOf(decision);
   if (canonPageRecoveryPending(io.db, target.rel_path)) recoveryFailure("projection_pending");
-  const typedFlags = supplied.map(item => io.db.query<{is_world_typed:number},[string]>("SELECT is_world_typed FROM claims WHERE claim_id=?").get(item.claim_id)?.is_world_typed === 1);
+  const typedStmt = io.db.query<{is_world_typed:number},[string]>("SELECT is_world_typed FROM claims WHERE claim_id=?");
+  const typedFlags = supplied.map(item => typedStmt.get(item.claim_id)?.is_world_typed === 1);
   const typed = typedFlags.some(Boolean);
   if (typed && !typedFlags.every(Boolean)) throw new CanonWriteError("batch_mismatch", "typed and legacy claims require separate writes");
   assertBatch(supplied, typed);
@@ -513,16 +514,17 @@ export function applyCanonWriteOwned(
   prepared.page.data["sensitivity"] = prepared.sensitivity;
   // Reserve positive inventory growth for every forward mutation, including
   // edits and archive transitions. Only creation/reactivation needs a live slot.
+  const serializedAfter = Buffer.from(serializePage(prepared.page));
   const newLivePage = (existing === null || existing.page.data["status"] === "archived") && prepared.page.data["status"] !== "archived";
   requireCanonWriteCapacity(io.vault_path, newLivePage, existing === null ? 1 : 0,
-    Buffer.byteLength(serializePage(prepared.page)) - (existing?.byte_length ?? 0));
+    serializedAfter.byteLength - (existing?.byte_length ?? 0));
   const superseded = typed ? io.db.query<{claim_id:string;claim_key:string},[string]>("SELECT s.loser AS claim_id,m.semantic_key AS claim_key FROM claim_supersessions s JOIN claim_v2_semantics m ON m.claim_id=s.loser WHERE s.winner IN (SELECT value FROM json_each(?)) ORDER BY s.loser").all(JSON.stringify(ownedClaims.map(item=>item.claim_id))) : supersededRefs(io, decision);
   const retrievalOps: RetrievalOpRef[] =
     io.retrieval_store === undefined
       ? []
       : [{ store: io.retrieval_store, op: "upsert", doc: `page:${pageId}` }];
 
-  const expectedAfter = hashBytes(Buffer.from(serializePage(prepared.page)));
+  const expectedAfter = hashBytes(serializedAfter);
   const admit = (): void => {
     assertPositiveAuthorityMutationAllowed(io.db);
     persistedClaims(io, persisted, typed);
@@ -583,7 +585,7 @@ export function applyCanonWriteOwned(
 
   const priorSubject = existing?.page.data["x-subject-id"];
   return commitCanonWrite(scope, io, {
-    receipt, before: existing === null ? null : Buffer.from(existing.content), after: Buffer.from(serializePage(prepared.page)),
+    receipt, before: existing === null ? null : Buffer.from(existing.content), after: serializedAfter,
     completion: { mode: "write", claim_kind: primary.kind, page_id: pageId,
       subject_key: primary.subject ?? (typeof priorSubject === "string" ? priorSubject : null), original_receipt_id: null },
   }, admit, () => chargeCanonWrite(io, opts.budget, {
@@ -754,17 +756,13 @@ export function applyPurgeRewrite(
     if (owned === null || owned.hash !== existing.hash) {
       throw new CanonWriteError("decision_stale", "source erasure preimage changed");
     }
+    const deniedBindingStmt = io.db.query(
+      "SELECT 1 FROM source_event_bindings b JOIN source_grants g ON g.source_key=b.source_key WHERE b.event_id=? AND g.status!='active'",
+    );
     if (
       existing.hash !== input.source_erasure.expected_hash ||
       input.purged_event_ids.length === 0 ||
-      input.purged_event_ids.some(
-        (id) =>
-          io.db
-            .query(
-              "SELECT 1 FROM source_event_bindings b JOIN source_grants g ON g.source_key=b.source_key WHERE b.event_id=? AND g.status!='active'",
-            )
-            .get(id) === null,
-      )
+      input.purged_event_ids.some((id) => deniedBindingStmt.get(id) === null)
     )
       throw new CanonWriteError(
         "decision_stale",
@@ -869,7 +867,8 @@ export function applyPurgeRewrite(
   if (canonPageRecoveryPending(io.db, input.rel_path)) recoveryFailure("projection_pending");
   const receiptId = mintId(io);
   const next = { data, body: body.length === 0 ? "\n" : body };
-  const expectedAfter = hashBytes(Buffer.from(serializePage(next)));
+  const serializedNext = Buffer.from(serializePage(next));
+  const expectedAfter = hashBytes(serializedNext);
   const pageIdRaw = existing.page.data["id"];
   const pageId =
     typeof pageIdRaw === "string" && pageIdRaw.length > 0 ? pageIdRaw : null;
@@ -907,7 +906,7 @@ export function applyPurgeRewrite(
 
   const retainedSubject = data["x-subject-id"];
   return commitCanonWrite(scope, io, {
-    receipt, before: Buffer.from(existing.content), after: Buffer.from(serializePage(next)),
+    receipt, before: Buffer.from(existing.content), after: serializedNext,
     completion: { mode: "purge", claim_kind: "purge_review", page_id: pageId,
       subject_key: typeof retainedSubject === "string" ? retainedSubject : null, original_receipt_id: null },
   }, () => requireSourceEvents(io.db, existingSources(next).map(eventIdFromReference), { owner: true, purpose: "derive" }));
@@ -1069,11 +1068,12 @@ function applySourcePurgeWrite(scope: VaultMutationScope, io: CanonIo, input: So
     const { existing, data, body, nothingRemains, action, authority, sensitivity, taint } = prepared;
     const pageId = typeof existing.page.data["id"] === "string" ? existing.page.data["id"] : null;
     const next = nothingRemains ? null : { data, body: body.length === 0 ? "\n" : body };
+    const serializedNext = next === null ? null : serializePage(next);
     const receipt: CanonReceipt = {
         receipt_id: mintId(io), kind: "purge_rewrite",
         claim_ids: next === null ? [...input.purged_claim_ids] : [...input.source_erasure.retained_claim_ids],
         page_path: input.rel_path, page_action: action, before_hash: existing.hash,
-        after_hash: next === null ? ABSENT_PAGE_HASH : hashBytes(Buffer.from(serializePage(next))),
+        after_hash: serializedNext === null ? ABSENT_PAGE_HASH : hashBytes(Buffer.from(serializedNext)),
         archive_path: null, writer: "loop", producer: "deterministic", model_ref: null,
         authority, confidence: 1, sensitivity, taint,
         provenance: next === null ? [...input.purged_event_ids] : existingSources(next),
@@ -1081,11 +1081,12 @@ function applySourcePurgeWrite(scope: VaultMutationScope, io: CanonIo, input: So
     };
     const intent = io.db.transaction(() => stageSourceErasureIntent(scope, io, input.source_erasure.source_key, input.purged_event_ids, receipt, pageId)).immediate();
     commitMachineByteIntent(io.db, intent.receipt, () => {
-      if (input.purged_event_ids.some(id => io.db.query(
+      const deniedBindingStmt = io.db.query(
         "SELECT 1 FROM source_event_bindings b JOIN source_grants g ON g.source_key=b.source_key WHERE b.event_id=? AND g.status!='active'",
-      ).get(id) === null)) throw new CanonWriteError("decision_stale", "source erasure admission changed");
+      );
+      if (input.purged_event_ids.some(id => deniedBindingStmt.get(id) === null)) throw new CanonWriteError("decision_stale", "source erasure admission changed");
       if (next !== null) requireSourceEvents(io.db, existingSources(next), { owner: true, purpose: "derive" });
-    }, { before: null, after: next === null ? null : serializePage(next) });
+    }, { before: null, after: serializedNext });
     const cap = grantCanonWrite("loop", intent.receipt.receipt_id, io.vault_path, files);
     const outcome = writePage(cap, join(io.vault_path, input.rel_path), next ?? { data, body: "\n" }, {
         revision: true, expected_hash: existing.hash, erase_prior: true, delete: nothingRemains,

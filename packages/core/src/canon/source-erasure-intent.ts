@@ -31,6 +31,8 @@ const V1_KEYS = [
   "version",
 ] as const;
 const V2_KEYS = [...V1_KEYS, "lineage"] as const;
+const V1_KEYS_SORTED = [...V1_KEYS].sort().join(",");
+const V2_KEYS_SORTED = [...V2_KEYS].sort().join(",");
 
 interface PolicyBinding {
     source_key: string;
@@ -58,8 +60,8 @@ interface SourceErasureIntentV2 extends Omit<SourceErasureIntentV1, "version"> {
 
 export type SourceErasureIntent = SourceErasureIntentV1 | SourceErasureIntentV2;
 
-function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-    return Object.keys(value).sort().join(",") === [...keys].sort().join(",");
+function exactKeys(value: Record<string, unknown>, sortedKeys: string): boolean {
+    return Object.keys(value).sort().join(",") === sortedKeys;
 }
 
 export function isLiveSourceSurvivorPath(path: string): boolean {
@@ -85,12 +87,14 @@ function isLiveSurvivorReceipt(receipt: CanonReceipt): boolean {
 }
 
 function policies(db: Database, ids: readonly string[], denied: readonly string[]): PolicyBinding[] {
+    const deniedSet = new Set(denied);
+    const stmt = db.query<PolicyBinding, [string]>(
+        "SELECT g.source_key,g.status,g.revision,g.policy_digest,g.revoke_operation FROM source_event_bindings b JOIN source_grants g ON g.source_key=b.source_key WHERE b.event_id=?",
+    );
     const rows = new Map<string, PolicyBinding>();
     for (const id of ids) {
-        const row = db.query<PolicyBinding, [
-            string
-        ]>("SELECT g.source_key,g.status,g.revision,g.policy_digest,g.revoke_operation FROM source_event_bindings b JOIN source_grants g ON g.source_key=b.source_key WHERE b.event_id=?").get(id);
-        if (denied.includes(id) && (row === null || row.status === "active"))
+        const row = stmt.get(id);
+        if (deniedSet.has(id) && (row === null || row.status === "active"))
             throw Error("source erasure authorization unavailable");
         if (row === null)
             continue; // Native owner evidence has no fabricated source grant.
@@ -147,12 +151,12 @@ function validateShape(intent: SourceErasureIntent): void {
     if (!isPlainObject(intent))
         throw Error("source erasure intent invalid");
     if (intent.version === 1) {
-        if (!exactKeys(intent, V1_KEYS))
+        if (!exactKeys(intent, V1_KEYS_SORTED))
             throw Error("source erasure intent invalid");
         return;
     }
     if (intent.version === 2) {
-        if (!exactKeys(intent, V2_KEYS))
+        if (!exactKeys(intent, V2_KEYS_SORTED))
             throw Error("source erasure intent invalid");
         if (intent.lineage !== null) parseSourceSurvivorLineage(intent.lineage);
         return;
@@ -168,10 +172,11 @@ function validate(db: Database, intent: SourceErasureIntent): void {
     const original = db.query("SELECT * FROM canon_receipts WHERE receipt_id=?").get(intent.original_receipt_id);
     if (original === null || sha256Hex(JSON.stringify(original)) !== intent.original_receipt_digest)
         throw Error("source erasure origin changed");
+    const grantStmt = db.query<PolicyBinding, [string]>(
+        "SELECT source_key,status,revision,policy_digest,revoke_operation FROM source_grants WHERE source_key=?",
+    );
     for (const row of intent.policies) {
-        const current = db.query<PolicyBinding, [
-            string
-        ]>("SELECT source_key,status,revision,policy_digest,revoke_operation FROM source_grants WHERE source_key=?").get(row.source_key);
+        const current = grantStmt.get(row.source_key);
         if (JSON.stringify(current) !== JSON.stringify(row))
             throw Error("source erasure authorization changed");
     }

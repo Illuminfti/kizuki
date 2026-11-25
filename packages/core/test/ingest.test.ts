@@ -415,6 +415,29 @@ describe("runBatch", () => {
     ).toBe(2);
     db.close();
   });
+
+  test("paced batched ingest commits chunks and invokes pace outside any transaction", () => {
+    const db = database();
+    try {
+      const events = Array.from({ length: 140 }, (_, i) => ({
+        ...documentEvent(),
+        source_record_id: `paced-rec-${i}`,
+        text: `paced event ${i}`,
+      }));
+      let paceCalls = 0;
+      const inTxDuringPace: boolean[] = [];
+      const result = runBatch(db, { events, cursor: "paced-done" }, NOTHING, undefined, undefined, () => {
+        paceCalls += 1;
+        inTxDuringPace.push(db.inTransaction);
+      });
+      expect(result.errors).toEqual([]);
+      expect(result.stored).toBe(140);
+      expect(paceCalls).toBeGreaterThanOrEqual(2);
+      expect(inTxDuringPace.every((active) => active === false)).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
 });
 
 describe("connector runs", () => {
