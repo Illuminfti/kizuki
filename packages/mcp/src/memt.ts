@@ -229,17 +229,16 @@ export function createMemtBridge(
     }
     const engine = getEngine();
     const ceiling = toMemtSensitivity(liveCtx.principal.grant.ceiling);
-    const visibleCount = engine.experiences.listExperiences({
+    const visibleCount = engine.experiences.countExperiences({
       sensitivityCeiling: ceiling,
-      limit: 1000,
-    }).length;
+    }).total;
     const snap = engine.snapshots.listSnapshots().filter((s) =>
       withinSensitivityCeiling(s.sensitivity_ceiling, ceiling),
     );
     const hasDegraded = snap.some((s) => s.taint_state === "purged_invalidated");
     return {
       enabled: true,
-      mode: engine.client !== null ? "local-hybrid" : "local-hybrid",
+      mode: engine.isGpuOnline ? "native-gpu" : "local-hybrid",
       status: hasDegraded ? "degraded" : "ready",
       experience_count: visibleCount,
     };
@@ -252,9 +251,8 @@ export function createMemtBridge(
     const engine = getEngine();
     const status = await engine.status({ probe: args["probe"] === true });
 
-    const visibleExps = engine.experiences.listExperiences({
+    const expCounts = engine.experiences.countExperiences({
       sensitivityCeiling: ceiling,
-      limit: 1000,
     });
     const visibleSnapshots = engine.snapshots
       .listSnapshots()
@@ -266,13 +264,11 @@ export function createMemtBridge(
     }
 
     const expStats = {
-      total: visibleExps.length,
-      verified: visibleExps.filter((e) => e.outcome === "verified").length,
-      observed: visibleExps.filter((e) => e.outcome === "observed").length,
-      failed: visibleExps.filter((e) => e.outcome === "failed").length,
-      uninternalized: visibleExps.filter(
-        (e) => e.internalized_in_snapshot === null && (e.outcome === "verified" || e.outcome === "observed"),
-      ).length,
+      total: expCounts.total,
+      verified: expCounts.verified,
+      observed: expCounts.observed,
+      failed: expCounts.failed,
+      uninternalized: expCounts.uninternalized,
     };
 
     return {
@@ -767,7 +763,7 @@ export function createMemtBridge(
         query: rawQuery,
         sensitivityCeiling: ceiling,
         outcomes: ["verified", "observed"],
-        limit: 3,
+        limit: 6,
       })
       .filter((hit) => hit.score > 0 && hit.experience.confidence >= 0.65);
 
@@ -777,13 +773,27 @@ export function createMemtBridge(
     const headerTokens = estimateMemTTokens(`\n\n${header}\n`);
     if (headerTokens >= remaining) return envelope;
 
+    const compactText = (value: string, maxChars: number): string => {
+      const clean = value.replace(/\s+/g, " ").trim();
+      if (clean.length <= maxChars) return clean;
+      return `${clean.slice(0, Math.max(16, maxChars - 1)).trimEnd()}…`;
+    };
+
     const lines: string[] = [];
     let addedTokens = headerTokens;
     for (const hit of hits) {
+      if (lines.length >= 3) break;
       const exp = hit.experience;
-      const line = `- [${redactor.text(exp.domain)}] When: ${redactor.text(exp.condition)} -> Do: ${redactor.text(exp.recommendation)} (${exp.outcome}, conf=${exp.confidence.toFixed(2)})`;
-      const cost = estimateMemTTokens(`${line}\n`);
-      if (addedTokens + cost > remaining) break;
+      const domain = redactor.text(exp.domain);
+      const cond = redactor.text(exp.condition);
+      const rec = redactor.text(exp.recommendation);
+      let line = `- [${domain}] When: ${cond} -> Do: ${rec} (${exp.outcome}, conf=${exp.confidence.toFixed(2)})`;
+      let cost = estimateMemTTokens(`${line}\n`);
+      if (addedTokens + cost > remaining) {
+        line = `- [${domain}] When: ${compactText(cond, 120)} -> Do: ${compactText(rec, 140)} (${exp.outcome}, conf=${exp.confidence.toFixed(2)})`;
+        cost = estimateMemTTokens(`${line}\n`);
+        if (addedTokens + cost > remaining) continue;
+      }
       lines.push(line);
       addedTokens += cost;
     }

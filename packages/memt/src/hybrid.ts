@@ -6,6 +6,7 @@ import {
   defaultMemtRegistryPath,
   defaultMemtSnapshotDir,
   isPlainObject,
+  normalizeSourceRefVariants,
   openMemtRegistryDb,
   sha256Hex,
   withinSensitivityCeiling,
@@ -30,6 +31,64 @@ import type {
 } from "./snapshot";
 
 const MAX_SERVE_TOML_BYTES = 65_536;
+const MAX_TOML_CACHE_ENTRIES = 64;
+
+interface CachedMemtToml {
+  readonly mtimeMs: number;
+  readonly ctimeMs: number;
+  readonly size: number;
+  readonly ino: number;
+  readonly table: Readonly<Record<string, unknown>>;
+}
+
+const memtTomlCache = new Map<string, CachedMemtToml>();
+
+function loadMemtTomlTable(tomlPath: string): Readonly<Record<string, unknown>> {
+  let st: ReturnType<typeof statSync>;
+  try {
+    st = statSync(tomlPath);
+  } catch {
+    memtTomlCache.delete(tomlPath);
+    return {};
+  }
+
+  const cached = memtTomlCache.get(tomlPath);
+  if (
+    cached !== undefined &&
+    cached.mtimeMs === st.mtimeMs &&
+    cached.ctimeMs === st.ctimeMs &&
+    cached.size === st.size &&
+    cached.ino === st.ino
+  ) {
+    return cached.table;
+  }
+
+  let table: Record<string, unknown> = {};
+  try {
+    if (st.size <= MAX_SERVE_TOML_BYTES) {
+      const parsed: unknown = Bun.TOML.parse(readFileSync(tomlPath, "utf8"));
+      if (isPlainObject(parsed) && isPlainObject(parsed["memt"])) {
+        table = parsed["memt"];
+      }
+    }
+  } catch {
+    table = {};
+  }
+
+  const frozen = Object.freeze({ ...table });
+  if (memtTomlCache.size >= MAX_TOML_CACHE_ENTRIES) {
+    const oldest = memtTomlCache.keys().next().value;
+    if (oldest !== undefined) memtTomlCache.delete(oldest);
+  }
+  memtTomlCache.set(tomlPath, {
+    mtimeMs: st.mtimeMs,
+    ctimeMs: st.ctimeMs,
+    size: st.size,
+    ino: st.ino,
+    table: frozen,
+  });
+  return frozen;
+}
 
 export interface MemtConfig {
   readonly enabled: boolean;
@@ -75,20 +134,7 @@ export function loadMemtConfig(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): MemtConfig {
   const tomlPath = join(vaultPath, ".kizuki", "serve.toml");
-  let memtTable: Record<string, unknown> = {};
-
-  if (existsSync(tomlPath)) {
-    try {
-      if (statSync(tomlPath).size <= MAX_SERVE_TOML_BYTES) {
-        const parsed: unknown = Bun.TOML.parse(readFileSync(tomlPath, "utf8"));
-        if (isPlainObject(parsed) && isPlainObject(parsed["memt"])) {
-          memtTable = parsed["memt"];
-        }
-      }
-    } catch {
-      memtTable = {};
-    }
-  }
+  const memtTable = loadMemtTomlTable(tomlPath);
 
   const envUrl = normalizeOptionalUrl(env["KIZUKI_MEMT_URL"]);
   const tomlUrl = normalizeOptionalUrl(memtTable["url"] ?? memtTable["endpoint"]);
@@ -236,6 +282,19 @@ export interface HybridRecallResult {
   readonly degraded: readonly string[];
 }
 
+function experienceOutcomeFusionFactor(outcome: ExperienceRecord["outcome"]): number {
+  switch (outcome) {
+    case "verified":
+      return 1.15;
+    case "observed":
+      return 0.95;
+    case "failed":
+      return 0.4;
+    case "superseded":
+      return 0.2;
+  }
+}
+
 export function fuseHybridRecall(
   input: FuseHybridRecallInput,
 ): HybridRecallResult {
@@ -244,22 +303,137 @@ export function fuseHybridRecall(
   const expWeight = input.experienceWeight ?? 0.9;
   const limit = Math.max(1, Math.min(200, input.limit ?? 20));
 
-  const fused: HybridRecallItem[] = [];
-  let s2Rank = 0;
+  // Pre-index eligible System-2 citations & topical anchors for cross-source corroboration
+  const eligibleS2: System2EvidenceHit[] = [];
+  const s2SourceRefToIndices = new Map<string, number[]>();
+  const s2TopicalTextParts: string[] = [];
 
   for (const hit of input.system2Hits) {
     if (!withinSensitivityCeiling(hit.sensitivity, input.sensitivityCeiling)) {
       continue;
     }
-    s2Rank += 1;
+    const idx = eligibleS2.length;
+    eligibleS2.push(hit);
+    const refs = hit.citations.length > 0 ? [hit.id, ...hit.citations] : [hit.id];
+    for (const ref of refs) {
+      for (const variant of normalizeSourceRefVariants(ref)) {
+        const list = s2SourceRefToIndices.get(variant);
+        if (list === undefined) {
+          s2SourceRefToIndices.set(variant, [idx]);
+        } else if (list[list.length - 1] !== idx) {
+          list.push(idx);
+        }
+      }
+    }
+    if (hit.title !== undefined && hit.title.length > 0) {
+      s2TopicalTextParts.push(hit.title);
+    }
+    if (hit.text.length > 0) {
+      s2TopicalTextParts.push(hit.text.slice(0, 256));
+    }
+  }
+
+  const s2TopicalHaystack =
+    s2TopicalTextParts.length > 0
+      ? s2TopicalTextParts.join(" ").toLowerCase()
+      : "";
+  const corroboratedS2Indices = new Set<number>();
+
+  const expItems: HybridRecallItem[] = [];
+  let expRank = 0;
+  for (const hit of input.experienceHits) {
+    const exp = hit.experience;
+    if (!withinSensitivityCeiling(exp.sensitivity, input.sensitivityCeiling)) {
+      continue;
+    }
+    expRank += 1;
+    const citations =
+      exp.citations.length > 0 ? [...exp.citations] : [`experience:${exp.id}`];
+
+    // Check cross-source corroboration against System-2 evidence
+    let directCorroboration = false;
+    if (s2SourceRefToIndices.size > 0 && exp.citations.length > 0) {
+      for (const citation of exp.citations) {
+        for (const variant of normalizeSourceRefVariants(citation)) {
+          const matchedS2 = s2SourceRefToIndices.get(variant);
+          if (matchedS2 !== undefined) {
+            directCorroboration = true;
+            if (exp.outcome === "verified" || exp.outcome === "observed") {
+              for (const s2Idx of matchedS2) {
+                corroboratedS2Indices.add(s2Idx);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    let topicalCorroboration = false;
+    if (!directCorroboration && s2TopicalHaystack.length > 0) {
+      const domainLower = exp.domain.toLowerCase();
+      const scopeLower = exp.scope_key.toLowerCase();
+      if (
+        (domainLower.length >= 3 && s2TopicalHaystack.includes(domainLower)) ||
+        (scopeLower.length >= 3 && s2TopicalHaystack.includes(scopeLower))
+      ) {
+        topicalCorroboration = true;
+      }
+    }
+
+    const corroborationFactor = directCorroboration
+      ? 1.22
+      : topicalCorroboration
+        ? 1.06
+        : 1.0;
+    const outcomeFactor = experienceOutcomeFusionFactor(exp.outcome);
+    const confidenceFactor = 0.72 + 0.28 * exp.confidence;
+
+    const trustTag: HybridTrustTag =
+      exp.outcome === "verified" ? "verified_procedure" : "observed_procedure";
+    const summaryText =
+      `When: ${exp.condition}\nDo: ${exp.recommendation}` +
+      (exp.verification.length > 0 ? `\nVerify: ${exp.verification}` : "");
+    expItems.push({
+      id: `experience:${exp.id}`,
+      source: "experience",
+      kind: "experience",
+      score:
+        (expWeight / (rrfK + expRank)) *
+        outcomeFactor *
+        confidenceFactor *
+        corroborationFactor,
+      system2Rank: null,
+      experienceRank: expRank,
+      sensitivity: exp.sensitivity,
+      taint: "clean",
+      trustTag,
+      untrustedCapturedText: false,
+      text: summaryText,
+      title: `${exp.domain}/${exp.scope_key}`,
+      citations: Object.freeze(citations),
+      experience: exp,
+    });
+  }
+
+  const fused: HybridRecallItem[] = [];
+  for (let i = 0; i < eligibleS2.length; i += 1) {
+    const hit = eligibleS2[i]!;
+    const s2Rank = i + 1;
     const untrusted = hit.taint === "quoted" || hit.kind === "event";
     const citations =
       hit.citations.length > 0 ? [...hit.citations] : [hit.id];
+    const normScore = Number.isFinite(hit.score)
+      ? Math.max(0, Math.min(1, hit.score))
+      : 0.5;
+    const corroborationBoost = corroboratedS2Indices.has(i) ? 1.08 : 1.0;
     fused.push({
       id: hit.id,
       source: "system2",
       kind: hit.kind,
-      score: s2Weight / (rrfK + s2Rank),
+      score:
+        (s2Weight / (rrfK + s2Rank)) *
+        (0.94 + 0.06 * normScore) *
+        corroborationBoost,
       system2Rank: s2Rank,
       experienceRank: null,
       sensitivity: hit.sensitivity,
@@ -272,36 +446,8 @@ export function fuseHybridRecall(
     });
   }
 
-  let expRank = 0;
-  for (const hit of input.experienceHits) {
-    const exp = hit.experience;
-    if (!withinSensitivityCeiling(exp.sensitivity, input.sensitivityCeiling)) {
-      continue;
-    }
-    expRank += 1;
-    const citations =
-      exp.citations.length > 0 ? [...exp.citations] : [`experience:${exp.id}`];
-    const trustTag: HybridTrustTag =
-      exp.outcome === "verified" ? "verified_procedure" : "observed_procedure";
-    const summaryText =
-      `When: ${exp.condition}\nDo: ${exp.recommendation}` +
-      (exp.verification.length > 0 ? `\nVerify: ${exp.verification}` : "");
-    fused.push({
-      id: `experience:${exp.id}`,
-      source: "experience",
-      kind: "experience",
-      score: (expWeight / (rrfK + expRank)) * (0.75 + 0.25 * exp.confidence),
-      system2Rank: null,
-      experienceRank: expRank,
-      sensitivity: exp.sensitivity,
-      taint: "clean",
-      trustTag,
-      untrustedCapturedText: false,
-      text: summaryText,
-      title: `${exp.domain}/${exp.scope_key}`,
-      citations: Object.freeze(citations),
-      experience: exp,
-    });
+  for (const item of expItems) {
+    fused.push(item);
   }
 
   fused.sort((a, b) => {
@@ -404,7 +550,12 @@ export class MemtEngine {
   private cachedIdentity: MemTIdentity | null = null;
   private cachedCapabilities: MemTCapabilities | null = null;
   private activeSessions = new Map<string, MemTSession>();
+  private loadedSnapshotByPartition = new Map<string, string>();
   private closed = false;
+
+  get isGpuOnline(): boolean {
+    return !this.closed && this.gpuOnline;
+  }
 
   constructor(options: MemtEngineOptions) {
     this.vaultPath = options.vaultPath;
@@ -447,7 +598,6 @@ export class MemtEngine {
     if (
       options.force !== true &&
       this.lastProbeMs > 0 &&
-      !this.gpuOnline &&
       nowMs - this.lastProbeMs < this.config.offlineBackoffMs
     ) {
       return this.buildStatus();
@@ -627,11 +777,15 @@ export class MemtEngine {
     }
 
     const session = await this.getOrCreateSession(partitionKey);
-    if (loadedSnapshotName !== undefined) {
+    if (
+      loadedSnapshotName !== undefined &&
+      this.loadedSnapshotByPartition.get(partitionKey) !== loadedSnapshotName
+    ) {
       await session.loadSnapshot({
         name: loadedSnapshotName,
         path: join(this.config.snapshotDir, loadedSnapshotName),
       });
+      this.loadedSnapshotByPartition.set(partitionKey, loadedSnapshotName);
     }
 
     const res = await session.query(
@@ -675,6 +829,7 @@ export class MemtEngine {
       leaseTtlSeconds: this.config.defaultLeaseTtlSeconds,
     });
     this.activeSessions.set(partitionKey, created);
+    this.loadedSnapshotByPartition.delete(partitionKey);
     return created;
   }
 
@@ -778,6 +933,10 @@ export class MemtEngine {
     if (expIds.length > 0) {
       this.experiences.markInternalized(expIds, snapshotRecord.snapshot_name);
     }
+    this.loadedSnapshotByPartition.set(
+      input.partitionKey,
+      snapshotRecord.snapshot_name,
+    );
 
     return {
       mode: "native-gpu",
@@ -792,6 +951,9 @@ export class MemtEngine {
 
   purgeSources(sourceIds: readonly string[]): MemtPurgeResult {
     const snapshots = this.snapshots.invalidateForPurgedSources(sourceIds);
+    for (const partitionKey of snapshots.invalidatedPartitions) {
+      this.loadedSnapshotByPartition.delete(partitionKey);
+    }
     const experiences = this.experiences.purgeBySourceRefs(sourceIds);
     return { snapshots, experiences };
   }
@@ -801,6 +963,7 @@ export class MemtEngine {
     this.closed = true;
     const sessions = [...this.activeSessions.values()];
     this.activeSessions.clear();
+    this.loadedSnapshotByPartition.clear();
     await Promise.allSettled(sessions.map((session) => session.close()));
     this.db.close();
   }

@@ -498,8 +498,10 @@ export class MemTClient {
   async createSession(
     options: MemTSessionCreateOptions = {},
   ): Promise<MemTSession> {
-    const capabilities = await this.getCapabilities();
-    const identity = await this.getIdentity().catch(() => null);
+    const [capabilities, identity] = await Promise.all([
+      this.getCapabilities(),
+      this.getIdentity().catch(() => null),
+    ]);
     const ttl = validateLeaseTtl(options.leaseTtlSeconds ?? 300, "control");
 
     const createReq: MemTControlRequest = {

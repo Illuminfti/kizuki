@@ -113,6 +113,7 @@ export {
 } from "./experience";
 export type {
   ExperienceBankOptions,
+  ExperienceCountStats,
   ExperienceOutcome,
   ExperienceRecord,
   ExperienceSearchHit,
