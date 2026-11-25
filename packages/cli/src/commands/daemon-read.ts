@@ -1,12 +1,12 @@
 import { lstatSync } from "node:fs";
 import { join } from "node:path";
 import {
-  ENVELOPE_SCHEMA, SERVE_PID_PATH, SERVE_TOKEN_PATH, ServeError, assertVaultControl, isPlainObject,
+  ENVELOPE_SCHEMA, EVENT_LIMITS, SERVE_PID_PATH, SERVE_TOKEN_PATH, ServeError, assertVaultControl, isPlainObject,
   readServeEndpoint, readServeProcessMarker,
   type serveHealth, type serveSearch, type serveWorldView,
 } from "@kizuki/core";
 import { ENVELOPE_V2_SCHEMA, isWorldWireToken, unsupportedContract, type EnvelopeV2 } from "@kizuki/core/world";
-import { fetchTransport } from "@kizuki/llm";
+import { fetchTransport, type TransportRequest } from "@kizuki/llm";
 import { configPath, readConfig } from "../config";
 import { resolveVault } from "../context";
 import { tokenResolver } from "../secrets";
@@ -14,11 +14,20 @@ import type { CliIo } from "./index";
 
 type SearchResult = Awaited<ReturnType<typeof serveSearch<typeof ENVELOPE_SCHEMA>>>;
 type HealthResult = ReturnType<typeof serveHealth<typeof ENVELOPE_SCHEMA>>;
+type SearchRequest = Parameters<typeof serveSearch>[1];
+const ENVELOPE_BYTES = 8 * 1024 * 1024;
+
+function searchResponseBytes(args: SearchRequest): number {
+  if (!args.full_text || args.scope === "canon") return ENVELOPE_BYTES;
+  // One JSON escape can occupy six bytes per input byte of a full capture.
+  const limit = Math.min(50, Math.max(1, args.limit ?? 20));
+  return ENVELOPE_BYTES + limit * EVENT_LIMITS.textBytes * 6;
+}
 
 export interface DaemonReader {
   readonly vaultPath: string;
-  search(args: Parameters<typeof serveSearch>[1]): Promise<SearchResult>;
-  searchV2(args: Record<string, unknown>, contract: string): Promise<EnvelopeV2>;
+  search(args: SearchRequest): Promise<SearchResult>;
+  searchV2(args: SearchRequest, contract: string): Promise<EnvelopeV2>;
   world(args: Parameters<typeof serveWorldView>[1]): Promise<ReturnType<typeof serveWorldView>>;
   health(): Promise<HealthResult>;
 }
@@ -39,6 +48,25 @@ function currentEndpoint(vault: string) {
   return marker && endpoint ? { ...endpoint, instance: marker.instance_id } : undefined;
 }
 
+/** Bun selects its ambient proxy when fetch starts, before it yields. */
+function postLoopback(request: TransportRequest, host: string) {
+  const original = { no_proxy: process.env.no_proxy, NO_PROXY: process.env.NO_PROXY };
+  const names = ["no_proxy", "NO_PROXY"] as const;
+  try {
+    for (const name of names) {
+      const bypass = new Set((original[name] ?? "").split(/[,\s]+/).filter(Boolean));
+      bypass.add(host === "::1" ? "[::1]" : host);
+      process.env[name] = [...bypass].join(",");
+    }
+    return fetchTransport(request);
+  } finally {
+    for (const name of names) {
+      if (original[name] === undefined) delete process.env[name];
+      else process.env[name] = original[name];
+    }
+  }
+}
+
 /** Bind reads to the current instance. A refusal from a live daemon must never replay locally. */
 export function liveReadDaemon(io: CliIo): DaemonReader | undefined {
   const vaultPath = resolveVault(io.env, readConfig(configPath(io.env)), io.vaultOverride);
@@ -50,22 +78,16 @@ export function liveReadDaemon(io: CliIo): DaemonReader | undefined {
     if (current?.instance !== instance || current.url !== url) throw new Error("daemon endpoint changed during read; retry");
   }
 
-  async function call(tool: "world_view" | "search" | "system_health", args: object, contract: string): Promise<unknown> {
+  async function call(tool: "world_view" | "search" | "system_health", args: object, contract: string, maxBytes = ENVELOPE_BYTES): Promise<unknown> {
     const ref = `file:${join(vaultPath, SERVE_TOKEN_PATH)}`;
     const bearer = await tokenResolver(ref, io.env)(ref);
     if (!/^kzs_[A-Za-z0-9_-]{43}$/.test(bearer)) throw new Error("daemon read authorization refused");
     assertCurrent();
-    // Bun matches IPv6 URL hosts with brackets. Preserve the operator's existing bypass list.
-    for (const name of ["no_proxy", "NO_PROXY"]) {
-      const bypass = new Set((process.env[name] ?? "").split(/[,\s]+/).filter(Boolean));
-      bypass.add(host === "::1" ? "[::1]" : host);
-      process.env[name] = [...bypass].join(",");
-    }
     const route = tool === "system_health" ? "health" : tool;
-    const response = await fetchTransport({
+    const response = await postLoopback({
       url: `${url}/v1/${route}`, api_key: bearer, body: { args, response_contract: contract },
-      timeout_ms: 10_000, max_response_bytes: 8 * 1024 * 1024,
-    });
+      timeout_ms: 10_000, max_response_bytes: maxBytes,
+    }, host);
     assertCurrent();
     if (!response.ok) {
       if (response.kind === "http") {
@@ -88,8 +110,8 @@ export function liveReadDaemon(io: CliIo): DaemonReader | undefined {
 
   return {
     vaultPath,
-    search: args => call("search", args, ENVELOPE_SCHEMA) as Promise<SearchResult>,
-    searchV2: (args, contract) => call("search", args, contract) as Promise<EnvelopeV2>,
+    search: args => call("search", args, ENVELOPE_SCHEMA, searchResponseBytes(args)) as Promise<SearchResult>,
+    searchV2: (args, contract) => call("search", args, contract, searchResponseBytes(args)) as Promise<EnvelopeV2>,
     world: args => call("world_view", args, ENVELOPE_V2_SCHEMA) as Promise<ReturnType<typeof serveWorldView>>,
     health: () => call("system_health", {}, ENVELOPE_SCHEMA) as Promise<HealthResult>,
   };

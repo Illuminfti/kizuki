@@ -1,5 +1,5 @@
 import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
-import { writeFileSync } from "node:fs";
+import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { accept, count, readServeEndpoint, readServeProcessMarker, revokeSourceGrant, SERVE_TOKEN_PATH, setSourceGrant } from "@kizuki/core";
@@ -68,6 +68,10 @@ test("a daemon holding the retrieval writer serves CLI reads and bounded health 
   const rebuild = await h.runCliAsync(f.env, "rebuild", "--json");
   expect(rebuild.exitCode, rebuild.stderr).toBe(0);
   expect(JSON.parse(rebuild.stdout).data).toMatchObject({ store: EMBEDDED_RETRIEVAL_ID, documents: records + 2, floor_documents: records + 1 });
+  // Startup republishes this projection after opening the populated SQL store.
+  const dataDir = join(f.vault, ".kizuki/retrieval", EMBEDDED_RETRIEVAL_ID);
+  const engineMetadata = join(dataDir, "engine.json");
+  unlinkSync(engineMetadata);
 
   const daemon = Bun.spawn([process.execPath, join(import.meta.dir, "../src/main.ts"), "serve", "--port", "0", "--vault", f.vault], {
     env: { ...process.env, ...f.env }, stdout: "ignore", stderr: "ignore",
@@ -94,7 +98,7 @@ test("a daemon holding the retrieval writer serves CLI reads and bounded health 
     expect(cold, "first authenticated health request, ms").toBeLessThan(250);
     expect(p95, "authenticated health p95, ms").toBeLessThan(250);
 
-    const lease = new WriterLease(join(f.vault, ".kizuki/retrieval", EMBEDDED_RETRIEVAL_ID));
+    const lease = new WriterLease(dataDir);
     expect(lease.inspect().holder?.pid).toBe(daemon.pid);
     const run = async (...args: string[]) => {
       const start = performance.now();
@@ -107,6 +111,10 @@ test("a daemon holding the retrieval writer serves CLI reads and bounded health 
     const query = await run("query", "saffron");
     expect(query.data.hits).toContainEqual(expect.objectContaining({ snippet: "saffron reference" }));
     expect(query.degraded).not.toContain("configured-engine-unavailable");
+    // The cold query can use the lexical floor. Only the next query requires a hydrated engine.
+    const hydrationDeadline = performance.now() + 60_000;
+    while (!existsSync(engineMetadata) && daemon.exitCode === null && performance.now() < hydrationDeadline) await Bun.sleep(20);
+    expect(existsSync(engineMetadata), "daemon initialized the populated engine").toBe(true);
     expect((await run("query", "Orchrd", "--scope", "canon")).data.hits).toContainEqual(
       expect.objectContaining({ doc_id: "page:fact:orchard" }));
     expect((await run("query", "saffron", "--response-contract", "kizuki.envelope/v2")).result).toMatchObject({

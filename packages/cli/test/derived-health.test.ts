@@ -48,7 +48,7 @@ test("incremental refresh reconciles an upgraded watermark with durable earlier 
   } finally { db.close(); rmSync(vault, { recursive: true, force: true }); }
 });
 
-test("the compiled daemon serves authenticated health before cold SQL hydration and shuts the worker down", async () => {
+test("the compiled daemon serves health during cold hydration and can stop and reopen that generation", async () => {
   const helpers = createHelpers();
   const { vault, env } = helpers.tempVault();
   const id = "kizuki.retrieval.embedded-pg";
@@ -58,24 +58,30 @@ test("the compiled daemon serves authenticated health before cold SQL hydration 
   const built = Bun.spawnSync([process.execPath, "build", "--compile", "--define", "KIZUKI_COMPILED=true",
     join(import.meta.dir, "../src/main.ts"), "--outfile", binary], { stdout: "ignore", stderr: "pipe", timeout: 30_000 });
   expect(built.exitCode, built.stderr.toString()).toBe(0);
-  const daemon = Bun.spawn([binary, "serve", "--port", "0", "--vault", vault], {
+  const startDaemon = () => Bun.spawn([binary, "serve", "--port", "0", "--vault", vault], {
     env: { ...process.env, ...env }, stdout: "ignore", stderr: "ignore",
   });
-  try {
+  let daemon = startDaemon();
+  async function waitForHttp(): Promise<void> {
     const deadline = performance.now() + 15_000;
-    let endpoint = readServeEndpoint(vault, readServeProcessMarker(vault));
-    while (endpoint === null && daemon.exitCode === null && performance.now() < deadline) {
+    while (!readServeEndpoint(vault, readServeProcessMarker(vault))) {
+      if (daemon.exitCode !== null || performance.now() >= deadline) throw new Error("daemon did not publish HTTP");
       await Bun.sleep(10);
-      endpoint = readServeEndpoint(vault, readServeProcessMarker(vault));
     }
-    if (endpoint === null) throw new Error("cold daemon did not publish HTTP");
+  }
+  try {
+    await waitForHttp();
     const client = liveReadDaemon({ env, vaultOverride: vault, stdinIsTTY: false,
       stdoutIsTTY: false, stderrIsTTY: false, prompt: async () => "", out() {}, err() {} });
     if (!client) throw new Error("cold daemon read client unavailable");
     expect(await client.health()).toMatchObject({ tool: "system_health", data: { events: 0 } });
     expect(existsSync(engine)).toBe(false);
-    while (!existsSync(engine) && daemon.exitCode === null && performance.now() < deadline) await Bun.sleep(20);
+    daemon.kill("SIGTERM");
+    expect(await daemon.exited).toBe(0);
     expect(existsSync(engine)).toBe(true);
+    expect(readServeProcessMarker(vault)).toBeNull();
+    daemon = startDaemon();
+    await waitForHttp();
     const query = Bun.spawn([binary, "query", "synthetic", "--json", "--vault", vault], {
       env: { ...process.env, ...env }, stdout: "pipe", stderr: "ignore",
     });
