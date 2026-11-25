@@ -3,7 +3,7 @@ import { withDeadline } from '@kizuki/core';
 /** Trusted launch URL only; it contains the ephemeral capability and must never be logged. */
 export async function openAppBrowser(raw: string, connected: () => boolean = () => false): Promise<void> {
     const url = new URL(raw);
-    if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port || url.pathname !== '/' || url.search || url.username || url.password || !/^#token=[A-Za-z0-9_-]{43}$/.test(url.hash))
+    if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port || url.pathname !== '/' || url.search || url.username || url.password || !/^#token=(?:kzs_)?[A-Za-z0-9_-]{43}$/.test(url.hash))
         throw Error('app_browser_unavailable');
     const executable = process.platform === 'linux' ? '/usr/bin/xdg-open' : process.platform === 'darwin' ? '/usr/bin/open' : null;
     if (!executable)
@@ -20,6 +20,7 @@ export async function openAppBrowser(raw: string, connected: () => boolean = () 
     try {
         if (await withDeadline(exited, 5000, 'app browser deadline') !== 0)
             throw Error();
+        child.off('error', onError);
     }
     catch {
         // Some system openers remain attached to the browser. An authenticated

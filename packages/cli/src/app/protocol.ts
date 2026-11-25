@@ -6,6 +6,12 @@ export type AppWorldCorrectionTarget = { readonly world_claim: { readonly kind: 
 export type AppCorrectionRequest = { statement: string; object?: string } & (
     { claim_id: string; target?: never } | { target: AppWorldCorrectionTarget; claim_id?: never }
 );
+export interface AppLocalCapabilities {
+    retrieval: 'fts5' | 'embedded_pg' | 'external_pg' | 'custom' | 'unavailable';
+    embedding: 'none' | 'gguf' | 'local_http' | 'unavailable';
+    memt: 'off' | 'local_hybrid' | 'gpu_configured' | 'unavailable';
+    memt_model?: string | null;
+}
 export interface AppServiceStatus {
     intent: ServeIntent | 'unknown';
     kind: SupervisorKind;
@@ -14,6 +20,8 @@ export interface AppServiceStatus {
     checked_at: string;
     /** True when the native service belongs to another workspace with the same identity, so enabling here would be refused. */
     other_workspace?: true;
+    /** Read-only local search, embedding, and MemT configuration summary (zero network probes, no secrets or paths). */
+    local_capabilities?: AppLocalCapabilities;
 }
 export const APP_API_PREFIX = '/app/v1/';
 export interface AppError {
