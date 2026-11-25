@@ -18,32 +18,41 @@ export function instantSecondSql(column: string): string {
   // RFC3339 offsets through 23:59. Parse the wall clock as UTC and apply the
   // validated offset arithmetically so accepted rows never become SQL NULL.
   const offset = `(CAST(substr(${tz}, 2, 2) AS INTEGER) * 3600 + CAST(substr(${tz}, 5, 2) AS INTEGER) * 60)`;
-  return `(unixepoch(
-  replace(
-    CASE
-      WHEN substr(${column}, 18, 2) = '60' THEN
-        substr(${column}, 1, 17) || '59Z'
-      ELSE
-        substr(${column}, 1, 19) || 'Z'
-    END,
-    't', 'T'
-  )
-) - CASE substr(${tz}, 1, 1)
-  WHEN '+' THEN ${offset}
-  WHEN '-' THEN -${offset}
-  ELSE 0
+  // Fast path for canonical uppercase UTC timestamps (`YYYY-MM-DDTHH:MM:SS...Z`,
+  // non-leap-second), avoiding `replace()` and offset parsing on the common case.
+  return `(CASE
+  WHEN substr(${column}, 11, 1) = 'T' AND substr(${column}, -1) = 'Z' AND substr(${column}, 18, 2) <> '60'
+    THEN unixepoch(substr(${column}, 1, 19) || 'Z')
+  ELSE unixepoch(
+    replace(
+      CASE
+        WHEN substr(${column}, 18, 2) = '60' THEN
+          substr(${column}, 1, 17) || '59Z'
+        ELSE
+          substr(${column}, 1, 19) || 'Z'
+      END,
+      't', 'T'
+    )
+  ) - CASE substr(${tz}, 1, 1)
+    WHEN '+' THEN ${offset}
+    WHEN '-' THEN -${offset}
+    ELSE 0
+  END
 END)`;
 }
 
 export function instantNanoSql(column: string): string {
   return `CASE
   WHEN substr(${column}, 18, 2) = '60' THEN 999999999
-  WHEN substr(${column}, 20, 1) = '.' THEN CAST(substr((
-    CASE
-      WHEN lower(substr(${column}, -1)) = 'z' THEN substr(${column}, 21, length(${column}) - 21)
-      ELSE substr(${column}, 21, length(${column}) - 26)
-    END
-  ) || '000000000', 1, 9) AS INTEGER)
+  WHEN substr(${column}, 20, 1) = '.' THEN CASE
+    WHEN length(${column}) = 24 AND substr(${column}, 20, 5) = '.000Z' THEN 0
+    ELSE CAST(substr((
+      CASE
+        WHEN lower(substr(${column}, -1)) = 'z' THEN substr(${column}, 21, length(${column}) - 21)
+        ELSE substr(${column}, 21, length(${column}) - 26)
+      END
+    ) || '000000000', 1, 9) AS INTEGER)
+  END
   ELSE 0
 END`;
 }

@@ -4,7 +4,7 @@ import type { RetrievalAuthority } from "../contracts/retrieval";
 import { readDerivedMeta, stampDerived } from "../derived-meta";
 import type { DerivedStamp } from "../derived-meta";
 import { assertDerivedDiscoveryReady, markDerivedHeld, readDerivedHolds } from "../derived-holds";
-import { latestLedgerCursor, LIVE_PREDICATE, replayLive } from "../ledger/ledger";
+import { latestLedgerCursor, LIVE_PREDICATE } from "../ledger/ledger";
 import { tableExists } from "../ledger/schema";
 import { retrievalDocId } from "../retrieval/ids";
 import { ulid } from "../util/ulid";
@@ -111,29 +111,34 @@ export function eventDocument(event: CaptureEvent): SearchDocument {
 const DOCUMENT_COLUMNS = `doc_id, scope, title, body, path, page_type, sensitivity,
        taint, authority, occurred_at, connector_id, subjects, provenance`;
 
-function insertDocument(db: Database, doc: SearchDocument): void {
-  db.query<
-    never,
-    [
-      string,
-      string,
-      string,
-      string,
-      string,
-      string,
-      string,
-      string,
-      string,
-      string,
-      string,
-      string,
-      string,
-    ]
-  >(
-    `INSERT OR REPLACE INTO search_documents (
-       ${DOCUMENT_COLUMNS}
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
+const INSERT_DOCUMENT_SQL = `INSERT OR REPLACE INTO search_documents (
+  ${DOCUMENT_COLUMNS}
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+const INSERT_DOCUMENT_RETURNING_SQL = `${INSERT_DOCUMENT_SQL} RETURNING rowid`;
+
+const INSERT_FTS_SQL = `INSERT INTO search_docs (
+  rowid, ${DOCUMENT_COLUMNS}
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+type DocumentBindings = [
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+];
+
+function documentBindings(doc: SearchDocument): DocumentBindings {
+  return [
     doc.docId,
     doc.scope,
     doc.title,
@@ -147,7 +152,11 @@ function insertDocument(db: Database, doc: SearchDocument): void {
     doc.connectorId,
     JSON.stringify(doc.subjects),
     JSON.stringify(doc.provenance),
-  );
+  ];
+}
+
+function insertDocument(db: Database, doc: SearchDocument): void {
+  db.query<never, DocumentBindings>(INSERT_DOCUMENT_SQL).run(...documentBindings(doc));
 }
 
 /**
@@ -172,54 +181,22 @@ function deleteFtsRow(db: Database, rowid: number | null): void {
   db.query<never, [number]>("DELETE FROM search_docs WHERE rowid = ?").run(rowid);
 }
 
-function insertFtsRow(db: Database, doc: SearchDocument, rowid: number): void {
-  db.query<
-    never,
-    [
-      number,
-      string,
-      string,
-      string,
-      string,
-      string,
-      string,
-      string,
-      string,
-      string,
-      string,
-      string,
-      string,
-      string,
-    ]
-  >(
-    `INSERT INTO search_docs (
-       rowid, ${DOCUMENT_COLUMNS}
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    rowid,
-    doc.docId,
-    doc.scope,
-    doc.title,
-    doc.body,
-    doc.path,
-    doc.pageType,
-    doc.sensitivity,
-    doc.taint,
-    doc.authority,
-    doc.occurredAt,
-    doc.connectorId,
-    JSON.stringify(doc.subjects),
-    JSON.stringify(doc.provenance),
-  );
+/** Insert a document whose prior row (if any) has already been withdrawn. */
+function insertFreshDoc(db: Database, doc: SearchDocument): void {
+  const bindings = documentBindings(doc);
+  const rowid = db
+    .query<{ rowid: number }, DocumentBindings>(INSERT_DOCUMENT_RETURNING_SQL)
+    .get(...bindings)?.rowid;
+  if (rowid !== undefined) {
+    db.query<never, [number, ...DocumentBindings]>(INSERT_FTS_SQL).run(rowid, ...bindings);
+  }
 }
 
 function insertDoc(db: Database, doc: SearchDocument): void {
   // INSERT OR REPLACE gives the row a new rowid, so withdraw the old companion
   // before the authoritative row moves.
   deleteFtsRow(db, documentRowId(db, doc.docId));
-  insertDocument(db, doc);
-  const rowid = documentRowId(db, doc.docId);
-  if (rowid !== null) insertFtsRow(db, doc, rowid);
+  insertFreshDoc(db, doc);
 }
 
 export function deleteDoc(db: Database, scope: DocScope, docId: string): void {
@@ -252,7 +229,7 @@ export function replacePage(db: Database, page: CanonPage, assessed?: WalkEviden
     markDerivedHeld(db, "search", held.size + (isLiveCanonPage(page) && !isDeterministicBrief(page) && evidence === undefined ? 1 : 0));
     return;
   }
-  insertDoc(db, pageDocument(page, evidence.revision.authority));
+  insertFreshDoc(db, pageDocument(page, evidence.revision.authority));
 }
 
 function replaceEvent(db: Database, event: CaptureEvent): void {
@@ -277,7 +254,7 @@ function replaceEvent(db: Database, event: CaptureEvent): void {
   // Keep every live version in the shared projection. Search selects the
   // current version in the reader's scope, so hidden revisions cannot erase
   // answers visible at a lower ceiling.
-  insertDoc(db, eventDocument(event));
+  insertFreshDoc(db, eventDocument(event));
 }
 
 /** Update projection counts without certifying unrelated canon or ledger coverage. */
@@ -312,13 +289,18 @@ export function indexEvent(db: Database, event: CaptureEvent): void {
 /** Durable live coverage, shared by incremental indexing and idle reconciliation. */
 export function searchLedgerWatermark(db: Database): string | null {
   // Durable live coverage closes old gaps and repairs stale upgrade stamps.
-  // Tombstoned records no longer belong to the served corpus.
+  // Tombstoned records no longer belong to the served corpus. When no
+  // tombstones exist in the ledger, avoid the per-row correlated tombstone check.
+  const hasTombstones =
+    db.query<{ found: number }, []>("SELECT 1 AS found FROM events WHERE deleted = 1 LIMIT 1").get() !== null;
+  const livePredicate = hasTombstones ? LIVE_PREDICATE : "events.deleted = 0";
   const gap = db.query<{ accepted_at: string; event_id: string }, []>(`
-    SELECT accepted_at, event_id FROM events WHERE ${LIVE_PREDICATE}
-    AND NOT EXISTS (
+    SELECT accepted_at, event_id FROM events
+    WHERE NOT EXISTS (
       SELECT 1 FROM search_documents d JOIN search_docs f ON f.rowid=d.rowid AND f.doc_id=d.doc_id
       WHERE d.doc_id='event:' || events.event_id AND d.scope='ledger'
-    ) ORDER BY accepted_at, event_id LIMIT 1
+    ) AND ${livePredicate}
+    ORDER BY accepted_at, event_id LIMIT 1
   `).get();
   const cursor = gap === null ? latestLedgerCursor(db) : db.query<{ accepted_at: string; event_id: string }, [string, string]>(`
     SELECT accepted_at, event_id FROM events WHERE (accepted_at, event_id) < (?, ?)
@@ -413,19 +395,30 @@ function stampSearch(
   };
 }
 
-/** Canon companion rows need a current page snapshot before FTS restoration. */
-export function projectSearchDocs(db: Database, pages: readonly CanonPage[] = [], assessed?: WalkEvidence): number {
+function projectSearchDocsInternal(
+  db: Database,
+  pages: readonly CanonPage[],
+  assessed: WalkEvidence | undefined,
+  clearExistingCanon: boolean,
+): { withheld: number; pageCount: number } {
   assertDerivedDiscoveryReady(db);
   const held = readDerivedHolds(db).paths;
   const evidence = projectablePageEvidence(db, pages, assessed);
-  const prior = db.query<{ count: number }, []>("SELECT count(*) AS count FROM search_documents WHERE scope='canon'").get()!.count;
-  db.exec("DELETE FROM search_documents WHERE scope='canon'");
+  const prior = clearExistingCanon
+    ? db.query<{ count: number }, []>("SELECT count(*) AS count FROM search_documents WHERE scope='canon'").get()!.count
+    : 0;
+  if (clearExistingCanon) {
+    db.exec("DELETE FROM search_documents WHERE scope='canon'");
+  }
+  const insert = db.query<never, DocumentBindings>(INSERT_DOCUMENT_SQL);
   let withheld = held.size;
+  let pageCount = 0;
   for (const page of pages) {
     if (!isLiveCanonPage(page) || isDeterministicBrief(page) || held.has(page.relPath)) continue;
     const admitted = evidence.get(page.relPath);
     if (admitted === undefined) { withheld += 1; continue; }
-    insertDocument(db, pageDocument(page, admitted.revision.authority));
+    insert.run(...documentBindings(pageDocument(page, admitted.revision.authority)));
+    pageCount += 1;
   }
   db.exec("DELETE FROM search_docs");
   db.exec(
@@ -434,9 +427,14 @@ export function projectSearchDocs(db: Database, pages: readonly CanonPage[] = []
   );
   // A schema-only recovery has no canon snapshot. Preserve ledger search and
   // require a canon rebuild instead of trusting the old companion payload.
-  if (pages.length === 0) withheld = Math.max(withheld, prior);
+  if (clearExistingCanon && pages.length === 0) withheld = Math.max(withheld, prior);
   markDerivedHeld(db, "search", withheld);
-  return withheld;
+  return { withheld, pageCount };
+}
+
+/** Canon companion rows need a current page snapshot before FTS restoration. */
+export function projectSearchDocs(db: Database, pages: readonly CanonPage[] = [], assessed?: WalkEvidence): number {
+  return projectSearchDocsInternal(db, pages, assessed, true).withheld;
 }
 
 /** Rebuild the search layer. Caller owns the transaction. */
@@ -446,17 +444,34 @@ export function rebuildSearchLayer(
 ): SearchRebuildResult {
   assertDerivedDiscoveryReady(db);
   db.exec("DELETE FROM search_documents");
-  for (const event of replayLive(db, {})) {
-    insertDocument(db, eventDocument(event));
-  }
-  const withheld = projectSearchDocs(db, input.pages);
-  const counts = db
-    .query<{ scope: string; count: number }, []>(
-      "SELECT scope, count(*) AS count FROM search_documents GROUP BY scope",
+  const hasTombstones =
+    db.query<{ found: number }, []>("SELECT 1 AS found FROM events WHERE deleted = 1 LIMIT 1").get() !== null;
+  const livePredicate = hasTombstones ? LIVE_PREDICATE : "events.deleted = 0";
+  const eventCount = db
+    .query<never, []>(
+      `INSERT INTO search_documents (${DOCUMENT_COLUMNS})
+       SELECT
+         CASE WHEN events.event_id LIKE 'event:%' THEN events.event_id ELSE 'event:' || events.event_id END,
+         'ledger',
+         events.connector_id || ' ' || events.kind,
+         events.text,
+         '',
+         events.kind,
+         coalesce(events.sensitivity_hint, 'unlabeled'),
+         'quoted',
+         'connector_evidence',
+         events.occurred_at,
+         events.connector_id,
+         CASE
+           WHEN events.subjects = '[]' THEN '[]'
+           ELSE coalesce((SELECT json_group_array(json_extract(value, '$.subject_id')) FROM json_each(events.subjects)), '[]')
+         END,
+         json_array(CASE WHEN events.event_id LIKE 'event:%' THEN events.event_id ELSE 'event:' || events.event_id END)
+       FROM events
+       WHERE ${livePredicate}`,
     )
-    .all();
-  const pageCount = counts.find(({ scope }) => scope === "canon")?.count ?? 0;
-  const eventCount = counts.find(({ scope }) => scope === "ledger")?.count ?? 0;
+    .run().changes;
+  const { withheld, pageCount } = projectSearchDocsInternal(db, input.pages, undefined, false);
   stampDerived(db, stampSearch(db, input, pageCount, eventCount, withheld));
   return {
     pages: pageCount,

@@ -44,6 +44,20 @@ describe("toRelaxedFtsQuery", () => {
   test("treats a leading question or instruction word as question-shaped without a question mark", () => {
     expect(toRelaxedFtsQuery("tell me the launch date")?.terms).toEqual(['"launch"*', '"date"*']);
   });
+
+  test("expands short-root inflections, doubled consonants, and -ies/-ied forms without over-broad prefixes", () => {
+    const owns = toRelaxedFtsQuery("Who owns the mobile client?");
+    expect(owns?.terms[0]).toBe('("own" OR "owns" OR "owned" OR "owning" OR "owner" OR "owners")');
+
+    const running = toRelaxedFtsQuery("Are we running the backup job?");
+    expect(running?.terms[0]).toBe('("run" OR "runs" OR "runned" OR "running" OR "runner" OR "runners")');
+
+    const shipping = toRelaxedFtsQuery("When are we shipping the beta?");
+    expect(shipping?.terms[0]).toBe('"ship"*');
+
+    const supplies = toRelaxedFtsQuery("Which vendor supplies the archive?");
+    expect(supplies?.terms[1]).toBe('("suppli"* OR "supply"*)');
+  });
 });
 
 describe("relaxed question search", () => {
@@ -112,5 +126,40 @@ describe("relaxed question search", () => {
     const { db } = corpus();
     const result = searchResult(db, "unladen swallow velocity", OPTIONS);
     expect(result).toEqual({ hits: [], degraded: [] });
+  });
+
+  test("short-root inflection matches related nominal form without false prefix hits", () => {
+    const { db } = corpus();
+    const owner = storedEvent(db, "owner-note", {
+      text: "The mobile client owner is Priya.",
+      sensitivity_hint: "personal",
+    });
+    const unrelated = storedEvent(db, "category-note", {
+      text: "Category guidelines for mobile client design.",
+      sensitivity_hint: "personal",
+    });
+    indexEvent(db, owner);
+    indexEvent(db, unrelated);
+
+    const ownResult = searchResult(db, "Who owns the mobile client?", OPTIONS);
+    expect(ownResult.hits[0]?.doc_id).toBe(`event:${owner.event_id}`);
+    expect(ownResult.hits[0]?.coverage).toBe(1);
+
+    const catResult = searchResult(db, "Where do cats sleep in the category?", OPTIONS);
+    expect(catResult.hits.map((hit) => hit.doc_id)).not.toContain(`event:${unrelated.event_id}`);
+  });
+
+  test("rejects partial-coverage hits whose matched terms are distant and absent from the title", () => {
+    const { db } = corpus();
+    const distant = storedEvent(db, "distant-words", {
+      text:
+        "Our office is in Lisbon on a two year lease. " +
+        "This record is maintained by operations and reviewed every quarter at the start of the fiscal cycle.",
+      sensitivity_hint: "personal",
+    });
+    indexEvent(db, distant);
+    const result = searchResult(db, "When does the Lisbon marathon start?", OPTIONS);
+    expect(result.hits).toEqual([]);
+    expect(result.degraded).toEqual(["query-relaxed", "query-no-match"]);
   });
 });
