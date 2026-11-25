@@ -15,10 +15,10 @@ const OBJECTS = 240;
 const SUMMARY = "A synthetic consolidated summary.";
 
 /** More objects than one public read may verify: the shape that collapsed the whole Atlas. */
-async function largeVault() {
+async function largeVault(objects = OBJECTS) {
   const db = openLedger(":memory:");
   const first = await worldSeed(db, { model: EMPTY_SUMMARY_MODEL, subject: "topic:n0", label: "Concept 0" });
-  for (let i = 1; i < OBJECTS; i++) {
+  for (let i = 1; i < objects; i++) {
     const kind = i % 3 === 0 ? "situation" : "concept";
     await worldSeed(db, { sourceKey: first.sourceKey, kind, subject: `${kind === "concept" ? "topic" : "situation"}:n${i}`, label: `${kind} number ${i}`, discover: false });
   }
@@ -53,7 +53,9 @@ test("a vault larger than one read budget still serves every Atlas panel and con
 
     const home = atlas(serveWorldView(first.ctx, { operation: "atlas", panel: "home", ...when }));
     expect(home.panels.map(panel => panel.panel)).toEqual(["resume", "changed", "people", "questions", "commitments", "stale", "corrections"]);
-    expect(home.panels.find(panel => panel.panel === "resume")!.entries.length).toBeGreaterThan(0);
+    // Home composes resume last, from what the browse panels left; asked for alone it has the whole allowance.
+    expect(home.panels.find(panel => panel.panel === "resume")).toMatchObject({ reason: null });
+    expect(atlas(serveWorldView(first.ctx, { operation: "atlas", panel: "resume", ...when })).panels[0]!.entries.length).toBeGreaterThan(0);
     // A budgeted panel names its own cause; it never takes the composed panels with it.
     for (const panel of home.panels.filter(panel => panel.status === "unavailable")) {
       expect(panel.reason === "budget" || panel.reason === "baseline_required").toBe(true);
@@ -69,3 +71,20 @@ test("a vault larger than one read budget still serves every Atlas panel and con
     for (const entry of stale.entries) expect(entry.relations.length).toBeGreaterThan(0);
   } finally { db.close(); }
 });
+
+test("a multi-thousand-object vault serves the Atlas home browse panels and consolidates from a cold start", async () => {
+  const { db, first, llm } = await largeVault(2_400);
+  try {
+    expect(db.query<{ n: number }, []>("SELECT count(*) AS n FROM world_consolidation").get()!.n).toBe(0);
+    const run = await runWorldJobs({ db, vaultPath: "", now: () => new Date().toISOString(), stopRequested: () => false, modelConfigured: true, llm });
+    expect(run.errors).toEqual([]);
+    expect(db.query<{ n: number }, [string]>("SELECT count(*) AS n FROM world_consolidation WHERE status='complete' AND summary=?").get(SUMMARY)!.n).toBeGreaterThan(0);
+
+    const home = atlas(serveWorldView(first.ctx, { operation: "atlas", panel: "home", ...when }));
+    // The open-ended resume slice composes last: it cannot starve a bounded browse panel.
+    for (const name of ["people", "questions", "commitments", "stale"] as const)
+      expect(home.panels.find(panel => panel.panel === name)).toMatchObject({ reason: null });
+    expect(home.panels.find(panel => panel.panel === "stale")!.entries).toHaveLength(4);
+    expect(home.panels.filter(panel => panel.reason === "budget")).toEqual([]);
+  } finally { db.close(); }
+}, 600_000);

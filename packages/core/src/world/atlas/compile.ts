@@ -145,7 +145,11 @@ export function compileAtlas(frame: WorldFrame, query: AtlasQuery, when: WorldWh
     if (reason && entries.length) gaps.add("coverage");
     return panel(name, cov(when, gaps), entries, entries.length ? null : reason);
   };
-  const panels = (query.panel === "home" ? ATLAS_PROVIDER_SLOTS : [query.panel]).map(one);
+  const names: readonly PanelName[] = query.panel === "home" ? ATLAS_PROVIDER_SLOTS : [query.panel];
+  // Bounded browse panels compose before the open-ended resume slice: the slice
+  // spends what the shared allowance has left, never the browse panels' share.
+  const composed = new Map([...names].sort((a, b) => Number(a === "resume") - Number(b === "resume")).map(name => [name, one(name)]));
+  const panels = names.map(name => composed.get(name)!);
   // Nothing but spent allowance to show: the request itself is over budget.
   if (panels.every(one => one.reason === "budget")) throw new WorldProjectionBudgetError();
   const coverage = cov(when, panels.flatMap(one => one.coverage.gaps));
