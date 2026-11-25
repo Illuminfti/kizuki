@@ -3,9 +3,10 @@ import { basename, join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { ServeError, SourceGrantError, UndoError, WorldViewError, CanonRecoveryError, getCanonReceipt, inspectCanonRecovery, OWNER, getClaimsEpoch, sourcePolicyEpoch, getCheckpoint, initAgents, inspectSourceGrant, installServeService, queryServeService, readServeIntent, readVaultId, listAuditReceipts, listConnections, resumeSourceRevocation, revokeSourceGrant, runBackfill, runSync, runRail, serveSearch, setSourceGrant, undoReceipt, withDeadline } from '@kizuki/core';
-import type { Connector, SourceGrantPolicy, ServeContext } from '@kizuki/core';
+import { ServeError, SourceGrantError, UndoError, WorldViewError, CanonRecoveryError, getCanonReceipt, inspectCanonRecovery, OWNER, getClaimsEpoch, sourcePolicyEpoch, getCheckpoint, inspectCheckpoints, initAgents, inspectSourceGrant, installServeService, queryServeService, readServeIntent, readVaultId, listCanonReceipts, listConnections, loadConfiguredRetrieval, loadEmbeddingSelection, resumeSourceRevocation, revokeSourceGrant, runBackfill, runSync, runRail, serveSearch, setSourceGrant, undoReceipt, withDeadline } from '@kizuki/core';
+import type { Checkpoint, Connector, SourceGrantPolicy, ServeContext } from '@kizuki/core';
 import { activeWorldOps, worldOpInputKeys, serveWorldView } from '@kizuki/core/world';
+import { loadMemtConfig } from '@kizuki/memt';
 import { createGmailConnector, inspectGmailState, assertSameGmailIdentity } from '@kizuki/connector-gmail';
 import { createGoogleCalendarConnector, inspectGoogleCalendarState, assertSameGoogleCalendarIdentity } from '@kizuki/connector-google-calendar';
 import { inspectXApiState } from '@kizuki/connectors';
@@ -25,7 +26,7 @@ import { readModelSelection, readModelSettings, saveModelSettings, testModelSett
 import { enrollAppAgentSetup, revokeAppAgent } from './agents';
 import { inspectOwnerPageCorrectionTargets, inspectOwnerCorrectionPageCount, listAgents, serveCorrect, type Grant } from '@kizuki/core';
 import type { CliIo } from '../commands';
-import type { AppCatalogEntry, AppError, AppOperation, AppRoute, AppSource, AppServiceStatus, AppModelStatus, AppModelTest, AppWorldCorrectionTarget } from './protocol';
+import { APP_API_PREFIX, type AppCatalogEntry, type AppError, type AppLocalCapabilities, type AppOperation, type AppRoute, type AppSource, type AppServiceStatus, type AppModelStatus, type AppModelTest, type AppWorldCorrectionTarget } from './protocol';
 export interface AppHostDeps {
     gmail?: GmailFactory;
     calendar?: GoogleCalendarFactory;
@@ -105,6 +106,37 @@ function failure(error: unknown): AppError {
     const code = error instanceof AppFailure ? error.code : error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
     const allowed = ['invalid_request', 'no_vault', 'busy', 'writer_busy', 'unauthorized', 'consent_required', 'source_capture_denied', 'source_field_denied', 'revision_conflict', 'source_revision_conflict', 'source_not_enrolled', 'source_not_active', 'misconfigured', 'identity_conflict', 'custody_unknown', 'service_unavailable', 'configuration_invalid', 'configuration_unsupported', 'credential_invalid', 'custody_unavailable', 'transaction_unavailable', 'model_unconfigured', 'model_test_failed', 'processing_failed', 'mcp_unavailable', 'invalid_grant', 'credential_unsafe', 'credential_conflict', 'operation_conflict', 'name_conflict', 'migration_required', 'enrollment_busy', 'recovery_required', 'enrollment_unavailable', 'correction_failed', 'recovery_pending'];
     return { code: allowed.includes(code) ? code : 'unavailable', retryable: ['busy', 'writer_busy', 'unavailable', 'service_unavailable', 'transaction_unavailable'].includes(code) };
+}
+/** Strictly read-only, zero-network summary of optional local retrieval/embedding/MemT config; never discloses paths or secrets. */
+function inspectLocalCapabilities(vaultPath: string, env: Record<string, string | undefined>): AppLocalCapabilities {
+    let retrieval: AppLocalCapabilities['retrieval'] = 'unavailable';
+    try {
+        const id = loadConfiguredRetrieval(vaultPath).id;
+        retrieval = id === 'kizuki.retrieval.fts5' ? 'fts5'
+            : id === 'kizuki.retrieval.embedded-pg' ? 'embedded_pg'
+            : id === 'kizuki.retrieval.pg' ? 'external_pg'
+            : 'custom';
+    } catch { retrieval = 'unavailable'; }
+    let embedding: AppLocalCapabilities['embedding'] = 'unavailable';
+    try {
+        const selection = loadEmbeddingSelection(vaultPath);
+        if (selection.state !== 'invalid') {
+            embedding = selection.id === 'kizuki.embedding.none' ? 'none'
+                : selection.id === 'kizuki.embedding.gguf' ? 'gguf'
+                : selection.id === 'kizuki.embedding.local-http' ? 'local_http'
+                : 'unavailable';
+        }
+    } catch { embedding = 'unavailable'; }
+    let memt: AppLocalCapabilities['memt'] = 'unavailable';
+    let memtModel: string | null = null;
+    try {
+        const config = loadMemtConfig(vaultPath, env);
+        if (!config.enabled) memt = 'off';
+        else if (config.url !== null) { memt = 'gpu_configured'; memtModel = config.model; }
+        else if (existsSync(config.registryPath)) { memt = 'local_hybrid'; memtModel = config.model; }
+        else memt = 'off';
+    } catch { memt = 'unavailable'; }
+    return { retrieval, embedding, memt, ...(memtModel !== null ? { memt_model: memtModel } : {}) };
 }
 const fullFields = ['text', 'subjects', 'metadata', 'attachments'];
 export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { noService?: boolean } = {}) {
@@ -224,8 +256,9 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
             }));
         }
         if (route === 'status') {
-            const epoch = ready() ? await readContext(async (ctx) => `${sourcePolicyEpoch(ctx.db)}:${getClaimsEpoch(ctx.db)}:${modelSelection()?.revision ?? 'model-unavailable'}`) : 'uninitialized';
-            return { visibility_epoch: epoch, vault: { ready: ready(), name: basename(selected) }, setup_location: selected, setup_no_service: options.noService === true, setup_supervisor: detectSupervisorKind(baseIo.env), operations: [...jobs.values()] };
+            const vaultReady = ready();
+            const epoch = vaultReady ? await readContext(async (ctx) => `${sourcePolicyEpoch(ctx.db)}:${getClaimsEpoch(ctx.db)}:${modelSelection()?.revision ?? 'model-unavailable'}`) : 'uninitialized';
+            return { visibility_epoch: epoch, vault: { ready: vaultReady, name: basename(selected) }, setup_location: selected, setup_no_service: options.noService === true, setup_supervisor: detectSupervisorKind(baseIo.env), operations: [...jobs.values()] };
         }
         if (route === 'model_status') return readContext(async () => modelStatus());
         if (route === 'model_save') {
@@ -298,7 +331,7 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
             if (!ready()) throw new AppFailure('no_vault');
             // Keep synchronous supervisor queries off the privacy-epoch polling route.
             const host = supervisor(baseIo.env, selected);
-            const status: AppServiceStatus = { intent: 'unknown', kind: host.kind, state: 'unknown', detail: 'Background activity could not be confirmed. Refresh to check again.', checked_at: new Date().toISOString() };
+            const status: AppServiceStatus = { intent: 'unknown', kind: host.kind, state: 'unknown', detail: 'Background activity could not be confirmed. Refresh to check again.', checked_at: new Date().toISOString(), local_capabilities: inspectLocalCapabilities(selected, baseIo.env) };
             try {
                 status.intent = readServeIntent(selected);
                 const id = readVaultId(selected);
@@ -359,11 +392,21 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
         if (route === 'sources')
             return readContext(async (ctx) => {
                 const rows = listConnections(ctx.db, { includeDisconnected: true });
-                const configured = modelSelection();
                 if (rows.length > 64)
                     throw new AppFailure('unavailable');
+                if (rows.length === 0)
+                    return { sources: [] };
+                const configured = modelSelection();
+                // Single batched checkpoint query avoids N+1 SQLite reads as sources grow.
+                const checkpoints = new Map<string, Checkpoint | 'invalid'>();
+                for (const item of inspectCheckpoints(ctx.db, rows.map(row => row.source_key))) {
+                    if (item.ok) checkpoints.set(`${item.value.connector_id}\0${item.value.source_key}`, item.value);
+                    else checkpoints.set(`${item.connector_id}\0${item.source_key}`, 'invalid');
+                }
                 return { sources: rows.map(row => {
-                        const grant = inspectSourceGrant(ctx.db, row.source_key), checkpoint = getCheckpoint(ctx.db, row.connector_id, row.source_key);
+                        const grant = inspectSourceGrant(ctx.db, row.source_key);
+                        const cached = checkpoints.get(`${row.connector_id}\0${row.source_key}`);
+                        const checkpoint = cached === 'invalid' ? getCheckpoint(ctx.db, row.connector_id, row.source_key) : (cached ?? null);
                         let required = ['text', 'subjects', 'metadata'], state = row.disconnected_at ? 'disconnected' : 'enrolled';
                         if (row.connector_id === 'kizuki.gmail' || row.connector_id === 'kizuki.google-calendar' || row.connector_id === 'kizuki.x') {
                             // Explicit authenticated owner inspection; never reused for capture admission.
@@ -395,7 +438,8 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
         }
         if (route === 'activity') {
             const count = limit(input.limit);
-            return readContext(async (ctx) => ({ receipts: listAuditReceipts(ctx.db, { limit: count }).map(row => ({ id: row.receipt_id, at: row.at, action: row.page_action, page: row.page_path, reverted: row.reverted_by !== null })) }));
+            // Read newest receipts directly without scanning the full claims table for contested keys unused here.
+            return readContext(async (ctx) => ({ receipts: listCanonReceipts(ctx.db, { newest_first: true, limit: count }).map(row => ({ id: row.receipt_id, at: row.at, action: row.page_action, page: row.page_path, reverted: row.reverted_by !== null })) }));
         }
         if (route === 'consent') {
             const key = sourceKey(input.source_key), expected = revision(input.expected_revision), id = string(input.operation_id, 128);
@@ -561,7 +605,12 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
             try {
                 if (closed)
                     throw new AppFailure('unavailable');
-                const route = new URL(request.url).pathname.slice('/app/v1/'.length);
+                if (request.method !== 'POST')
+                    throw new AppFailure('invalid_request');
+                const { pathname } = new URL(request.url);
+                if (!pathname.startsWith(APP_API_PREFIX))
+                    throw new AppFailure('invalid_request');
+                const route = pathname.slice(APP_API_PREFIX.length);
                 const keys = routeKeys(route);
                 if (keys === undefined)
                     throw new AppFailure('invalid_request');
@@ -578,11 +627,24 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
                 return Response.json({ ok: false, error: failure(error) }, { status: 400 });
             }
         },
-        async close() { closed = true; try {
-            await withDeadline(Promise.all([...active].map(connector => closeHostConnector(connector))).then(() => Promise.allSettled([...pending])), 5000, 'app shutdown deadline');
-        }
-        catch {
-            throw new AppFailure('custody_unknown');
-        } },
+        async close() {
+            closed = true;
+            try {
+                const results = await withDeadline(
+                    Promise.allSettled([...active].map(connector => closeHostConnector(connector)))
+                        .then(async connectorResults => {
+                            await Promise.allSettled([...pending]);
+                            return connectorResults;
+                        }),
+                    5000,
+                    'app shutdown deadline',
+                );
+                if (results.some(result => result.status === 'rejected'))
+                    throw new Error('connector_close_failed');
+            }
+            catch {
+                throw new AppFailure('custody_unknown');
+            }
+        },
     };
 }

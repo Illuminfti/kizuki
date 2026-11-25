@@ -1694,3 +1694,59 @@ test('Observation links render captured roles and quoted passages through the sh
   expect(f.main.textContent).toContain(hostile); expect(f.main.querySelector('img')).toBeNull();
   f.evaluate('invalidatePrivateView()'); expect(f.main.textContent).not.toContain(hostile); expect(f.storageWrites).toHaveLength(0);
 });
+
+test('expired 401 session and manual disconnect clear private views and show distinct reconnect guidance', async () => {
+  const f = fixture();
+  f.evaluate(`state.view='activity'; state.receipts=[{id:'r1',page:'SECRET_PAGE',action:'edit',at:'2026-09-07T00:00:00Z',reverted:false}]; render();`);
+  const req = f.evaluate<Promise<void>>('loadActivity()');
+  f.reply('activity', {}, 401); await req;
+  expect(f.main.textContent).toContain('Session ended');
+  expect(f.main.textContent).toContain('kizuki app');
+  expect(f.main.textContent).not.toContain('SECRET_PAGE');
+  expect(f.evaluate<boolean>("document.getElementById('refresh').disabled")).toBe(true);
+
+  const manual = fixture();
+  manual.evaluate(`disconnect('manual');`);
+  expect(manual.main.textContent).toContain('Tab disconnected');
+  expect(manual.evaluate<boolean>("document.getElementById('refresh').disabled")).toBe(true);
+});
+
+test('Settings shows loading/unavailable service states and escapes local capability labels safely', async () => {
+  const f = fixture();
+  f.evaluate(`state.view='settings'; render();`);
+  const loading = f.evaluate<Promise<void>>('loadService()');
+  expect(f.main.textContent).toContain('Checking background activity');
+  f.requests.splice(0, 1)[0]!.result.resolve({ status: 503, json: async () => ({ ok: false, error: { code: 'unavailable' } }) });
+  await loading;
+  expect(f.main.textContent).toContain('Background activity could not be checked');
+
+  const ok = f.evaluate<Promise<void>>('loadService()');
+  const hostileModel = '<img src=x onerror=alert(1)>';
+  f.reply('service_status', {
+    state: 'active', kind: 'systemd', intent: 'installed', detail: 'Active.', checked_at: '2026-09-07T00:00:00Z',
+    local_capabilities: { retrieval: 'embedded_pg', embedding: 'local_http', memt: 'gpu_configured', memt_model: hostileModel },
+  });
+  await ok;
+  expect(f.main.textContent).toContain('Local search and memory');
+  expect(f.main.textContent).toContain('Embedded vector search');
+  expect(f.main.textContent).toContain('Local HTTP embeddings');
+  expect(f.main.textContent).toContain(hostileModel);
+  expect(f.main.querySelector('img')).toBeNull();
+});
+
+test('Memory guides users when no active sources remain and empty search/world submits do not send invalid requests', async () => {
+  const f = fixture();
+  f.evaluate(`state.view='memory'; state.hits=null; state.sources=[{...state.sources[0], consent:'purged'}]; render();`);
+  expect(f.main.textContent).toContain('No active sources right now.');
+  expect(findAction(f.main, 'Manage sources')).toBeTruthy();
+
+  f.evaluate(`state.sources=[{...state.sources[0], consent:'active', last_run:'2026-09-07T00:00:00Z'}]; render();`);
+  await f.main.querySelector('form')!.fire('submit', { preventDefault() {} });
+  expect(f.requests).toHaveLength(0);
+  expect(f.notice.textContent).toContain('Enter a word or phrase');
+
+  f.evaluate(`state.view='world'; render();`);
+  await f.main.querySelector('#world-slice-form')!.fire('submit', { preventDefault() {} });
+  expect(f.requests).toHaveLength(0);
+  expect(f.notice.textContent).toContain('Describe what you are working on');
+});
