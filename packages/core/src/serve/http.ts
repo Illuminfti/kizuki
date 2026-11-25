@@ -28,6 +28,7 @@ import { isPlainObject } from "../util/validate";
 import { SERVE_TOKEN_PATH, ServeDaemonError } from "./types";
 
 const LOOPBACK = new Set(["127.0.0.1", "::1"]);
+const TOOL_SET: ReadonlySet<string> = new Set(TOOLS);
 const HEALTH_SNAPSHOT_TTL_MS = 5_000;
 const MAX_CACHED_PRINCIPALS = 16;
 
@@ -81,20 +82,27 @@ function writeToken(vaultPath: string, token: string): string {
   return path;
 }
 
+function sha256Digest(value: string): Buffer {
+  return createHash("sha256").update(value).digest();
+}
+
+function sameTokenDigest(presented: string, expectedDigest: Buffer): boolean {
+  return timingSafeEqual(sha256Digest(presented), expectedDigest);
+}
+
 /** Digest both sides so the compare takes the same time for any length or shared prefix. */
 export function sameToken(presented: string, minted: string): boolean {
-  const digest = (value: string) => createHash("sha256").update(value).digest();
-  return timingSafeEqual(digest(presented), digest(minted));
+  return sameTokenDigest(presented, sha256Digest(minted));
 }
 
 function principalFor(
   db: ServeContext["db"],
-  minted: string,
+  mintedDigest: Buffer,
   presented: string | null,
 ): Principal | null {
   if (presented === null) return null;
-  if (sameToken(presented, minted)) return OWNER;
-  return authenticate(db, presented);
+  if (sameTokenDigest(presented, mintedDigest)) return OWNER;
+  return withBoundedBusyWait(db, () => authenticate(db, presented));
 }
 
 function bearer(request: Request): string | null {
@@ -104,34 +112,53 @@ function bearer(request: Request): string | null {
   return match?.[1] ?? null;
 }
 
-function json(status: number, body: unknown): Response {
+function json(status: number, body: unknown, extraHeaders?: Record<string, string>): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: extraHeaders === undefined
+      ? { "content-type": "application/json" }
+      : { "content-type": "application/json", ...extraHeaders },
   });
 }
 
 function refused(error: unknown): Response {
   const writer = scopedWriterRefusal(error);
   if (writer !== null) return json(503, writer);
-  if (error instanceof ServeError) {
+  const serveError =
+    error instanceof ServeError
+      ? error
+      : isLedgerBusy(error)
+        ? ledgerBusyServeError(error)
+        : null;
+  if (serveError !== null) {
     // The contract refusal is the same bytes for every cause, with no retry hint.
-    if (error.code === "unsupported_contract") {
+    if (serveError.code === "unsupported_contract") {
       return json(400, {
         ok: false,
-        error: { code: error.code, message: error.message, retryable: false },
+        error: { code: serveError.code, message: serveError.message, retryable: false },
       });
     }
-    const status = error.code === "rate_limited" ? 429 : error.code === "busy" ? 503 : 400;
-    return json(status, {
-      ok: false,
-      error: {
-        code: error.code,
-        message: error.message,
-        retryable: error.code === "busy",
-        retry_after_seconds: error.retry_after_seconds,
+    const status = serveError.code === "rate_limited" ? 429 : serveError.code === "busy" ? 503 : 400;
+    const retryHeader =
+      (status === 429 || status === 503) &&
+      serveError.retry_after_seconds !== null &&
+      Number.isFinite(serveError.retry_after_seconds) &&
+      serveError.retry_after_seconds > 0
+        ? { "retry-after": String(Math.ceil(serveError.retry_after_seconds)) }
+        : undefined;
+    return json(
+      status,
+      {
+        ok: false,
+        error: {
+          code: serveError.code,
+          message: serveError.message,
+          retryable: serveError.code === "busy",
+          retry_after_seconds: serveError.retry_after_seconds,
+        },
       },
-    });
+      retryHeader,
+    );
   }
   return json(400, {
     ok: false,
@@ -188,7 +215,9 @@ function buildOwnerHealthServed(ctx: ServeContext): Served<HealthData> {
   let labeled = 0;
   let stamped = 0;
   let servable = 0;
+  let held = 0;
   for (const page of index.pages) {
+    if (index.holds.has(page.relPath)) held += 1;
     if (asSensitivity(page.data["sensitivity"]) !== null) labeled += 1;
     if (asTaint(page.data["taint"]) !== null) stamped += 1;
     if (!eligible(page)) continue;
@@ -235,7 +264,7 @@ function buildOwnerHealthServed(ctx: ServeContext): Served<HealthData> {
         labeled,
         stamped,
         servable,
-        held: index.pages.filter((page) => index.holds.has(page.relPath)).length,
+        held,
         withheld: index.withheld.length,
       },
       withheld_pages: index.withheld.map((entry) => ({ path: entry.relPath, problem: entry.reason })),
@@ -269,10 +298,20 @@ export function startServeHttp(options: ServeHttpOptions | AppHttpOptions): Serv
   }
   if (options.mode !== "app") initAgents(options.db);
   const token = options.mode === "app" ? mintToken() : options.token ?? mintToken();
+  const mintedDigest = sha256Digest(token);
+  const servingSecrets = Object.freeze([token]);
   const tokenPath = options.mode === "app" ? null : writeToken(options.vaultPath, token);
   let boundOrigin = "";
 
   const healthCache = new Map<string, CachedHealthEntry>();
+  const setHealthCache = (key: string, entry: CachedHealthEntry): void => {
+    if (healthCache.has(key)) {
+      healthCache.delete(key);
+    } else if (healthCache.size >= MAX_CACHED_PRINCIPALS) {
+      healthCache.delete(healthCache.keys().next().value!);
+    }
+    healthCache.set(key, entry);
+  };
   let trackedAuditChanges = 0;
 
   const serveFastHealth = async (
@@ -284,7 +323,7 @@ export function startServeHttp(options: ServeHttpOptions | AppHttpOptions): Serv
       db: options.mode === "app" ? (undefined as never) : options.db,
       vaultPath: options.mode === "app" ? "" : options.vaultPath,
       principal,
-      servingSecrets: [token],
+      servingSecrets,
       ...(options.mode !== "app" && options.retrieval !== undefined ? { retrieval: options.retrieval } : {}),
     };
     const contract = chooseContract("system_health", responseContract, args);
@@ -311,35 +350,35 @@ export function startServeHttp(options: ServeHttpOptions | AppHttpOptions): Serv
       principal.kind === "owner"
         ? "owner:v1"
         : `agent:${principal.agent.agent_id}:${principal.grant_epoch}:v1`;
-    const stamp = withBoundedBusyWait(ctx.db, () =>
-      healthStateStamp(ctx.db, ctx.vaultPath, trackedAuditChanges),
-    );
-    const nowMs = Date.now();
-    const cached = healthCache.get(cacheKey);
-    if (cached !== undefined && nowMs - cached.atMs < HEALTH_SNAPSHOT_TTL_MS && cached.stamp === stamp) {
-      const before = totalChanges(ctx.db);
-      try {
-        return withBoundedBusyWait(ctx.db, () =>
-          gate(
+
+    const syncResult = withBoundedBusyWait(ctx.db, () => {
+      const stamp = healthStateStamp(ctx.db, ctx.vaultPath, trackedAuditChanges);
+      const nowMs = Date.now();
+      const cached = healthCache.get(cacheKey);
+      if (cached !== undefined && nowMs - cached.atMs < HEALTH_SNAPSHOT_TTL_MS && cached.stamp === stamp) {
+        // Refresh LRU order on hit.
+        healthCache.delete(cacheKey);
+        healthCache.set(cacheKey, cached);
+        const before = totalChanges(ctx.db);
+        try {
+          return gate(
             ctx,
             "system_health",
             auditArguments(args),
             () => ({ canon: [], quoted: [], withheld: [], data: structuredClone(cached.data) }),
             ENVELOPE_SCHEMA,
-          ),
-        );
-      } finally {
-        trackedAuditChanges += Math.max(0, totalChanges(ctx.db) - before);
+          );
+        } finally {
+          trackedAuditChanges += Math.max(0, totalChanges(ctx.db) - before);
+        }
       }
-    }
 
-    if (principal.kind === "owner") {
-      let computedData: HealthData | undefined;
-      const before = totalChanges(ctx.db);
-      let envelope;
-      try {
-        envelope = withBoundedBusyWait(ctx.db, () =>
-          gate(
+      if (principal.kind === "owner") {
+        let computedData: HealthData | undefined;
+        const before = totalChanges(ctx.db);
+        let envelope;
+        try {
+          envelope = gate(
             ctx,
             "system_health",
             auditArguments(args),
@@ -349,22 +388,20 @@ export function startServeHttp(options: ServeHttpOptions | AppHttpOptions): Serv
               return served;
             },
             ENVELOPE_SCHEMA,
-          ),
-        );
-      } finally {
-        trackedAuditChanges += Math.max(0, totalChanges(ctx.db) - before);
-      }
-      if (computedData !== undefined) {
-        const postStamp = withBoundedBusyWait(ctx.db, () =>
-          healthStateStamp(ctx.db, ctx.vaultPath, trackedAuditChanges),
-        );
-        if (healthCache.size >= MAX_CACHED_PRINCIPALS) {
-          healthCache.delete(healthCache.keys().next().value!);
+          );
+        } finally {
+          trackedAuditChanges += Math.max(0, totalChanges(ctx.db) - before);
         }
-        healthCache.set(cacheKey, { stamp: postStamp, atMs: Date.now(), data: computedData });
+        if (computedData !== undefined) {
+          const postStamp = healthStateStamp(ctx.db, ctx.vaultPath, trackedAuditChanges);
+          setHealthCache(cacheKey, { stamp: postStamp, atMs: Date.now(), data: computedData });
+        }
+        return envelope;
       }
-      return envelope;
-    }
+
+      return null;
+    });
+    if (syncResult !== null) return syncResult;
 
     const before = totalChanges(ctx.db);
     let envelope;
@@ -377,10 +414,7 @@ export function startServeHttp(options: ServeHttpOptions | AppHttpOptions): Serv
       const postStamp = withBoundedBusyWait(ctx.db, () =>
         healthStateStamp(ctx.db, ctx.vaultPath, trackedAuditChanges),
       );
-      if (healthCache.size >= MAX_CACHED_PRINCIPALS) {
-        healthCache.delete(healthCache.keys().next().value!);
-      }
-      healthCache.set(cacheKey, {
+      setHealthCache(cacheKey, {
         stamp: postStamp,
         atMs: Date.now(),
         data: structuredClone(envelope.data as HealthData),
@@ -393,7 +427,7 @@ export function startServeHttp(options: ServeHttpOptions | AppHttpOptions): Serv
     hostname: host,
     port: options.mode === "app" ? 0 : options.port ?? 0,
     async fetch(request) {
-      if (options.mode === "app") return appRequest(request, boundOrigin, token, options);
+      if (options.mode === "app") return appRequest(request, boundOrigin, mintedDigest, options);
       const url = new URL(request.url);
       if (url.hostname !== "127.0.0.1" && url.hostname !== "localhost" && url.hostname !== "[::1]") {
         return json(403, { ok: false, error: { code: "bind_refused", message: "loopback only", retryable: false } });
@@ -408,7 +442,7 @@ export function startServeHttp(options: ServeHttpOptions | AppHttpOptions): Serv
         }
         try {
           const presented = bearer(request);
-          const principal = withBoundedBusyWait(options.db, () => principalFor(options.db, token, presented));
+          const principal = principalFor(options.db, mintedDigest, presented);
           if (principal === null) {
             return json(401, {
               ok: false,
@@ -425,7 +459,7 @@ export function startServeHttp(options: ServeHttpOptions | AppHttpOptions): Serv
       const presented = bearer(request);
       let principal: Principal | null;
       try {
-        principal = withBoundedBusyWait(options.db, () => principalFor(options.db, token, presented));
+        principal = principalFor(options.db, mintedDigest, presented);
       } catch (error) {
         return refused(error);
       }
@@ -438,7 +472,7 @@ export function startServeHttp(options: ServeHttpOptions | AppHttpOptions): Serv
       const match = /^\/v1\/(?:mcp\/)?([a-z_]+)$/.exec(url.pathname);
       const rawTool = match?.[1];
       const tool = rawTool === "health" ? "system_health" : rawTool;
-      if (request.method !== "POST" || tool === undefined || !(TOOLS as readonly string[]).includes(tool)) {
+      if (request.method !== "POST" || tool === undefined || !TOOL_SET.has(tool)) {
         return json(404, {
           ok: false,
           error: { code: "not_found", message: "unknown tool", retryable: false },
@@ -471,7 +505,7 @@ export function startServeHttp(options: ServeHttpOptions | AppHttpOptions): Serv
           return json(200, { ok: true, value: envelope });
         }
         const envelope = await dispatchServeTool(
-          { db: options.db, vaultPath: options.vaultPath, principal, servingSecrets: [token],
+          { db: options.db, vaultPath: options.vaultPath, principal, servingSecrets,
             ...(options.retrieval === undefined ? {} : { retrieval: options.retrieval }),
           },
           tool as Tool,
@@ -502,7 +536,7 @@ const APP_HEADERS = {
   "referrer-policy": "no-referrer",
   "cross-origin-opener-policy": "same-origin",
 };
-async function appRequest(request: Request, origin: string, token: string, options: AppHttpOptions): Promise<Response> {
+async function appRequest(request: Request, origin: string, mintedDigest: Buffer, options: AppHttpOptions): Promise<Response> {
   const reply = (response: Response) => {
     const headers = new Headers(response.headers);
     for (const [name, value] of Object.entries(APP_HEADERS)) headers.set(name, value);
@@ -520,7 +554,7 @@ async function appRequest(request: Request, origin: string, token: string, optio
   if (request.method !== "POST" || !/^\/app\/v1\/[a-z_]+$/.test(url.pathname)) return error(404, "not_found");
   if (presentedOrigin !== origin) return error(403, "origin_refused");
   const presented = bearer(request);
-  if (presented === null || !sameToken(presented, token)) return error(401, "unauthorized");
+  if (presented === null || !sameTokenDigest(presented, mintedDigest)) return error(401, "unauthorized");
   if (request.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json") return error(400, "invalid_request");
   try {
     const body = await readRequestText(request, MAX_APP_HTTP_BODY_BYTES);

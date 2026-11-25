@@ -655,6 +655,46 @@ describe("hook session-start and the daemon", () => {
       } finally { daemon.stop(); }
     }
   });
+
+  test("a busy 503 daemon reports unavailable without falling back to a child read", async () => {
+    const setup = seededVault();
+    const daemon = fakeDaemon(setup.vault, () =>
+      Response.json(
+        { ok: false, error: { code: "busy", message: "the ledger is busy", retryable: true, retry_after_seconds: 1 } },
+        { status: 503, headers: { "retry-after": "1" } },
+      ),
+    );
+    try {
+      const run = await hook(setup.env, INPUT, "--harness", "generic", "--vault", setup.vault, "--verbose");
+      expect(run.exitCode).toBe(0);
+      expect(run.stdout).toBe("");
+      expect(run.stderr).toBe("hook: nothing injected (unavailable)\n");
+      expect(daemon.requests).toHaveLength(1);
+    } finally {
+      daemon.stop();
+    }
+  });
+
+  test("concurrent session-start hooks against a live daemon all return valid context without stalling", async () => {
+    const setup = seededVault();
+    const daemon = fakeDaemon(setup.vault, () => packet());
+    try {
+      const runs = await Promise.all(
+        Array.from({ length: 4 }, () =>
+          hook(setup.env, INPUT, "--harness", "claude-code", "--vault", setup.vault),
+        ),
+      );
+      for (const run of runs) {
+        expect(run.exitCode, run.stderr).toBe(0);
+        expect(run.stderr).toBe("");
+        const parsed = JSON.parse(run.stdout) as { hookSpecificOutput: { additionalContext: string } };
+        expect(parsed.hookSpecificOutput.additionalContext).toContain("KIZUKI CONTEXT v2");
+      }
+      expect(daemon.requests).toHaveLength(4);
+    } finally {
+      daemon.stop();
+    }
+  });
 });
 
 test("scoped packet coverage requires Core served-unit witness and cannot infer it from quoted text", async () => {

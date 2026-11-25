@@ -1,5 +1,5 @@
 import type { QuotedChunk, QuotedPageChunk } from "@kizuki/core";
-import { ServeError, scopedWriterRefusal, TOOLS, dispatchServeTool, resolvePrincipal, toolAllowed } from "@kizuki/core";
+import { ServeError, scopedWriterRefusal, TOOLS, dispatchServeTool, isLedgerBusy, resolvePrincipal, toolAllowed } from "@kizuki/core";
 import { ENVELOPE_V2_SCHEMA, activeWorldOps, findWorldOp, worldOpInputKeys, negotiateServeContract } from "@kizuki/core/world";
 import type { WorldViewEnvelope, Envelope, ServeContext, Tool } from "@kizuki/core";
 import type { EnvelopeV2 } from "@kizuki/core/world";
@@ -79,6 +79,8 @@ function served(envelope: Envelope<unknown, QuotedChunk | QuotedPageChunk> | Env
   };
 }
 
+const BUSY_RETRY_AFTER_SECONDS = 1;
+
 /**
  * A refusal is a tool result, not a protocol error: the SDK skips output
  * validation for `isError`, and the caller still needs the machine-readable
@@ -94,11 +96,17 @@ function refused(error: unknown): ToolResult {
           message: error.message,
           retry_after_seconds: error.retry_after_seconds,
         }
-      : {
-          error: "error",
-          message: "serving failed",
-          retry_after_seconds: null,
-        };
+      : isLedgerBusy(error)
+        ? {
+            error: "busy",
+            message: "the ledger is busy while another writer holds it; retry this call",
+            retry_after_seconds: BUSY_RETRY_AFTER_SECONDS,
+          }
+        : {
+            error: "error",
+            message: "serving failed",
+            retry_after_seconds: null,
+          };
   return {
     content: [{ type: "text", text: JSON.stringify(payload) }],
     isError: true,
@@ -242,6 +250,9 @@ function staticCoreSchemas(): StaticCoreSchemas {
   return cachedCoreSchemas;
 }
 
+let sharedCompactedTools: readonly ListedTool[] | null = null;
+let sharedCompactedToolsPending: Promise<readonly ListedTool[]> | null = null;
+
 /**
  * `tools/list` names only the tools this principal's grant allows, read from
  * the store on each listing like every other authority here. Calls are left
@@ -250,25 +261,54 @@ function staticCoreSchemas(): StaticCoreSchemas {
  * no hook for the listing, so this wraps its handler; the SDK version is
  * pinned exactly, and a version without the handler fails here at startup.
  */
-function listOnlyGrantedTools(server: McpServer, ctx: ServeContext): void {
+function listOnlyGrantedTools(server: McpServer, ctx: ServeContext, shareCompacted: boolean): void {
   const handlers = (server.server as unknown as { _requestHandlers?: Map<string, ListHandler> })._requestHandlers;
   const list = handlers?.get("tools/list");
   if (handlers === undefined || list === undefined) throw new Error("the MCP SDK no longer exposes its tools/list handler");
-  let compacted: ListedTool[] | null = null;
+  let localCompacted: readonly ListedTool[] | null = null;
+  let localPending: Promise<readonly ListedTool[]> | null = null;
+
+  const compactOnce = async (request: unknown, extra: unknown): Promise<readonly ListedTool[]> => {
+    const listed = await list(request, extra);
+    return listed.tools.map((tool) => ({
+      ...tool,
+      inputSchema: compactToolSchema(tool.inputSchema),
+      ...(tool.outputSchema === undefined ? {} : { outputSchema: compactToolSchema(tool.outputSchema, { omitDefaults: true }) }),
+    }));
+  };
+
+  const loadCompacted = (request: unknown, extra: unknown): Promise<readonly ListedTool[]> | readonly ListedTool[] => {
+    if (shareCompacted) {
+      if (sharedCompactedTools !== null) return sharedCompactedTools;
+      if (sharedCompactedToolsPending === null) {
+        sharedCompactedToolsPending = compactOnce(request, extra)
+          .then((tools) => {
+            sharedCompactedTools = tools;
+            return tools;
+          })
+          .finally(() => {
+            sharedCompactedToolsPending = null;
+          });
+      }
+      return sharedCompactedToolsPending;
+    }
+    if (localCompacted !== null) return localCompacted;
+    if (localPending === null) {
+      localPending = compactOnce(request, extra)
+        .then((tools) => {
+          localCompacted = tools;
+          return tools;
+        })
+        .finally(() => {
+          localPending = null;
+        });
+    }
+    return localPending;
+  };
+
   handlers.set("tools/list", async (request, extra) => {
     const principal = resolvePrincipal(ctx.db, ctx.principal);
-    if (compacted === null) {
-      const listed = await list(request, extra);
-      compacted = listed.tools.map((tool) => ({
-        ...tool,
-        inputSchema: compactToolSchema(tool.inputSchema),
-        ...(tool.outputSchema === undefined ? {} : { outputSchema: compactToolSchema(tool.outputSchema, { omitDefaults: true }) }),
-      }));
-      return {
-        ...listed,
-        tools: compacted.filter((tool) => principal !== null && (isMemtToolName(tool.name) ? memtToolAllowed(principal, tool.name) : toolAllowed(principal.grant, tool.name as Tool))),
-      };
-    }
+    const compacted = await loadCompacted(request, extra);
     return {
       tools: compacted.filter((tool) => principal !== null && (isMemtToolName(tool.name) ? memtToolAllowed(principal, tool.name) : toolAllowed(principal.grant, tool.name as Tool))),
     };
@@ -284,7 +324,16 @@ export interface ServerOptions {
 export function createServer(ctx: ServeContext, options: ServerOptions = {}): McpServer {
   const world = options.worldOps === undefined ? WORLD : buildWorldSurface(options.worldOps);
   const memt = createMemtBridge(ctx, options.memtEngine);
-  const memtCtx: ServeContext = { ...ctx, memtHealth: memt.peekHealth };
+  const memtCtx: ServeContext = {
+    ...ctx,
+    memtHealth: (liveCtx) => {
+      try {
+        return memt.peekHealth(liveCtx);
+      } catch {
+        return { enabled: true, mode: "unavailable", status: "unavailable" };
+      }
+    },
+  };
   // Default token calls to v2; explicit selectors are judged by Core. The
   // advertised discriminated output covers both implemented contracts.
   const scoped = ctx.principal.kind === "agent";
@@ -362,10 +411,15 @@ export function createServer(ctx: ServeContext, options: ServerOptions = {}): Mc
       respond(async () => {
         const envelope = await dispatch("context_packet", args);
         if (envelope.schema === "kizuki.envelope/v2" || envelope.schema === "kizuki.envelope/v1") {
-          return memt.injectContextPacketProceduralMemory(
-            envelope as Envelope<unknown, QuotedChunk | QuotedPageChunk> | EnvelopeV2,
-            args,
-          );
+          try {
+            return memt.injectContextPacketProceduralMemory(
+              envelope as Envelope<unknown, QuotedChunk | QuotedPageChunk> | EnvelopeV2,
+              args,
+            );
+          } catch {
+            // Procedural memory enrichment is best-effort; never fail an already-authorized packet.
+            return envelope;
+          }
         }
         return envelope;
       }),
@@ -482,7 +536,7 @@ export function createServer(ctx: ServeContext, options: ServerOptions = {}): Mc
     (args) => respond(() => memt.handleSnapshot(args)),
   );
 
-  listOnlyGrantedTools(server, ctx);
+  listOnlyGrantedTools(server, ctx, options.worldOps === undefined);
   negotiateBeforeParsing(server, ctx);
   const closeServer = server.close.bind(server);
   server.close = async () => {
@@ -497,15 +551,23 @@ export function createServer(ctx: ServeContext, options: ServerOptions = {}): Mc
 
 /** Like tools/list, this uses the pinned SDK's handler seam. Refusals are Core audit events. */
 function negotiateBeforeParsing(server: McpServer, ctx: ServeContext): void {
-  type Request = { params: { name: string; arguments?: Record<string, unknown> } };
+  type Request = { params: { name: string; arguments?: unknown } };
+  type Extra = { signal?: AbortSignal };
   type Handler = (request: Request, extra: unknown) => Promise<unknown>;
   const handlers = (server.server as unknown as { _requestHandlers?: Map<string, Handler> })._requestHandlers;
   const call = handlers?.get("tools/call");
   if (handlers === undefined || call === undefined) throw new Error("the MCP SDK no longer exposes its tools/call handler");
   handlers.set("tools/call", async (request, extra) => {
+    if ((extra as Extra | undefined)?.signal?.aborted) {
+      return { content: [] };
+    }
     const tool = request.params.name;
     if (!CORE_TOOL_SET.has(tool)) return call(request, extra);
-    const { response_contract, ...args } = request.params.arguments ?? {};
+    const rawArgs = request.params.arguments;
+    if (rawArgs !== undefined && rawArgs !== null && (typeof rawArgs !== "object" || Array.isArray(rawArgs))) {
+      return call(request, extra);
+    }
+    const { response_contract, ...args } = (rawArgs ?? {}) as Record<string, unknown>;
     try {
       negotiateServeContract(ctx, tool as Tool, args,
         response_contract === undefined && ctx.principal.kind === "agent" ? ENVELOPE_V2_SCHEMA : response_contract);
