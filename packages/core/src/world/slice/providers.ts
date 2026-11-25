@@ -21,6 +21,7 @@ export interface SliceCandidates {
   readonly providers: readonly ProviderCoverage[];
   readonly gaps: readonly ViewGap[];
   readonly truncated: boolean;
+  readonly labels?: ReadonlyMap<string, readonly string[]>;
 }
 
 /** Walk only an already authorized, byte-bounded card; retain each qualified assertion once. */
@@ -58,7 +59,8 @@ export function sliceAssembler(kind: string) {
 
 /** One bounded source of candidates for the public slice and session-start renderer. */
 export function collectSlice(frame: Pick<WorldFrame, "ctx" | "ns" | "dependencies">, kinds: readonly string[], when: WorldWhen, task = "", options: { projection?: "relations"; subjects?: readonly string[]; matchingOnly?: boolean } = {}): SliceCandidates {
-  const constraints: SliceItem[] = [], detail: SliceItem[] = [], providers: ProviderCoverage[] = [];
+  const constraintByClaim = new Map<string, SliceItem>(), detailByClaim = new Map<string, SliceItem>();
+  const labels = new Map<string, readonly string[]>(), providers: ProviderCoverage[] = [];
   const gaps = new Set<ViewGap>(sourceCoverage(frame.ctx, frame.dependencies));
   const read = { ...newReadFrame(frame.ctx, frame.ns, when.valid, frame.dependencies),
     ...(options.projection === undefined ? {} : { projection: options.projection }) };
@@ -84,9 +86,22 @@ export function collectSlice(frame: Pick<WorldFrame, "ctx" | "ns" | "dependencie
         const handle = resolveWorldObject(frame.ctx.db, frame.ns, match.ref.token);
         const card = handle === null ? null : readWorldCard(read, handle, id, assembler.cardSchema);
         if (card === null) continue;
+        labels.set(match.ref.token, match.labels);
         for (const gap of card.coverage.gaps) gaps.add(gap);
         const items = cardSliceItems(id, match.ref, card, assembler);
-        constraints.push(...items.constraints); detail.push(...items.detail);
+        for (const item of items.constraints) {
+          const token = item.relation.claim.token;
+          if (!constraintByClaim.has(token)) {
+            constraintByClaim.set(token, item);
+            detailByClaim.delete(token);
+          }
+        }
+        for (const item of items.detail) {
+          const token = item.relation.claim.token;
+          if (!constraintByClaim.has(token) && !detailByClaim.has(token)) {
+            detailByClaim.set(token, item);
+          }
+        }
       }
     } catch (error) {
       if (!(error instanceof WorldClaimBudgetError)) throw error;
@@ -95,5 +110,5 @@ export function collectSlice(frame: Pick<WorldFrame, "ctx" | "ns" | "dependencie
       exhausted = true; truncated = true; gaps.add("traversal_limit");
     }
   }
-  return { constraints, detail, providers, gaps: [...gaps], truncated };
+  return { constraints: [...constraintByClaim.values()], detail: [...detailByClaim.values()], providers, gaps: [...gaps], truncated, labels };
 }
