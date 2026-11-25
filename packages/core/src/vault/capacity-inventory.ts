@@ -48,12 +48,14 @@ export class CapacityInventory {
   private bytes = 0;
   private ready = false;
   private readonly root: string;
+  private readonly resolvedVault: string;
   private readonly mountTable: string;
   private readonly rootIdentity: string;
   private readonly device: number;
 
   constructor(readonly vault: string) {
     if (process.platform !== "linux") throw new Error("resource notifications unavailable");
+    this.resolvedVault = resolve(vault);
     this.root = realpathSync(vault);
     const root = lstatSync(this.root);
     if (!root.isDirectory() || !LOCAL_FILESYSTEMS.has(statfsSync(this.root).type)) throw new Error("unqualified filesystem");
@@ -119,9 +121,9 @@ export class CapacityInventory {
   }
 
   /** Called by the existing walk BEFORE it enumerates a directory or reads a file. */
-  observe(path: string, directory: boolean): void {
+  observe(path: string, directory: boolean, relPath?: string): void {
     if (this.fd < 0) return;
-    try { this.watch(relative(resolve(this.vault), path).split(sep).join("/"), directory); }
+    try { this.watch(relPath ?? relative(this.resolvedVault, path).split(sep).join("/"), directory); }
     catch { this.close(); }
   }
 
