@@ -74,8 +74,9 @@ const MAX_FILTER = 1_000;
 const matchSpans = (column: number, text: string) =>
   `(length(highlight(search_docs, ${column}, char(1), char(2))) - length(${text})) / 2.0`;
 // Repeated mentions saturate instead of letting a long archive or digest
-// overwhelm the short page that records the decision.
-const frequency = (spans: string) => `(${spans}) / (1.0 + (${spans}))`;
+// overwhelm the short page that records the decision. Using `1 - 1/(1 + x)`
+// evaluates `highlight()` once per column instead of twice.
+const frequency = (spans: string) => `(1.0 - 1.0 / (1.0 + (${spans})))`;
 const RANK_SQL = `-(4.0 * (${frequency(matchSpans(2, "search_docs.title"))}) + (${frequency(matchSpans(3, "search_docs.body"))})) / (1000.0 + min(length(search_docs.body), 1000))`;
 /**
  * Rank is negative, so scaling toward zero ranks a page lower. Loop-written
@@ -271,8 +272,15 @@ function searchPlan(
     bindings.push(ceiling);
   }
   if (canonIds !== undefined) {
-    clauses.push(`(search_docs.scope != 'canon' OR search_docs.doc_id IN (SELECT value FROM json_each(?)))`);
-    bindings.push(JSON.stringify(canonIds));
+    if (canonIds.length === 0) {
+      clauses.push("search_docs.scope != 'canon'");
+    } else if (canonIds.length <= 500) {
+      clauses.push(`(search_docs.scope != 'canon' OR search_docs.doc_id IN (${placeholders(canonIds.length)}))`);
+      bindings.push(...canonIds);
+    } else {
+      clauses.push(`(search_docs.scope != 'canon' OR search_docs.doc_id IN (SELECT value FROM json_each(?)))`);
+      bindings.push(JSON.stringify(canonIds));
+    }
   }
   if (types !== undefined) {
     clauses.push(`page_type IN (${placeholders(types.length)})`);
@@ -303,24 +311,61 @@ function searchPlan(
     bindings.push(...excludePaths);
   }
   if (canonPaths !== undefined) {
-    clauses.push("(search_docs.scope != 'canon' OR path IN (SELECT value FROM json_each(?)))");
-    bindings.push(JSON.stringify(canonPaths));
+    if (canonPaths.length === 0) {
+      clauses.push("search_docs.scope != 'canon'");
+    } else if (canonPaths.length <= 500) {
+      clauses.push(`(search_docs.scope != 'canon' OR path IN (${placeholders(canonPaths.length)}))`);
+      bindings.push(...canonPaths);
+    } else {
+      clauses.push("(search_docs.scope != 'canon' OR path IN (SELECT value FROM json_each(?)))");
+      bindings.push(JSON.stringify(canonPaths));
+    }
   }
-  if (source !== undefined) {
-    const predicate = sourceServingSql(db, source, ceiling);
-    if (predicate !== null) {
+  const eventIdExpr = `CASE WHEN search_docs.doc_id LIKE 'event:%' THEN substr(search_docs.doc_id, 7) ELSE search_docs.doc_id END`;
+  const ledgerSourcePredicate = source === undefined ? null : sourceServingSql(db, source, ceiling);
+  // A standalone floor projection can be queried without a ledger. Serving
+  // still requires live ledger evidence; when it is present, choose the
+  // reader's current source version before counting or limiting matches.
+  const currentVersionPredicate =
+    opts.scope !== "canon" && tableExists(db, "events")
+      ? currentVersionSql(db, {
+          ceiling,
+          ...(types === undefined ? {} : { types }),
+          ...(subjects === undefined ? {} : { subjects }),
+          ...(opts.since === undefined ? {} : { since: opts.since }),
+          ...(opts.until === undefined ? {} : { until: opts.until }),
+          ...(source === undefined ? {} : { source }),
+        })
+      : null;
+
+  if (ledgerSourcePredicate !== null && currentVersionPredicate !== null) {
+    // Combine source authorization and current-version check into one events lookup.
+    clauses.push(`(search_docs.scope != 'ledger' OR EXISTS (
+      SELECT 1 FROM events
+       WHERE events.event_id = ${eventIdExpr}
+         AND ${ledgerSourcePredicate.sql}
+         AND ${currentVersionPredicate.sql}
+    ))`);
+    bindings.push(...ledgerSourcePredicate.bindings, ...currentVersionPredicate.bindings);
+  } else {
+    if (ledgerSourcePredicate !== null) {
       // Ledger rows correlate to events so LIMIT counts authorized identities.
       // Canon live provenance is vault-admitted, not an FTS primitive.
       clauses.push(`(search_docs.scope != 'ledger' OR EXISTS (
         SELECT 1 FROM events
-         WHERE events.event_id = CASE
-           WHEN search_docs.doc_id LIKE 'event:%' THEN substr(search_docs.doc_id, 7)
-           ELSE search_docs.doc_id
-         END
-           AND ${predicate.sql}
+         WHERE events.event_id = ${eventIdExpr}
+           AND ${ledgerSourcePredicate.sql}
       ))`);
-      bindings.push(...predicate.bindings);
+      bindings.push(...ledgerSourcePredicate.bindings);
     }
+    if (currentVersionPredicate !== null) {
+      clauses.push(`(search_docs.scope != 'ledger' OR NOT EXISTS (
+        SELECT 1 FROM events WHERE events.event_id = ${eventIdExpr} AND NOT (${currentVersionPredicate.sql})
+      ))`);
+      bindings.push(...currentVersionPredicate.bindings);
+    }
+  }
+  if (source !== undefined) {
     const denied = source.deny_classes ?? [];
     if (!source.owner && denied.length > 0) {
       // Filter classes before the ranked window, so hidden canon does not
@@ -341,25 +386,6 @@ function searchPlan(
       }
     }
   }
-  // A standalone floor projection can be queried without a ledger. Serving
-  // still requires live ledger evidence; when it is present, choose the
-  // reader's current source version before counting or limiting matches.
-  if (opts.scope !== "canon" && tableExists(db, "events")) {
-    const current = currentVersionSql(db, {
-      ceiling,
-      ...(types === undefined ? {} : { types }),
-      ...(subjects === undefined ? {} : { subjects }),
-      ...(opts.since === undefined ? {} : { since: opts.since }),
-      ...(opts.until === undefined ? {} : { until: opts.until }),
-      ...(source === undefined ? {} : { source }),
-    });
-    clauses.push(`(search_docs.scope != 'ledger' OR NOT EXISTS (
-      SELECT 1 FROM events WHERE events.event_id = CASE
-        WHEN search_docs.doc_id LIKE 'event:%' THEN substr(search_docs.doc_id, 7)
-        ELSE search_docs.doc_id END AND NOT (${current.sql})
-    ))`);
-    bindings.push(...current.bindings);
-  }
   const filters = clauses.map((clause) => ` AND ${clause}`).join("");
 
   // A question that finds almost nothing literally is retried as its content
@@ -376,6 +402,16 @@ function searchPlan(
         .get(ftsQuery, ...bindings)!.found;
   const relaxed = question !== null && literal < RELAX_BELOW_MATCHES ? question : null;
 
+  // Partial-coverage relaxed matches require per-document coherence (either a
+  // title match or proximate co-occurrence of distinct query terms) so long
+  // unrelated pages do not pass on coincidental distant words.
+  const coherenceFilter =
+    relaxed !== null && relaxed.coherence !== null
+      ? ` AND (covered.terms = ${relaxed.terms.length} OR search_docs.rowid IN (SELECT rowid FROM search_docs WHERE search_docs MATCH ?))`
+      : "";
+  const coherenceBindings =
+    relaxed !== null && relaxed.coherence !== null ? [relaxed.coherence] : [];
+
   // An exact title keeps its boost even when a question takes the relaxed path.
   const order = ["CASE WHEN trim(search_docs.title) = ? COLLATE NOCASE THEN 0 ELSE 1 END"];
   const orderBindings = [query.trim()];
@@ -386,13 +422,14 @@ function searchPlan(
   const tailBindings = [
     relaxed === null ? ftsQuery : relaxed.fts,
     ...bindings,
+    ...coherenceBindings,
     ...orderBindings,
     limit * windows,
     ...(skip === 0 ? [] : [skip]),
   ];
   return {
     head: covered?.sql ?? "",
-    tail: `FROM search_docs${covered === null ? "" : " JOIN covered ON covered.id = search_docs.rowid"} WHERE search_docs MATCH ?${filters} ORDER BY ${order.join(", ")} LIMIT ?${skip === 0 ? "" : " OFFSET ?"}`,
+    tail: `FROM search_docs${covered === null ? "" : " JOIN covered ON covered.id = search_docs.rowid"} WHERE search_docs MATCH ?${filters}${coherenceFilter} ORDER BY ${order.join(", ")} LIMIT ?${skip === 0 ? "" : " OFFSET ?"}`,
     bindings: [...(covered?.bindings ?? []), ...tailBindings],
     coverage: relaxed === null ? null : `covered.terms * 1.0 / ${relaxed.terms.length}`,
     relaxed: relaxed !== null,
