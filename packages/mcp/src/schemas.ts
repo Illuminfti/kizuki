@@ -224,6 +224,16 @@ export function envelopeV2For(tool: Tool) {
   });
 }
 
+const LISTED_CANON_CHUNK = CANON_CHUNK.extend({
+  subject_labels: z.array(z.record(z.string(), z.unknown())).max(50).optional(),
+});
+const listedRef = <K extends string>(kind: K) => z.strictObject({ kind: z.literal(kind), token: z.string() });
+const LISTED_CANON_CHUNK_V2 = CANON_CHUNK_V2.extend({
+  page: listedRef("page"),
+  subjects: z.array(listedRef("raw_subject")),
+  sources: z.array(listedRef("event_version")),
+});
+
 /** Both implemented contracts, discriminated by schema, for explicit negotiation. */
 export function negotiatedEnvelopeFor(tool: Tool) {
   const v1 = envelopeFor(tool);
@@ -246,15 +256,20 @@ export function negotiatedEnvelopeFor(tool: Tool) {
   ];
   return v1.extend({
     schema: z.enum([ENVELOPE_SCHEMA, ENVELOPE_V2_SCHEMA]),
-    principal: z.union([z.string(), worldRef("principal")]),
+    principal: z.union([z.string(), z.record(z.string(), z.unknown())]),
     denied: (tool === "get_page" ? z.array(DENIED) : z.array(z.unknown())).optional(),
-    ...(tool === "get_page" ? {} : { source_policy: z.record(z.string(), z.unknown()).optional() }),
+    ...(tool === "get_page"
+      ? {}
+      : {
+          source_policy: z.record(z.string(), z.unknown()).optional(),
+          redacted: z.record(z.string(), z.unknown()).optional(),
+        }),
     // As with card bodies, repeated v1 diagnostics are summarized in discovery;
     // superRefine below checks every returned field against the full grammar.
     // The page reader remains the one full chunk grammar advertisement. The
     // other negotiated tools validate their complete outputs in Core, while
     // this listing stays below the protocol discovery bound.
-    ...(tool === "get_page" ? { canon: z.array(z.union([CANON_CHUNK, CANON_CHUNK_V2])), quoted: NO_CHUNKS } : { canon: z.array(z.unknown()), quoted: z.array(z.unknown()) }),
+    ...(tool === "get_page" ? { canon: z.array(z.union([LISTED_CANON_CHUNK, LISTED_CANON_CHUNK_V2])), quoted: NO_CHUNKS } : { canon: z.array(z.unknown()), quoted: z.array(z.unknown()) }),
     data: z.record(z.string(), z.unknown()).nullable().optional(),
   }).superRefine((value, ctx) => {
     const schema = value.schema === ENVELOPE_SCHEMA ? v1 : v2;
@@ -462,44 +477,55 @@ export const WORLD_ENVELOPE = WORLD.answer;
 /** The card grammar is named by `schema` and left to `kizuki.concept-card/v1` and its siblings. */
 export const WORLD_ENVELOPE_LISTED = WORLD.listed;
 
+const memtText = (min: number, max: number) =>
+  z.string().refine((value) => value.length >= min && value.length <= max);
+const memtInt = (min: number, max: number) =>
+  z.number().refine((value) => Number.isInteger(value) && value >= min && value <= max);
+const memtUnit = () =>
+  z.number().refine((value) => Number.isFinite(value) && value >= 0 && value <= 1);
+const memtStrings = (maxItems: number, maxLen: number) =>
+  z.array(z.string()).refine(
+    (items) => items.length <= maxItems && items.every((item) => item.length >= 1 && item.length <= maxLen),
+  );
+
 export const MEMT_STATUS_INPUT = z.strictObject({
   probe: z.boolean().optional(),
 });
 
 export const MEMT_RECALL_INPUT = z.strictObject({
-  query: z.string().min(1).max(512),
-  domain: z.string().min(1).max(128).optional(),
-  scope_key: z.string().min(1).max(128).optional(),
-  partition_key: z.string().min(1).max(128).optional(),
+  query: memtText(1, 512),
+  domain: memtText(1, 128).optional(),
+  scope_key: memtText(1, 128).optional(),
+  partition_key: memtText(1, 128).optional(),
   scope: z.enum(["canon", "ledger", "all"]).optional(),
-  limit: z.int().min(1).max(50).optional(),
+  limit: memtInt(1, 50).optional(),
   include_synthesis: z.boolean().optional(),
 });
 
 export const MEMT_EXPERIENCE_INPUT = z.strictObject({
   action: z.enum(["record", "search", "verify"]),
-  id: z.string().min(1).max(128).optional(),
-  domain: z.string().min(1).max(128).optional(),
-  scope_key: z.string().min(1).max(128).optional(),
+  id: memtText(1, 128).optional(),
+  domain: memtText(1, 128).optional(),
+  scope_key: memtText(1, 128).optional(),
   sensitivity: SENSITIVITY.optional(),
-  condition: z.string().min(1).max(2048).optional(),
-  recommendation: z.string().min(1).max(2048).optional(),
-  verification: z.string().max(1024).optional(),
+  condition: memtText(1, 2048).optional(),
+  recommendation: memtText(1, 2048).optional(),
+  verification: memtText(0, 1024).optional(),
   outcome: z.enum(["verified", "observed", "failed", "superseded"]).optional(),
-  citations: z.array(z.string().min(1).max(256)).max(32).optional(),
-  confidence: z.number().min(0).max(1).optional(),
-  query: z.string().max(512).optional(),
-  limit: z.int().min(1).max(50).optional(),
+  citations: memtStrings(32, 256).optional(),
+  confidence: memtUnit().optional(),
+  query: memtText(0, 512).optional(),
+  limit: memtInt(1, 50).optional(),
 });
 
 export const MEMT_SNAPSHOT_INPUT = z.strictObject({
   action: z.enum(["inspect", "check", "export", "sync"]).optional(),
-  partition_key: z.string().min(1).max(128).optional(),
-  domain: z.string().min(1).max(128).optional(),
+  partition_key: memtText(1, 128).optional(),
+  domain: memtText(1, 128).optional(),
   sensitivity: SENSITIVITY.optional(),
-  summary_texts: z.array(z.string().min(1).max(4096)).max(16).optional(),
-  source_ids: z.array(z.string().min(1).max(256)).max(64).optional(),
-  min_confidence: z.number().min(0).max(1).optional(),
+  summary_texts: memtStrings(16, 4096).optional(),
+  source_ids: memtStrings(64, 256).optional(),
+  min_confidence: memtUnit().optional(),
 });
 
 export const MEMT_GENERIC_OUTPUT = z.looseObject({

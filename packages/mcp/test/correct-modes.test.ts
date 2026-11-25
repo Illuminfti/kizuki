@@ -7,6 +7,7 @@ import {
   type WorldRef,
 } from "../../core/test/helpers/world-correct-kit";
 import { CORRECT_INPUT } from "../src/schemas";
+import { MEMT_TOOL_NAMES } from "../src/memt";
 import { call, connectClient, envelopeOf, errorOf } from "./client";
 import { mcpFixture, type McpFixture } from "./helpers";
 
@@ -91,18 +92,18 @@ describe("the correct tool", () => {
     expect(kit.card(kit.ctx, "concept", ref).concept.resolution).toBe("resolved");
   });
 
-  test("names exactly ten tools and exactly two of them write", async () => {
+  test("names the shipped core and MemT tools with exact write annotations", async () => {
     const { running } = await seeded();
     const client = await connectClient(running.owner(), open);
     const tools = (await client.listTools()).tools;
-    expect(tools.map((tool) => tool.name)).toEqual([...TOOLS]);
-    expect(tools).toHaveLength(10);
+    expect(tools.map((tool) => tool.name)).toEqual([...TOOLS, ...MEMT_TOOL_NAMES]);
+    expect(tools).toHaveLength(14);
     expect(
       tools
         .filter((tool) => tool.annotations?.readOnlyHint === false)
         .map((tool) => tool.name)
         .sort(),
-    ).toEqual(["correct", "propose"]);
+    ).toEqual(["correct", "memt_experience", "memt_snapshot", "propose"]);
     const correct = tools.find((tool) => tool.name === "correct")!;
     const properties = (
       correct.inputSchema as { properties: Record<string, { enum?: string[] }> }
