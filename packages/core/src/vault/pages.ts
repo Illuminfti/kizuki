@@ -175,6 +175,8 @@ interface WalkState {
   skipped: SkippedPage[];
   /** First path that claimed this frontmatter id, valid or not. */
   seen: Map<string, string>;
+  /** Duplicate ids to filter out in a single pass at the end of the walk. */
+  duplicateIds: Set<string>;
   files: number;
   bytes: number;
   limits: CanonLimits;
@@ -198,7 +200,7 @@ function withholdDuplicate(
   firstPath: string,
   relPath: string,
 ): void {
-  state.pages = state.pages.filter((entry) => entry.id !== id);
+  state.duplicateIds.add(id);
   state.skipped = state.skipped.filter(
     (entry) => !(entry.relPath === firstPath && entry.code === "invalid"),
   );
@@ -247,13 +249,13 @@ function hasArchivedHeader(path: string): boolean {
 
 function considerFile(state: WalkState, path: string, relPath: string): void {
   if (state.truncated) return;
-  state.capacity?.observe(path, false, relPath);
+  const observedStat = state.capacity?.observe(path, false, relPath) ?? null;
   if (state.includeArchived && !reserveFile(state)) return;
   let size: number;
   let signature: string;
   let changedMs: number;
   try {
-    const stat = lstatSync(path, { bigint: true });
+    const stat = observedStat ?? lstatSync(path, { bigint: true });
     if (stat.isSymbolicLink() || !stat.isFile()) {
       if (!state.includeArchived && !reserveFile(state)) return;
       state.skipped.push(skip(relPath, "unreadable", "unreadable: not a regular file"));
@@ -295,7 +297,7 @@ function considerFile(state: WalkState, path: string, relPath: string): void {
     file = remembered;
     if (state.includeArchived) state.bytes += size;
   } else {
-    const readAtMs = Date.now();
+    const readAtMs = state.cache !== null && state.includeBody ? Date.now() : 0;
     try {
       const bytes = readFileSync(path);
       if (state.includeArchived) state.bytes += bytes.byteLength;
@@ -304,7 +306,7 @@ function considerFile(state: WalkState, path: string, relPath: string): void {
         const parsed = parseFrontmatter(bytes.toString("utf8"));
         file = {
           // An empty signature never matches: see RACY_WINDOW_MS.
-          signature: changedMs + RACY_WINDOW_MS > readAtMs ? "" : signature,
+          signature: state.cache !== null && changedMs + RACY_WINDOW_MS > readAtMs ? "" : signature,
           contentHash: hashBytes(bytes),
           data: parsed.data,
           body: parsed.body,
@@ -442,6 +444,7 @@ function newWalkState(vaultPath: string, cache: CanonPageCache | null, statOnly:
     pages: [],
     skipped: [],
     seen: new Map(),
+    duplicateIds: new Set(),
     files: 0,
     bytes: 0,
     limits: loadCanonLimits(vaultPath),
@@ -468,6 +471,9 @@ export function listCanonPagesReport(
     state.capacity = beginCapacityInventory(vaultPath);
   }
   walk(state, vaultPath, "", 0);
+  if (state.duplicateIds.size > 0) {
+    state.pages = state.pages.filter((entry) => !state.duplicateIds.has(entry.id));
+  }
   state.capacity?.finish(!state.truncated && fatalCanonSkips(state.skipped).length === 0);
   if (cache !== undefined && state.includeBody) cache.files = state.remembered;
   state.skipped.sort((left, right) => compareName(left.relPath, right.relPath));
