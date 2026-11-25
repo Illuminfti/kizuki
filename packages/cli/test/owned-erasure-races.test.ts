@@ -63,7 +63,7 @@ const base=${JSON.stringify(base)}, engine=${JSON.stringify(engine)}, id=engine=
 const ctx={vault_path:base,data_dir:join(base,'.kizuki/retrieval',id),config:{},clock:()=>new Date().toISOString(),logger:()=>{},secrets:async()=>''};
 const port=engine==='pg'?await openEmbeddedRetrievalPort(ctx):core.createFts5RetrievalPort(ctx);
 let release;const wait=new Promise(r=>release=r);let active,queued,called=0,closeCalls=0;
-if(engine==='pg') {active=port.store.run(async()=>{await wait});await Promise.resolve();queued=port.health();port.store.close=async()=>{closeCalls++};}
+if(engine==='pg') {let started;const running=new Promise(r=>started=r);active=port.store.run(async()=>{started();await wait});await running;queued=port.health();port.store.close=async()=>{closeCalls++};}
 else {queued=port.rebuildFromDocuments((async function*(){await wait;yield {}})());Database.prototype.close=function(){closeCalls++};}
 void queued.catch(()=>{});
 fs.renameSync(ctx.data_dir,join(base,'moved'));fs.mkdirSync(join(base,'outside/store'),{recursive:true});fs.writeFileSync(join(base,'outside/store/canary'),'KEEP');fs.symlinkSync(join(base,'outside'),ctx.data_dir);
