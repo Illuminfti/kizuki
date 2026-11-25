@@ -9,7 +9,7 @@ import {
 import type { WorldKindSpec } from "../../contracts/world-kinds";
 import { activeWorldRegistry } from "../../contracts/world-vocabulary";
 import { authorizedClaimSql } from "../policy-sql";
-import { knownSupportSql, knownValidSql, knownHeldSql } from "../known/cutoff";
+import { knownPermittedAndUnheldSql, knownValidSql } from "../known/cutoff";
 import { recordWorldDependencies } from "../dependencies";
 import { eligibleWorldClaim, type Eligible } from "./eligible";
 import { claimVisibleSql, WorldProjectionBudgetError, type ReadFrame } from "./frame";
@@ -83,10 +83,10 @@ export type Collector = (frame: ReadFrame, cluster: Cluster, kind: WorldKindSpec
 
 /** Live claims about members, with the anchor's classification and labels first. */
 const claimsAboutMembers: Collector = (frame, cluster) => {
-  const permitted = knownSupportSql(frame.ctx, frame.cutoff.kind === "current" ? undefined : frame.cutoff),
+  const cutoff = frame.cutoff.kind === "current" ? undefined : frame.cutoff;
+  const admitted = knownPermittedAndUnheldSql(frame.ctx, "base", cutoff),
     claim = authorizedClaimSql(frame.ctx),
-    time = knownValidSql(frame.valid, frame.cutoff.kind === "current" ? undefined : frame.cutoff);
-  const held = knownHeldSql(frame.ctx, "base", frame.cutoff.kind === "current" ? undefined : frame.cutoff);
+    time = knownValidSql(frame.valid, cutoff);
   // CROSS JOIN keeps the semantics table outermost, so the subject and object
   // indexes find a member's assertions instead of every live claim being read.
   const candidates = frame.ctx.db.query<
@@ -97,8 +97,8 @@ const claimsAboutMembers: Collector = (frame, cluster) => {
     FROM claim_v2_semantics c CROSS JOIN claims base USING(claim_id)
     WHERE discriminator='assertion' AND ${claimVisibleSql(frame, "base")} AND ${claim.sql} AND ${time.sql} AND
     ((subject_kind=? AND subject_id=? AND coalesce(json_extract(payload,'$.subject.namespace'),'')=?) OR (json_extract(payload,'$.object.ref.kind')=? AND json_extract(payload,'$.object.ref.id')=? AND coalesce(json_extract(payload,'$.object.ref.namespace'),'')=?))
-    AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) AND NOT ${held.sql}
-    ORDER BY CASE WHEN c.predicate='world.kind' THEN 0 WHEN c.predicate IN (SELECT value FROM json_each(?)) THEN 1 ELSE 2 END,c.claim_id LIMIT ?`);
+    AND ${admitted.sql}
+    ORDER BY CASE WHEN c.predicate='world.kind' THEN 0 WHEN c.predicate IN (SELECT value FROM json_each(?)) THEN 1 ELSE 2 END,c.claim_id LIMIT ${MAX_RELATIONS + 1}`);
   const labelPredicates = activeWorldRegistry().kinds.map((kind) => kind.labelPredicate);
   const labels = JSON.stringify(labelPredicates);
   const requested = bindingOf(frame.ctx.db, cluster.anchor);
@@ -122,10 +122,8 @@ const claimsAboutMembers: Collector = (frame, cluster) => {
         anchor.kind,
         anchor.id,
         rawSubjectNamespace(anchor),
-        ...permitted.bindings,
-        ...held.bindings,
+        ...admitted.bindings,
         labels,
-        MAX_RELATIONS + 1,
       );
   });
   // Apply the shared claim limit only after merging member candidates. Member
@@ -235,10 +233,10 @@ export function scanMatches(
   let visibleHandles = 0;
   let last: string | null = null;
   let position = after ?? "";
-  const permitted = knownSupportSql(ctx, frame.cutoff.kind === "current" ? undefined : frame.cutoff),
+  const cutoff = frame.cutoff.kind === "current" ? undefined : frame.cutoff;
+  const admitted = knownPermittedAndUnheldSql(ctx, "base", cutoff),
     claim = authorizedClaimSql(ctx),
-    time = knownValidSql(valid, frame.cutoff.kind === "current" ? undefined : frame.cutoff);
-  const held = knownHeldSql(frame.ctx, "base", frame.cutoff.kind === "current" ? undefined : frame.cutoff);
+    time = knownValidSql(valid, cutoff);
   const related = filter === undefined ? null : {
     sql: `c.subject_kind=b.raw_kind AND c.subject_id=b.raw_id
       AND coalesce(json_extract(c.payload,'$.subject.namespace'),'')=b.raw_namespace
@@ -248,9 +246,9 @@ export function scanMatches(
       AND json_extract(c.payload,'$.object.ref.kind')=? AND json_extract(c.payload,'$.object.ref.id')=?
       AND coalesce(json_extract(c.payload,'$.object.ref.namespace'),'')=?
       AND ${claimVisibleSql(frame, "base")} AND ${claim.sql} AND ${time.sql}
-      AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) AND NOT ${held.sql}`,
+      AND ${admitted.sql}`,
     bindings: [filter.predicate, filter.object.kind, filter.object.id, rawSubjectNamespace(filter.object),
-      ...claim.bindings, ...time.bindings, ...permitted.bindings, ...held.bindings],
+      ...claim.bindings, ...time.bindings, ...admitted.bindings],
   };
   // Fixed join order: handles in id order, then their assertions by index,
   // then the claim row. Led by claims, the planner reads every live claim.
@@ -261,23 +259,23 @@ export function scanMatches(
     AND c.polarity='positive' AND json_extract(c.payload,'$.perspective.mode')='asserted'
     AND json_extract(c.payload,'$.object.kind')='vocabulary' AND json_extract(c.payload,'$.object.ref.id')=?
     AND ${claimVisibleSql(frame, "base")} AND ${claim.sql} AND ${time.sql}
-    AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) AND NOT ${held.sql}
+    AND ${admitted.sql}
     ${subjects === undefined ? "" : "AND b.raw_id IN (SELECT value FROM json_each(?))"}
     ${related === null ? "" : `AND EXISTS(SELECT c.claim_id FROM claim_v2_semantics c JOIN claims base USING(claim_id) WHERE ${related.sql})`}`;
-  const policyBindings = [kind.vocabularyId, ...claim.bindings, ...time.bindings, ...permitted.bindings, ...held.bindings, ...(subjects === undefined ? [] : [JSON.stringify(subjects)]), ...(related?.bindings ?? [])];
+  const policyBindings = [kind.vocabularyId, ...claim.bindings, ...time.bindings, ...admitted.bindings, ...(subjects === undefined ? [] : [JSON.stringify(subjects)]), ...(related?.bindings ?? [])];
   const scan = ctx.db.query<
     { handle_id: string },
     (string | number)[]
   >(`SELECT b.handle_id ${joins} WHERE b.handle_id>? AND ${classification}
-    GROUP BY b.handle_id ORDER BY b.handle_id LIMIT ?`);
+    GROUP BY b.handle_id ORDER BY b.handle_id LIMIT ${DISCOVERY_SCAN}`);
 
   const candidates = ctx.db.query<{ claim_id: string }, (string | number)[]>(
     `SELECT c.claim_id ${joins}
       WHERE b.handle_id=? AND c.discriminator='assertion' AND c.predicate IN ('world.kind',?)
       AND c.polarity='positive' AND json_extract(c.payload,'$.perspective.mode')='asserted'
       AND ${claimVisibleSql(frame, "base")} AND ${claim.sql} AND ${time.sql}
-      AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) AND NOT ${held.sql}
-      ORDER BY CASE c.predicate WHEN 'world.kind' THEN 0 ELSE 1 END,c.claim_id LIMIT ?`,
+      AND ${admitted.sql}
+      ORDER BY CASE c.predicate WHEN 'world.kind' THEN 0 ELSE 1 END,c.claim_id LIMIT ${MAX_RELATIONS + 1}`,
   );
   const aliasCandidates = wanted.length === 0 ? null : ctx.db.query<{ claim_id: string }, (string | number)[]>(
     `SELECT c.claim_id ${joins}
@@ -286,15 +284,15 @@ export function scanMatches(
       AND json_extract(c.payload,'$.perspective.interpretation')='explicit'
       AND (json_extract(c.payload,'$.perspective.holder') IS NOT NULL OR json_extract(c.payload,'$.perspective.speaker') IS NOT NULL)
       AND ${claimVisibleSql(frame, "base")} AND ${claim.sql} AND ${time.sql}
-      AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) AND NOT ${held.sql}
-      ORDER BY c.claim_id LIMIT ?`,
+      AND ${admitted.sql}
+      ORDER BY c.claim_id LIMIT ${MAX_RELATIONS + 1}`,
   );
   const cache = new Map<string, { labels: string[]; searchAliases: string[]; overflow: boolean } | null>();
   const matchOf = (handle: string) => {
     if (cache.has(handle)) return cache.get(handle)!;
-    const rows = candidates.all(handle, kind.labelPredicate, ...claim.bindings, ...time.bindings, ...permitted.bindings, ...held.bindings, MAX_RELATIONS + 1);
+    const rows = candidates.all(handle, kind.labelPredicate, ...claim.bindings, ...time.bindings, ...admitted.bindings);
     const aliasRows = aliasCandidates?.all(handle, kind.labelPredicate, ...claim.bindings, ...time.bindings,
-      ...permitted.bindings, ...held.bindings, MAX_RELATIONS + 1) ?? [];
+      ...admitted.bindings) ?? [];
     frame.stats.rowsExamined += rows.length + aliasRows.length;
     if (aliasRows.length > MAX_RELATIONS) throw new WorldProjectionBudgetError();
     const labels: string[] = [], searchAliases: string[] = [];
@@ -322,8 +320,8 @@ export function scanMatches(
     if (classified && related !== null) {
       const links = ctx.db.query<{ claim_id: string }, (string | number)[]>(
         `SELECT c.claim_id FROM semantic_bindings b JOIN claim_v2_semantics c JOIN claims base USING(claim_id)
-          WHERE b.handle_id=? AND ${related.sql} ORDER BY c.claim_id LIMIT ?`,
-      ).all(handle, ...related.bindings, MAX_RELATIONS + 1);
+          WHERE b.handle_id=? AND ${related.sql} ORDER BY c.claim_id LIMIT ${MAX_RELATIONS + 1}`,
+      ).all(handle, ...related.bindings);
       frame.stats.rowsExamined += links.length;
       if (links.length > MAX_RELATIONS) throw new WorldProjectionBudgetError();
       classified = links.some(link => verifyClaim(frame, link.claim_id) !== null);
@@ -337,10 +335,10 @@ export function scanMatches(
   // and support policy before limiting members or reading any of their labels.
   const grouped = ctx.db.query<{ handle_id: string }, (string | number)[]>(
     `SELECT b.handle_id ${joins} WHERE b.handle_id IN (SELECT value FROM json_each(?)) AND ${classification}
-      GROUP BY b.handle_id ORDER BY b.handle_id LIMIT ?`,
+      GROUP BY b.handle_id ORDER BY b.handle_id LIMIT 257`,
   );
   scanning: for (;;) {
-    const rows = scan.all(position, ...policyBindings, DISCOVERY_SCAN);
+    const rows = scan.all(position, ...policyBindings);
     for (const row of rows) {
       if (scanned === scanBudget) {
         budgetSpent = true;
@@ -358,23 +356,29 @@ export function scanMatches(
       if (groupers.length > 0) {
         const proposed = group(frame, row.handle_id, groupers);
         overflow ||= proposed.overflow === true;
-        const members = grouped.all(JSON.stringify(proposed.members), ...policyBindings, 257);
-        frame.stats.rowsExamined += members.length;
-        if (members.length > 256) throw new WorldProjectionBudgetError();
-        const eligible = members.flatMap((member) => {
-          const match = matchOf(member.handle_id);
-          return match === null ? [] : [{ handle: member.handle_id, ...match }];
-        });
-        // The smallest authorized member represents the cluster on every page.
-        // Its wire token is still local to the reader's namespace.
-        if (eligible[0]?.handle !== row.handle_id) continue;
-        if (eligible.reduce((count, member) => count + member.labels.length, 0) > MAX_MATCH_LABELS)
-          throw new WorldProjectionBudgetError();
-        labels = eligible.flatMap((member) => member.labels);
-        searchAliases = eligible.flatMap((member) => member.searchAliases);
-        if (wanted.length > 0 && labels.length + searchAliases.length > MAX_MATCH_LABELS)
-          throw new WorldProjectionBudgetError();
-        overflow ||= eligible.some((member) => member.overflow);
+        if (proposed.members.length === 1 && proposed.members[0] === row.handle_id) {
+          frame.stats.rowsExamined += 1;
+          if (labels.length > MAX_MATCH_LABELS || (wanted.length > 0 && labels.length + searchAliases.length > MAX_MATCH_LABELS))
+            throw new WorldProjectionBudgetError();
+        } else {
+          const members = grouped.all(JSON.stringify(proposed.members), ...policyBindings);
+          frame.stats.rowsExamined += members.length;
+          if (members.length > 256) throw new WorldProjectionBudgetError();
+          const eligible = members.flatMap((member) => {
+            const match = matchOf(member.handle_id);
+            return match === null ? [] : [{ handle: member.handle_id, ...match }];
+          });
+          // The smallest authorized member represents the cluster on every page.
+          // Its wire token is still local to the reader's namespace.
+          if (eligible[0]?.handle !== row.handle_id) continue;
+          if (eligible.reduce((count, member) => count + member.labels.length, 0) > MAX_MATCH_LABELS)
+            throw new WorldProjectionBudgetError();
+          labels = eligible.flatMap((member) => member.labels);
+          searchAliases = eligible.flatMap((member) => member.searchAliases);
+          if (wanted.length > 0 && labels.length + searchAliases.length > MAX_MATCH_LABELS)
+            throw new WorldProjectionBudgetError();
+          overflow ||= eligible.some((member) => member.overflow);
+        }
       }
       if (
         wanted.length > 0 && ![...labels, ...searchAliases].some((text) => labelMatches(preview.text(text), wanted))

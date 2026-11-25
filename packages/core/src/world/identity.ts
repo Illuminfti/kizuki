@@ -1,7 +1,8 @@
+import { heldClaimSql, permittedAndUnheldSql } from "./corroboration";
 import { checkKnownCoverage } from "./known/coverage";
 import { supportLineage } from "./lineage";
 import { authorizedClaimSql } from "./policy-sql";
-import { knownSupportSql, knownValidSql, knownHeldSql } from "./known/cutoff";
+import { knownPermittedAndUnheldSql, knownSupportSql, knownValidSql } from "./known/cutoff";
 import { verifyClaim } from "./pipeline/collect";
 import { claimVisibleSql, type ReadFrame } from "./pipeline/frame";
 import type { Cluster } from "./pipeline/group";
@@ -21,6 +22,11 @@ type Pair = { left: string; right: string; claims: Eligible[]; blocked: boolean;
 
 /** Identity is a read projection over ordinary claims, never a persistent representative. */
 const frames = new WeakMap<ReadFrame, Map<string, Cluster>>();
+type IdentityQuery = {
+  readonly query: ReturnType<ServeContext["db"]["query"]>;
+  readonly bindings: readonly (string | number)[];
+};
+const frameQueries = new WeakMap<ReadFrame, IdentityQuery>();
 
 function asserted(item: Eligible): boolean {
   const p = item.semantic.perspective;
@@ -35,10 +41,27 @@ function nativeReceipted(frame: ReadFrame, item: Eligible): boolean {
 }
 
 /** Complete current policy is applied to both endpoints before an edge can consume a scan slot. */
-function classificationRule(frame: ReadFrame, endpoint: string, policyOnly = false) {
+function classificationRule(
+  frame: ReadFrame,
+  endpoint: string,
+  policyOnly = false,
+  precomputed?: {
+    readonly currentSupport: { sql: string; bindings: (string | number)[] };
+    readonly cutoffSupport?: { sql: string; bindings: (string | number)[] };
+  },
+) {
   const cutoff = policyOnly || frame.cutoff.kind === "current" ? undefined : frame.cutoff;
-  const support = knownSupportSql(frame.ctx, cutoff), claim = authorizedClaimSql(frame.ctx, "classified"),
-    time = knownValidSql(policyOnly ? { kind: "all" } : frame.valid, cutoff, "kind"), held = knownHeldSql(frame.ctx, "classified", cutoff);
+  const claim = authorizedClaimSql(frame.ctx, "classified"),
+    time = knownValidSql(policyOnly ? { kind: "all" } : frame.valid, cutoff, "kind"),
+    admitted = precomputed === undefined
+      ? knownPermittedAndUnheldSql(frame.ctx, "classified", cutoff)
+      : cutoff === undefined
+        ? permittedAndUnheldSql("classified", precomputed.currentSupport)
+        : (() => {
+            const historical = permittedAndUnheldSql("classified", precomputed.cutoffSupport!);
+            const currentHeld = heldClaimSql("classified", precomputed.currentSupport);
+            return { sql: `(${historical.sql} AND NOT ${currentHeld.sql})`, bindings: [...historical.bindings, ...currentHeld.bindings] };
+          })();
   return {
     sql: `kind.subject_kind=${endpoint}.raw_kind AND kind.subject_id=${endpoint}.raw_id
       AND coalesce(json_extract(kind.payload,'$.subject.namespace'),'')=${endpoint}.raw_namespace
@@ -46,14 +69,20 @@ function classificationRule(frame: ReadFrame, endpoint: string, policyOnly = fal
       AND json_extract(kind.payload,'$.object.ref.id')='world/concept'
       AND json_extract(kind.payload,'$.perspective.mode')='asserted'
       AND ${policyOnly ? "classified.status<>'purged'" : claimVisibleSql(frame, "classified")} AND ${claim.sql} AND ${time.sql}
-      AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=kind.claim_id AND ${support.sql})
-      AND NOT ${held.sql}`,
-    bindings: [...claim.bindings, ...time.bindings, ...support.bindings, ...held.bindings],
+      AND ${admitted.sql}`,
+    bindings: [...claim.bindings, ...time.bindings, ...admitted.bindings],
   };
 }
 
-function classificationSql(frame: ReadFrame, endpoint: string) {
-  const rule = classificationRule(frame, endpoint, frame.cutoff.kind === "recorded");
+function classificationSql(
+  frame: ReadFrame,
+  endpoint: string,
+  precomputed?: {
+    readonly currentSupport: { sql: string; bindings: (string | number)[] };
+    readonly cutoffSupport?: { sql: string; bindings: (string | number)[] };
+  },
+) {
+  const rule = classificationRule(frame, endpoint, frame.cutoff.kind === "recorded", precomputed);
   return { ...rule, sql: `EXISTS(SELECT 1 FROM claim_v2_semantics kind JOIN claims classified USING(claim_id) WHERE ${rule.sql})` };
 }
 
@@ -79,33 +108,50 @@ export function identityCluster(frame: ReadFrame, anchor: string, joining?: stri
   if (!cache) { cache = new Map(); frames.set(frame, cache); }
   const hit = joining === undefined ? cache.get(anchor) : undefined;
   if (hit) return hit;
-  const cutoff = frame.cutoff.kind === "current" ? undefined : frame.cutoff;
-  const support = knownSupportSql(frame.ctx, cutoff), claim = authorizedClaimSql(frame.ctx),
-    time = knownValidSql(frame.valid, cutoff), held = knownHeldSql(frame.ctx, "base", cutoff),
-    left = classificationSql(frame, "l"), right = classificationSql(frame, "r");
-  // CROSS JOIN keeps the semantics table outermost, where its predicate index
-  // finds the few identity assertions; led by claims, every live claim is read.
-  const query = frame.ctx.db.query<Edge, (string | number)[]>(`
-    SELECT c.claim_id,l.handle_id AS left,r.handle_id AS right
-    FROM claim_v2_semantics c CROSS JOIN claims base USING(claim_id)
-    JOIN semantic_bindings l ON l.raw_kind=c.subject_kind AND l.raw_id=c.subject_id
-      AND l.raw_namespace=coalesce(json_extract(c.payload,'$.subject.namespace'),'')
-    JOIN semantic_bindings r ON r.raw_kind=json_extract(c.payload,'$.object.ref.kind')
-      AND r.raw_id=json_extract(c.payload,'$.object.ref.id')
-      AND r.raw_namespace=coalesce(json_extract(c.payload,'$.object.ref.namespace'),'')
-    WHERE c.discriminator='assertion' AND c.predicate IN ('concept.same_as','concept.distinguished_from')
-      AND (c.predicate='concept.same_as' OR c.polarity='positive')
-      AND json_extract(c.payload,'$.perspective.mode')='asserted'
-      AND json_extract(c.payload,'$.perspective.holder') IS NULL
-      AND json_extract(c.payload,'$.perspective.speaker') IS NULL
-      AND json_extract(c.payload,'$.perspective.addressee') IS NULL
-      AND json_array_length(c.payload,'$.context')=0
-      AND (l.handle_id=? OR r.handle_id=?) AND l.handle_id<>r.handle_id
-      AND ${claimVisibleSql(frame, "base")} AND ${claim.sql} AND ${time.sql}
-      AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${support.sql})
-      AND NOT ${held.sql} AND ${left.sql} AND ${right.sql}
-    ORDER BY c.claim_id LIMIT ?`);
-  const bindings = [...claim.bindings, ...time.bindings, ...support.bindings, ...held.bindings, ...left.bindings, ...right.bindings];
+  let prepared = frameQueries.get(frame);
+  if (prepared === undefined) {
+    const cutoff = frame.cutoff.kind === "current" ? undefined : frame.cutoff;
+    const currentSupport = knownSupportSql(frame.ctx);
+    const cutoffSupport = cutoff === undefined ? undefined : knownSupportSql(frame.ctx, cutoff);
+    const precomputed = { currentSupport, ...(cutoffSupport === undefined ? {} : { cutoffSupport }) };
+    const claim = authorizedClaimSql(frame.ctx),
+      time = knownValidSql(frame.valid, cutoff),
+      admitted = cutoff === undefined
+        ? permittedAndUnheldSql("base", currentSupport)
+        : (() => {
+            const historical = permittedAndUnheldSql("base", cutoffSupport!);
+            const currentHeld = heldClaimSql("base", currentSupport);
+            return { sql: `(${historical.sql} AND NOT ${currentHeld.sql})`, bindings: [...historical.bindings, ...currentHeld.bindings] };
+          })(),
+      left = classificationSql(frame, "l", precomputed),
+      right = classificationSql(frame, "r", precomputed);
+    // CROSS JOIN keeps the semantics table outermost, where its predicate index
+    // finds the few identity assertions; led by claims, every live claim is read.
+    const query = frame.ctx.db.query<Edge, (string | number)[]>(`
+      SELECT c.claim_id,l.handle_id AS left,r.handle_id AS right
+      FROM claim_v2_semantics c CROSS JOIN claims base USING(claim_id)
+      JOIN semantic_bindings l ON l.raw_kind=c.subject_kind AND l.raw_id=c.subject_id
+        AND l.raw_namespace=coalesce(json_extract(c.payload,'$.subject.namespace'),'')
+      JOIN semantic_bindings r ON r.raw_kind=json_extract(c.payload,'$.object.ref.kind')
+        AND r.raw_id=json_extract(c.payload,'$.object.ref.id')
+        AND r.raw_namespace=coalesce(json_extract(c.payload,'$.object.ref.namespace'),'')
+      WHERE c.discriminator='assertion' AND c.predicate IN ('concept.same_as','concept.distinguished_from')
+        AND (c.predicate='concept.same_as' OR c.polarity='positive')
+        AND json_extract(c.payload,'$.perspective.mode')='asserted'
+        AND json_extract(c.payload,'$.perspective.holder') IS NULL
+        AND json_extract(c.payload,'$.perspective.speaker') IS NULL
+        AND json_extract(c.payload,'$.perspective.addressee') IS NULL
+        AND json_array_length(c.payload,'$.context')=0
+        AND (l.handle_id=? OR r.handle_id=?) AND l.handle_id<>r.handle_id
+        AND ${claimVisibleSql(frame, "base")} AND ${claim.sql} AND ${time.sql}
+        AND ${admitted.sql} AND ${left.sql} AND ${right.sql}
+      ORDER BY c.claim_id LIMIT ${IDENTITY_MAX_EDGES + 1}`);
+    const bindings = [...claim.bindings, ...time.bindings, ...admitted.bindings, ...left.bindings, ...right.bindings];
+    prepared = { query, bindings };
+    frameQueries.set(frame, prepared);
+  }
+  const query = prepared.query as ReturnType<ServeContext["db"]["query"]>;
+  const bindings = prepared.bindings;
   const members = new Set(joining === undefined ? [anchor] : [anchor, joining]), seen = new Set<string>(), pairs = new Map<string, Pair>();
   const queue = [...members], classified = new Map<string, boolean>();
   const endpointAllowed = (handle: string): boolean => {
@@ -116,7 +162,7 @@ export function identityCluster(frame: ReadFrame, anchor: string, joining?: stri
   for (let cursor = 0; cursor < queue.length && !overflow; cursor++) {
     const node = queue[cursor]!;
     if (frame.cutoff.kind === "recorded" && checkKnownCoverage(frame.ctx, node, frame.cutoff)) frame.historyBaseline = true;
-    const rows = query.all(node, node, ...bindings, IDENTITY_MAX_EDGES + 1);
+    const rows = (query.all(node, node, ...bindings) as Edge[]);
     frame.stats.rowsExamined += rows.length;
     if (rows.length > IDENTITY_MAX_EDGES) { overflow = true; break; }
     for (const row of rows) {

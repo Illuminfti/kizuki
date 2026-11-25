@@ -36,9 +36,9 @@ export function readableWorldNode(ctx: ServeContext, ns: WorldNamespace, token: 
            (json_extract(c.payload,'$.object.ref.kind')=? AND json_extract(c.payload,'$.object.ref.id')=?
             AND coalesce(json_extract(c.payload,'$.object.ref.namespace'),'')=?))
           AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql})
-        ORDER BY c.claim_id LIMIT ?`,
+        ORDER BY c.claim_id LIMIT ${CANDIDATES}`,
     )
-    .all(raw.raw_kind, raw.raw_id, raw.raw_namespace, raw.raw_kind, raw.raw_id, raw.raw_namespace, ...permitted.bindings, CANDIDATES);
+    .all(raw.raw_kind, raw.raw_id, raw.raw_namespace, raw.raw_kind, raw.raw_id, raw.raw_namespace, ...permitted.bindings);
   const budget: ReadBudget = ctx.worldReadBudget ?? { bytes: 0 };
   const readable = claims.some(({ claim_id }) => eligibleWorldClaim(ctx, claim_id, { kind: "all" }, budget) !== null);
   return readable ? ref : null;

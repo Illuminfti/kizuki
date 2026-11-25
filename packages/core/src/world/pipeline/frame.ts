@@ -23,9 +23,13 @@ export type ReadBudget = {
 export const WORLD_CLAIM_VERIFICATION_LIMIT = 129; // 128 candidates plus an overflow sentinel.
 const READ_BYTE_LIMIT = 2 * 1024 * 1024;
 
-export function charge(budget: ReadBudget, value: string): void {
-  budget.bytes += Buffer.byteLength(value, "utf8");
+export function chargeBytes(budget: ReadBudget, bytes: number): void {
+  budget.bytes += bytes;
   if (budget.bytes > READ_BYTE_LIMIT) throw new WorldProjectionBudgetError();
+}
+
+export function charge(budget: ReadBudget, value: string): void {
+  chargeBytes(budget, Buffer.byteLength(value, "utf8"));
 }
 
 /** Current state or a private exact committed history cutoff. */

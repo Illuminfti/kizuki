@@ -21,8 +21,11 @@ export type SourceCoverageGap = Extract<
  * event bound to it. Hidden sources never contribute a gap, a count or a text,
  * so their state cannot change what a principal sees.
  */
-function visibleSources(ctx: ServeContext): string[] {
-  const { clauses, bindings } = authorizedEventSql(ctx);
+function visibleSources(
+  ctx: ServeContext,
+  eventFilter: { clauses: string[]; bindings: (string | number)[] } = authorizedEventSql(ctx),
+): string[] {
+  const { clauses, bindings } = eventFilter;
   return ctx.db
     .query<{ source_key: string }, (string | number)[]>(
       `SELECT sg.source_key FROM source_grants sg WHERE EXISTS (
@@ -66,13 +69,17 @@ function extractFrontier(
  * queue. The grant's own event limits (subjects, types, window, ceiling) apply,
  * so backlog the principal cannot read never changes what it sees.
  */
-function extractBacklog(ctx: ServeContext, visible: readonly string[]): boolean {
+function extractBacklog(
+  ctx: ServeContext,
+  visible: readonly string[],
+  eventFilter: { clauses: string[]; bindings: (string | number)[] } = authorizedEventSql(ctx),
+): boolean {
   const { db } = ctx;
   const frontier = extractFrontier(db);
   const deferred = tableExists(db, "extract_deferred_inputs")
     ? "OR EXISTS (SELECT 1 FROM extract_deferred_inputs d WHERE d.event_id = events.event_id)"
     : "";
-  const { clauses, bindings } = authorizedEventSql(ctx);
+  const { clauses, bindings } = eventFilter;
   const query = db.query<
     { pending: number },
     (string | number)[]
@@ -107,11 +114,12 @@ export function sourceCoverage(ctx: ServeContext, dependencies?: WorldDependenci
     !tableExists(db, "source_event_bindings")
   )
     return [];
-  const visible = visibleSources(ctx);
+  const eventFilter = authorizedEventSql(ctx);
+  const visible = visibleSources(ctx, eventFilter);
   const gaps: SourceCoverageGap[] = [];
   if (visible.length > 0) {
     if (sourceIncomplete(db, visible)) gaps.push("coverage");
-    if (extractBacklog(ctx, visible)) gaps.push("pending_consolidation");
+    if (extractBacklog(ctx, visible, eventFilter)) gaps.push("pending_consolidation");
   }
   if (dependencies !== undefined) dependencies.coverage = { sources: visible, gaps };
   return gaps;
@@ -214,5 +222,6 @@ export function inspectSourceCoverage(db: Database): SourceCoverageReport[] {
 /** Same authorization and source visibility as world reads. Inventory is owner-only. */
 export function readSourceCoverage(ctx: ServeContext): SourceCoverageReport[] {
   if (!tableExists(ctx.db, "source_grants") || !tableExists(ctx.db, "source_event_bindings")) return [];
-  return coverageReports(ctx.db, visibleSources(ctx), authorizedEventSql(ctx), ctx.principal.kind === "owner");
+  const eventFilter = authorizedEventSql(ctx);
+  return coverageReports(ctx.db, visibleSources(ctx, eventFilter), eventFilter, ctx.principal.kind === "owner");
 }

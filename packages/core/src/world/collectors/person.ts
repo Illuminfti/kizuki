@@ -1,6 +1,6 @@
 import { rawSubjectNamespace } from "../../contracts/claim-v2";
 import { authorizedClaimSql } from "../policy-sql";
-import { knownHeldSql, knownSupportSql, knownValidSql, WorldHistoryUnavailable } from "../known/cutoff";
+import { knownPermittedAndUnheldSql, knownValidSql, WorldHistoryUnavailable } from "../known/cutoff";
 import { anchorOf, type Collector } from "../pipeline/collect";
 import { claimVisibleSql } from "../pipeline/frame";
 
@@ -21,13 +21,12 @@ export const personStatements: Collector = (frame, cluster, kind) => {
       AND coalesce(json_extract(endpoint.value,'$.namespace'),'')=?)`;
   const bindings = [anchor.kind, anchor.id, rawSubjectNamespace(anchor), anchor.kind, anchor.id, rawSubjectNamespace(anchor)];
   const scope = (historical: boolean) => {
-    const permitted = knownSupportSql(frame.ctx, historical ? cutoff : undefined);
-    const held = knownHeldSql(frame.ctx, "base", historical ? cutoff : undefined);
+    const admitted = knownPermittedAndUnheldSql(frame.ctx, "base", historical ? cutoff : undefined);
     return { sql: `FROM claim_v2_semantics c JOIN claims base USING(claim_id)
       WHERE c.discriminator='assertion' AND ${historical ? claimVisibleSql(frame, "base") : "base.status<>'purged'"}
       AND (${endpoint}) AND ${claim.sql}
-      AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) AND NOT ${held.sql}`,
-      bindings: [...bindings, ...claim.bindings, ...permitted.bindings, ...held.bindings] };
+      AND ${admitted.sql}`,
+      bindings: [...bindings, ...claim.bindings, ...admitted.bindings] };
   };
   if (cutoff !== undefined) {
     // Current permission cannot make erased older attribution look like absence.
