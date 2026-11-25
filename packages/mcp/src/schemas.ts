@@ -487,6 +487,7 @@ const memtStrings = (maxItems: number, maxLen: number) =>
   z.array(z.string()).refine(
     (items) => items.length <= maxItems && items.every((item) => item.length >= 1 && item.length <= maxLen),
   );
+const MEMT_SENSITIVITY = z.enum(["public", "work", "personal", "private"]);
 
 export const MEMT_STATUS_INPUT = z.strictObject({
   probe: z.boolean().optional(),
@@ -500,14 +501,30 @@ export const MEMT_RECALL_INPUT = z.strictObject({
   scope: z.enum(["canon", "ledger", "all"]).optional(),
   limit: memtInt(1, 50).optional(),
   include_synthesis: z.boolean().optional(),
+  person: z.string().optional(),
+  task: z.string().optional(),
+  task_kind: z.string().optional(),
+  areas: z.array(z.string()).optional(),
+  include_collaboration_slice: z.boolean().optional(),
+  prior_slice_hash: z.string().optional(),
+  budget_tokens: z.number().optional(),
+  as_of: z.string().optional(),
 });
 
-export const MEMT_EXPERIENCE_INPUT = z.strictObject({
-  action: z.enum(["record", "search", "verify"]),
+export const MEMT_EXPERIENCE_INPUT = z.looseObject({
+  action: z.enum([
+    "record",
+    "search",
+    "verify",
+    "record_facet",
+    "handoff",
+    "undo_handoff",
+    "progress",
+  ]),
   id: memtText(1, 128).optional(),
   domain: memtText(1, 128).optional(),
   scope_key: memtText(1, 128).optional(),
-  sensitivity: SENSITIVITY.optional(),
+  sensitivity: MEMT_SENSITIVITY.optional(),
   condition: memtText(1, 2048).optional(),
   recommendation: memtText(1, 2048).optional(),
   verification: memtText(0, 1024).optional(),
