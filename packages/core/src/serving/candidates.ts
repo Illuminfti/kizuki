@@ -23,17 +23,28 @@ import { stringArray } from "../vault/pages";
 import type { CanonPage } from "../vault/pages";
 import {
   canonChunk,
+  createPageReadAccess,
   eligible,
   excerptOf,
   loadCanon,
   pageDecision,
 } from "./canon";
+import { CanonAccessPhase } from "./canon-access";
+import { cachedSearchCanonScope } from "./index-health";
 import { ENTITY_TYPES } from "./entities";
-import { collectAuthorizedTimeline } from "./ledger";
+import {
+  authorizeEventsBatch,
+  collectAuthorizedTimeline,
+  createSourceGrantLookup,
+  currentQuotedSourcesBatch,
+  quotedChunk,
+} from "./ledger";
+import type { SourceGrantLookup } from "../ledger/source-grants";
+import { MAX_RETRIEVAL_LIMIT } from "../contracts/retrieval";
 import { blockquote, oneLine, redactorOf, stripInvisible } from "./redact";
 import type { Redactor } from "./redact";
 import { eventsCitedByPages } from "./dedupe";
-import { matchingEvents } from "./query-events";
+import { WITHHELD_SCAN_BOUND } from "./query-events";
 import { retrievalCandidates, retrievalGraphCandidates } from "./retrieval";
 import { CallDecisions, requiresClassScopedGraph } from "./graph-scope";
 import type { PacketSection, SessionSection } from "./sections";
@@ -242,6 +253,75 @@ export function loadSubjectGaps(db: Database, wanted: string[] | undefined, canR
 }
 
 /**
+ * Batched timeline query matching for context packets: stops as soon as `limit`
+ * authorized events are collected and uses bulk event/grant lookups instead of
+ * scanning every remaining candidate one-by-one.
+ */
+function matchingEventsForPacket(
+  ctx: ServeContext,
+  query: string,
+  opts: {
+    limit: number;
+    subjects?: string[];
+    kinds?: string[];
+    since?: string;
+    until?: string;
+  },
+  grantOf: SourceGrantLookup,
+): { quoted: QuotedChunk[]; degraded: string[] } {
+  const grant = ctx.principal.grant;
+  const quoted: QuotedChunk[] = [];
+  const degraded = new Set<string>();
+  const seen = new Set<string>();
+  let candidatesScanned = 0;
+  const batchChunkSize = Math.max(opts.limit, 20);
+  for (let offset = 0; quoted.length < opts.limit; ) {
+    const page = searchAuditCandidates(ctx.db, query, {
+      scope: "ledger",
+      ...(ctx.selection === undefined ? {} : { selection: ctx.selection }),
+      limit: MAX_RETRIEVAL_LIMIT,
+      ceiling: grant.ceiling,
+      source: { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall" },
+      ...(opts.subjects === undefined ? {} : { subjects: opts.subjects }),
+      ...(opts.kinds === undefined ? {} : { types: opts.kinds }),
+      ...(opts.since === undefined ? {} : { since: opts.since }),
+      ...(opts.until === undefined ? {} : { until: opts.until }),
+      ...(offset === 0 ? {} : { offset }),
+    });
+    if (page.degraded.includes(RELAXED_LABEL)) degraded.add(RELAXED_LABEL);
+    const unseenIds: string[] = [];
+    for (const candidate of page.candidates) {
+      const eventId = bareRetrievalId(candidate.doc_id);
+      if (seen.has(eventId)) continue;
+      seen.add(eventId);
+      unseenIds.push(eventId);
+    }
+    for (let pos = 0; pos < unseenIds.length && quoted.length < opts.limit; pos += batchChunkSize) {
+      const slice = unseenIds.slice(pos, pos + batchChunkSize);
+      const sources = currentQuotedSourcesBatch(ctx.db, slice);
+      const present = slice
+        .map((id) => sources.get(id))
+        .filter((item): item is NonNullable<typeof item> => item !== undefined);
+      const decisions = authorizeEventsBatch(ctx, grant, present, grantOf);
+      for (const source of present) {
+        const decision = decisions.get(source.event_id);
+        if (decision === undefined || !decision.allow) continue;
+        quoted.push(quotedChunk(source, decision.sensitivity, ctx));
+        if (quoted.length >= opts.limit) break;
+      }
+    }
+    candidatesScanned += page.candidates.length;
+    if (quoted.length >= opts.limit || page.candidates.length < MAX_RETRIEVAL_LIMIT) break;
+    if (candidatesScanned >= WITHHELD_SCAN_BOUND) {
+      degraded.add("scan-bound");
+      break;
+    }
+    offset += page.candidates.length;
+  }
+  return { quoted, degraded: [...degraded] };
+}
+
+/**
  * The packet's candidates, in the order they are offered to the packer:
  * canon first, then the pages one link away, then the window's records.
  */
@@ -260,6 +340,8 @@ export async function collectPieces(
       ...(request.types === undefined ? {} : { types: request.types }),
     }, { canon: CANON_EXCERPT });
   const index = loadCanon(ctx);
+  const grantOf = createSourceGrantLookup(ctx.db);
+  const readAccess = createPageReadAccess(index, grant, grantOf);
   const pieces: Piece[] = [];
   const packed = new Set<string>();
   let queryMatched = request.query === undefined;
@@ -267,8 +349,15 @@ export async function collectPieces(
   // One decision per page of `index`; a later graph pass over a reloaded
   // index reuses them only where the page and database are provably unchanged.
   const decisions = new CallDecisions(index, grant);
+  const localPageDecisions = new Map<string, ReturnType<typeof pageDecision>>();
   if (request.include.includes("canon")) {
-    const decisionFor = (page: CanonPage): ReturnType<typeof pageDecision> => decisions.decide(page);
+    const decisionFor = (page: CanonPage): ReturnType<typeof pageDecision> => {
+      const known = localPageDecisions.get(page.id);
+      if (known !== undefined) return known;
+      const decided = pageDecision(index, grant, page, readAccess);
+      localPageDecisions.set(page.id, decided);
+      return decided;
+    };
     const fromPort: CanonPage[] = nominated.ids.flatMap((id) => {
       const page = id.startsWith("page:") ? index.byId.get(bareRetrievalId(id)) : undefined;
       if (page === undefined) return [];
@@ -278,6 +367,8 @@ export async function collectPieces(
     });
     const candidates: CanonPage[] = [];
     if (request.query !== undefined) {
+      const access = new CanonAccessPhase(index, grant);
+      const { canonIds } = cachedSearchCanonScope(index, grant, access);
       const opts = {
         ...(ctx.selection === undefined ? {} : { selection: ctx.selection }),
       scope: "canon",
@@ -295,7 +386,7 @@ export async function collectPieces(
       } satisfies Parameters<typeof searchAuditCandidates>[2];
       const found = searchAuditCandidates(ctx.db, request.query, {
         ...opts,
-        canonIds: index.pages.filter(page => eligible(page) && decisionFor(page).allow).map(page => `page:${page.id}`),
+        canonIds,
         ceiling: grant.ceiling,
       });
       for (const hit of found.candidates) {
@@ -341,7 +432,7 @@ export async function collectPieces(
         if (queryPages.has(page.id)) queryMatched = true;
         packed.add(page.id);
         const { excerpt, truncated } = excerptOf(page.body, CANON_EXCERPT, ctx);
-        const chunk = canonChunk(index, page, decision, excerpt, truncated);
+        const chunk = canonChunk(index, page, decision, excerpt, truncated, true);
         pieces.push({
           section: "canon",
           heading: pageHeading(chunk, "## canon"),
@@ -360,11 +451,17 @@ export async function collectPieces(
       .filter((piece) => piece.section === "canon")
       .slice(0, GRAPH_ROOTS);
     const plans: { rootId: string; ids: string[]; fallback: boolean }[] = [];
+    let awaitedPort = false;
     for (const root of roots) {
       const rootId = root.canon?.page_id;
       if (rootId === undefined) continue;
+      if (ctx.retrieval === undefined) {
+        plans.push({ rootId, ids: [], fallback: true });
+        continue;
+      }
+      awaitedPort = true;
       const fromPort = requiresClassScopedGraph(ctx)
-        ? { ok: false, ids: [], degraded: ctx.retrieval === undefined ? [] : ["retrieval-graph-class-scope-unavailable"] }
+        ? { ok: false, ids: [], degraded: ["retrieval-graph-class-scope-unavailable"] }
         : await retrievalGraphCandidates(ctx, rootId, {
             ceiling: grant.ceiling,
             limit: GRAPH_CHUNKS,
@@ -374,7 +471,8 @@ export async function collectPieces(
       }
       plans.push({ rootId, ids: fromPort.ok ? fromPort.ids : [], fallback: !fromPort.ok });
     }
-    const liveIndex = loadCanon(ctx);
+    const liveIndex = awaitedPort ? loadCanon(ctx) : index;
+    const liveReadAccess = awaitedPort ? createPageReadAccess(liveIndex, grant) : readAccess;
     let localScope: ReturnType<typeof decisions.graphScope> | undefined;
     let added = 0;
     const consider = (targetId: string): void => {
@@ -382,7 +480,7 @@ export async function collectPieces(
       const target = liveIndex.byId.get(bareRetrievalId(targetId));
       if (target === undefined || packed.has(target.id)) return;
       if (!eligible(target)) return;
-      const decision = pageDecision(liveIndex, grant, target);
+      const decision = pageDecision(liveIndex, grant, target, liveReadAccess);
       if (!decision.allow) return;
       packed.add(target.id);
       added += 1;
@@ -392,7 +490,7 @@ export async function collectPieces(
         ctx,
         "inline",
       );
-      const chunk = canonChunk(liveIndex, target, decision, excerpt, truncated);
+      const chunk = canonChunk(liveIndex, target, decision, excerpt, truncated, true);
       pieces.push({
         section: "graph",
         heading: pageHeading(chunk, "## related"),
@@ -425,13 +523,13 @@ export async function collectPieces(
     const matched: QuotedChunk[] = [];
     if (request.query !== undefined) {
       // The query picks the captures that answer it, most relevant first.
-      const found = matchingEvents(ctx, request.query, {
+      const found = matchingEventsForPacket(ctx, request.query, {
         limit: CANDIDATE_LIMIT,
         since: request.since,
         until: request.until,
         ...(wanted === undefined ? {} : { subjects: wanted }),
         ...(kinds === undefined ? {} : { kinds }),
-      });
+      }, grantOf);
       if (found.quoted.length > 0) queryMatched = true;
       for (const chunk of found.quoted) {
         packedEvents.add(chunk.event_id);

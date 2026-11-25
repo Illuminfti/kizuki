@@ -7,6 +7,7 @@ import type { CanonPage } from "../vault/pages";
 import { enumOf, limit, text } from "./arguments";
 import {
   canonChunk,
+  createPageReadAccess,
   eligible,
   excerptOf,
   loadCanon,
@@ -88,8 +89,9 @@ export function serveEntities<C extends ResponseContract = typeof ENVELOPE_SCHEM
 
       const canon: CanonChunk[] = [];
       const withheld: AuditDenial[] = [];
+      const readAccess = createPageReadAccess(index, ctx.principal.grant);
       const admitted = candidates.flatMap(page => {
-        const decision = pageDecision(index, ctx.principal.grant, page);
+        const decision = pageDecision(index, ctx.principal.grant, page, readAccess);
         if (!decision.allow) {
           if (name === undefined || matchesName(page, name, preview)) withheld.push({ id: page.id, reason: decision.reason });
           return [];
@@ -111,7 +113,7 @@ export function serveEntities<C extends ResponseContract = typeof ENVELOPE_SCHEM
           ctx,
           "inline",
         );
-        const chunk = canonChunk(index, page, decision, excerpt, truncated);
+        const chunk = canonChunk(index, page, decision, excerpt, truncated, true);
         for (const item of attachSubjectLabels(projection, chunk, subjects)) audit.set(item.id, item);
         canon.push(chunk);
       }

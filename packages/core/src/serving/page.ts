@@ -2,6 +2,7 @@ import { normalizeReadArgs, type GetPageArgsV2 } from "./v2/read-input";
 import { relPath, text } from "./arguments";
 import {
   canonChunk,
+  createPageReadAccess,
   deniedPageAudit,
   eligible,
   excerptOf,
@@ -52,7 +53,8 @@ export function serveGetPage<C extends ResponseContract = typeof ENVELOPE_SCHEMA
       return { canon: [], quoted: [], withheld: page === undefined ? deniedPageAudit(index, wantsId ? { id: selector } : { path: selector }) : [] };
     }
 
-    const decision = pageDecision(index, ctx.principal.grant, page);
+    const readAccess = createPageReadAccess(index, ctx.principal.grant);
+    const decision = pageDecision(index, ctx.principal.grant, page, readAccess);
     if (!decision.allow) {
       return {
         canon: [],
@@ -63,7 +65,7 @@ export function serveGetPage<C extends ResponseContract = typeof ENVELOPE_SCHEMA
 
     const { excerpt, truncated } = excerptOf(page.body, MAX_BODY_CHARS, ctx);
     return {
-      canon: [canonChunk(index, page, decision, excerpt, truncated)],
+      canon: [canonChunk(index, page, decision, excerpt, truncated, true)],
       quoted: [],
       withheld: [],
     };
