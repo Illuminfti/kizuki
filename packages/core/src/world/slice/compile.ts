@@ -8,8 +8,10 @@ const VIEW_WRAPPER_TOKENS = 200;
 /** Share of post-header packet room reserved for typed slice units so canon and capture still fit. */
 export const PACKET_SLICE_SHARE = 0.6;
 
-export function packetSliceBudget(headerTokens: number, budgetTokens: number): number {
-  return headerTokens + Math.floor(Math.max(0, budgetTokens - headerTokens) * PACKET_SLICE_SHARE);
+export function packetSliceBudget(headerTokens: number, budgetTokens: number, reservedTokens?: number): number {
+  const base = headerTokens + Math.floor(Math.max(0, budgetTokens - headerTokens) * PACKET_SLICE_SHARE);
+  if (reservedTokens === undefined) return base;
+  return Math.max(base, Math.min(budgetTokens, budgetTokens - Math.max(0, reservedTokens)));
 }
 
 function counted(data: WorldSlice, project: (value: WorldSlice) => WorldSlice): WorldSlice {

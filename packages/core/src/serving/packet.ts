@@ -503,9 +503,20 @@ async function servePacket(
           ...(types === undefined ? {} : { types }),
           ...window,
         }));
+        const nonSliceReservedTokens = (): number => {
+          const scoped = v2 ? scopePacketPieces(ctx, pieces) : pieces;
+          let heading = "";
+          let text = "";
+          for (const piece of scoped) {
+            if (types !== undefined && piece.canon !== undefined && !types.includes(piece.canon.type)) continue;
+            text += `${piece.heading === heading ? "" : `${piece.heading}\n`}${piece.block}`;
+            heading = piece.heading;
+          }
+          return text.length === 0 ? 0 : tokens(text);
+        };
         if (purpose === "recall" && request.include === undefined && request.since === undefined && request.until === undefined) {
           try {
-            const recall = compileRecallSlice(ctx, { at, header, budgetTokens: budget,
+            const recall = compileRecallSlice(ctx, { at, header, budgetTokens: budget, reservedTokens: nonSliceReservedTokens(),
               ...(query === undefined ? {} : { query }), ...(subjects === undefined ? {} : { subjects }) });
             pieces = [...recall.pieces, ...pieces];
             if (recall.pieces.length > 0) degraded = degraded.filter(gap => gap !== "query-no-match");
@@ -521,6 +532,7 @@ async function servePacket(
           try {
             const state = (v2 ? compileSessionSlice : collectSessionPieces)(ctx, {
               header, budgetTokens: budget,
+              ...(v2 ? { reservedTokens: nonSliceReservedTokens() } : {}),
               at,
               since: window.since,
               ...(query === undefined ? {} : { query }),

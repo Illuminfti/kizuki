@@ -18,7 +18,7 @@ const HEADING = "## current world relations (quoted data, complete qualifiers)";
 /** Recall consumes the same authorized relation atoms as World Slice. Page
  * excerpts remain useful history, but are not a substitute for current meaning. */
 export function compileRecallSlice(ctx: ServeContext, request: {
-  at: string; query?: string; subjects?: readonly string[]; header: string; budgetTokens: number;
+  at: string; query?: string; subjects?: readonly string[]; header: string; budgetTokens: number; reservedTokens?: number;
 }) {
   const world = worldDependencies();
   if (ctx.principal.kind !== "owner" && !toolAllowed(ctx.principal.grant, "world_view"))
@@ -51,7 +51,7 @@ export function compileRecallSlice(ctx: ServeContext, request: {
         a.item.relation.claim.token.localeCompare(b.item.relation.claim.token))
       .map(entry => piece(entry.item));
     const required = rank(candidates.constraints), detail = rank(candidates.detail);
-    const shareLimit = packetSliceBudget(packetTokens(request.header), request.budgetTokens);
+    const shareLimit = packetSliceBudget(packetTokens(request.header), request.budgetTokens, request.reservedTokens);
     const within = (constraints: readonly Piece[], details: readonly Piece[], limit: number) => audit.length <= MAX_AUDIT_ITEMS &&
       packetTokens(redactor.join([request.header, HEADING + "\n", ...[...constraints, ...details].map(item => item.block)])) <= limit;
     const compiled = compilePacketUnits(required, detail, within, shareLimit, request.budgetTokens);

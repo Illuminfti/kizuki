@@ -38,7 +38,7 @@ function rendered(pieces: readonly Piece[]): string {
 /** Legacy owner selectors feed the same card providers and mandatory-first compiler as world slices.
  * No second typed claim collector, no model call and no canon write. */
 export function compileSessionSlice(ctx: ServeContext, request: {
-  at: string; since: string; subjects?: readonly string[]; query?: string; header: string; budgetTokens: number;
+  at: string; since: string; subjects?: readonly string[]; query?: string; header: string; budgetTokens: number; reservedTokens?: number;
 }): SessionPieces & { truncated: boolean } {
   // Retain the model-free owner identity/legacy claim floor. Typed reads are disabled here.
   const legacy = collectSessionPieces(ctx, { ...request, typed: false });
@@ -154,7 +154,7 @@ export function compileSessionSlice(ctx: ServeContext, request: {
   const byRelevance = (a: Unit, b: Unit) => (b.relevance ?? 0) - (a.relevance ?? 0);
   const required = scopedUnits.filter(unit => unit.required).sort(byRelevance);
   const detail = scopedUnits.filter(unit => !unit.required).sort(byRelevance);
-  const shareLimit = packetSliceBudget(packetTokens(request.header), request.budgetTokens);
+  const shareLimit = packetSliceBudget(packetTokens(request.header), request.budgetTokens, request.reservedTokens);
   const within = (constraints: readonly Unit[], details: readonly Unit[], limit: number) => {
     const pieces = ordered([...constraints, ...details]);
     return auditFits(pieces) && packetTokens(redactor.join([request.header, rendered(pieces)])) <= limit;
