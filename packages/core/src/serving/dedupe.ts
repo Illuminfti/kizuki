@@ -2,17 +2,44 @@ import { eventIdFromReference } from "../retrieval/ids";
 import { stringArray } from "../vault/pages";
 import type { CanonPage } from "../vault/pages";
 
+/** Code-point bound shared by canon packet (`CANON_EXCERPT`) and search (`LEDGER_EXCERPT`) excerpts. */
+const SERVED_EXCERPT_POINTS = 600;
+
+function exceedsServedExcerpt(body: string): boolean {
+  if (body.length <= SERVED_EXCERPT_POINTS) return false;
+  let points = 0;
+  for (const _ of body) {
+    points += 1;
+    if (points > SERVED_EXCERPT_POINTS) return true;
+  }
+  return false;
+}
+
 /**
- * A capture already cited by a selected page is redundant. A newer revision
- * of the same source record is different evidence and must remain visible
- * until the receipted writer updates the page.
+ * A capture already cited by a selected page is redundant only when the page's
+ * full body fits within the served excerpt bound. When a page is truncated on
+ * serving, later cited events may be absent from the excerpt and must remain
+ * visible. A newer revision of the same source record is different evidence
+ * and must remain visible until the receipted writer updates the page.
  */
 export function eventsCitedByPages(
   pages: readonly CanonPage[],
   candidates: readonly string[],
 ): Set<string> {
-  const cited = new Set(pages.flatMap(page => stringArray(page.data["sources"]).map(eventIdFromReference)));
-  return new Set(candidates.filter(id => cited.has(id)));
+  const out = new Set<string>();
+  if (pages.length === 0 || candidates.length === 0) return out;
+  const cited = new Set<string>();
+  for (const page of pages) {
+    if (exceedsServedExcerpt(page.body)) continue;
+    for (const source of stringArray(page.data["sources"])) {
+      cited.add(eventIdFromReference(source));
+    }
+  }
+  if (cited.size === 0) return out;
+  for (const id of candidates) {
+    if (cited.has(id)) out.add(id);
+  }
+  return out;
 }
 
 export interface DeduplicableSource {
