@@ -210,13 +210,54 @@ describe("hybrid search never depends on the embedding server", () => {
     expect(healthy.space).toBe(FIXTURE_SPACE.id);
 
     embedding.failQueries = true;
-    const hybrid = await port.search({ ...SYNTHETIC_QUERY, mode: "hybrid" });
+    const uncached = { ...SYNTHETIC_QUERY, text: "grace partnerships" };
+    const hybrid = await port.search({ ...uncached, mode: "hybrid" });
     expect(hybrid.hits.map((hit) => hit.doc_id)).toEqual(["page:grace"]);
     expect(hybrid.degraded).toContain("vector-unavailable");
     expect(hybrid.space).toBeNull();
     await expect(
-      port.search({ ...SYNTHETIC_QUERY, mode: "vector" }),
+      port.search({ ...uncached, mode: "vector" }),
     ).rejects.toBeInstanceOf(PortError);
+  });
+
+  test("query-vector LRU cache avoids repeat embedQuery calls and clears on close", async () => {
+    const embedding = new RecordingEmbedding();
+    let queryCalls = 0;
+    const origEmbedQuery = embedding.embedQuery.bind(embedding);
+    embedding.embedQuery = async (texts) => {
+      queryCalls += 1;
+      return origEmbedQuery(texts);
+    };
+    const { port } = await open(embedding);
+    await port.upsert([SYNTHETIC_DOCS[0]!]);
+
+    const first = await port.search({ ...SYNTHETIC_QUERY, mode: "hybrid" });
+    const second = await port.search({ ...SYNTHETIC_QUERY, mode: "hybrid" });
+    expect(queryCalls).toBe(1);
+    expect(second.hits).toEqual(first.hits);
+    expect(second.space).toBe(FIXTURE_SPACE.id);
+
+    // Distinct query misses cache and invokes embedQuery once.
+    await port.search({ ...SYNTHETIC_QUERY, text: "acme", mode: "hybrid" });
+    expect(queryCalls).toBe(2);
+    // Repeat of first query is still cached.
+    await port.search({ ...SYNTHETIC_QUERY, mode: "hybrid" });
+    expect(queryCalls).toBe(2);
+  });
+
+  test("respects embedder-declared batch_size up to cap during upsert and rebuild", async () => {
+    const embedding = new RecordingEmbedding();
+    (embedding as unknown as { batch_size: number }).batch_size = 16;
+    const { port } = await open(embedding, { chunk_tokens: 100, chunk_overlap: 0 });
+    const many = Array.from({ length: 20 }, (_, at) => doc(`page:adapt-${at}`, `adaptive batch record ${at}`));
+    await port.upsert(many);
+    expect(embedding.batches.map((b) => b.length)).toEqual([16, 4]);
+
+    embedding.batches.length = 0;
+    await port.rebuildFromDocuments(
+      Array.from({ length: 18 }, (_, at) => doc(`page:adapt-rb-${at}`, `adaptive rebuild record ${at}`)),
+    );
+    expect(embedding.batches.map((b) => b.length)).toEqual([16, 2]);
   });
 
   test("an engine bound without an embedder labels hybrid as vector-skipped", async () => {

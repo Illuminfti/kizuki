@@ -251,6 +251,40 @@ describe("kizuki.embedding.local-http wire formats", () => {
     ).embedQuery(["grace"]);
     expect([...vector!]).toEqual(hashVector("grace"));
   });
+
+  test("caches repeated query embeddings in a bounded LRU and isolates caller mutations", async () => {
+    const { server, open } = fixture({ prompt_query: "search_query: {q}" });
+    const port = open();
+    const [first] = await port.embedQuery(["grace partnerships"]);
+    expect(server.requests).toHaveLength(1);
+    first![0] = 999;
+
+    const [second] = await port.embedQuery(["grace partnerships"]);
+    expect(server.requests).toHaveLength(1);
+    expect([...second!]).toEqual(hashVector("search_query: grace partnerships"));
+
+    // Mixed batch sends only uncached queries and deduplicates repeats.
+    const mixed = await port.embedQuery(["grace partnerships", "acme", "acme"]);
+    expect(server.requests).toHaveLength(2);
+    expect(server.requests[1]!.body.input).toEqual(["search_query: acme"]);
+    expect(mixed.map((v) => [...v])).toEqual([
+      hashVector("search_query: grace partnerships"),
+      hashVector("search_query: acme"),
+      hashVector("search_query: acme"),
+    ]);
+    await port.close();
+  });
+
+  test("reuses keep-alive loopback connections and recovers if the server closes an idle socket", async () => {
+    const { server, open } = fixture();
+    const port = open();
+    for (let i = 0; i < 6; i += 1) {
+      const [vec] = await port.embedQuery([`distinct-${i}`]);
+      expect([...vec!]).toEqual(hashVector(`distinct-${i}`));
+    }
+    expect(server.requests).toHaveLength(6);
+    await port.close();
+  });
 });
 
 describe("kizuki.embedding.local-http failure handling", () => {

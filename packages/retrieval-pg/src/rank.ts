@@ -78,6 +78,7 @@ export function candidateFromDoc(
     keyword_hit?: boolean;
     text?: string;
     vector?: Float32Array | null;
+    cosine?: number;
   } = {},
 ): RecipeCandidate {
   return {
@@ -90,6 +91,7 @@ export function candidateFromDoc(
     keyword_hit: opts.keyword_hit ?? false,
     score,
     vector: opts.vector ?? null,
+    ...(opts.cosine === undefined ? {} : { cosine: opts.cosine }),
   };
 }
 
