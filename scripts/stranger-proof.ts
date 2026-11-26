@@ -8,6 +8,7 @@ import { releaseTarget, requireNativeHost, selectedReleaseTarget } from "./relea
 import { ArtifactProofError, validateArtifactProof } from "./artifact-proof";
 import type { ArtifactProofSchema, CliEngineObservation, McpEngineObservation } from "./artifact-proof";
 import { EngineProofError, collectEngineProcess, mcpObservationFromOutput, parseDoctorObservation } from "./artifact-engine";
+import { RELEASE_RAIL_IDS as RAIL_IDS } from "./release-rails";
 
 const root = resolve(import.meta.dir, "..");
 import type { BuildInfo } from "./release-artifacts";
@@ -16,6 +17,7 @@ export { parseBuildInfo, parseBuildInfoValue } from "./release-artifacts";
 const supportedBunVersion = readFileSync(join(root, ".bun-version"), "utf8").trim();
 
 const CHILD_TIMEOUT_MS = 30_000;
+const DOCTOR_STREAM_LIMIT = 16 * 1024;
 
 export interface StepReceipt {
   id: string;
@@ -126,6 +128,152 @@ function checkedArtifact(path: string): BuildInfo {
   return build;
 }
 
+/**
+ * Enforces that a vault's `doctor --json` envelope is healthy with zero
+ * degraded flags, zero warnings, zero problems, healthy serve/ledger, every
+ * expected rail in the required state with zero degraded streak, and clean stderr.
+ */
+export function assertCleanDoctorEnvelope(
+  stdout: string,
+  exitCode: number,
+  stderr = "",
+  expectedRailState: "idle" | "ok" = "idle",
+): void {
+  assertNoDegradedDiagnostics("doctor", stderr);
+  if (stderr.trim() !== "") {
+    throw new ArtifactProofError("doctor-stderr");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout) as unknown;
+  } catch {
+    throw new ArtifactProofError("doctor-invalid-json");
+  }
+  if (!isObject(parsed) || parsed.schema !== "kizuki.cli.doctor/v1") {
+    throw new ArtifactProofError("doctor-invalid-schema");
+  }
+  if (exitCode !== 0 || parsed.status !== "ok") {
+    throw new ArtifactProofError("doctor-unhealthy");
+  }
+  if (!Array.isArray(parsed.degraded) || parsed.degraded.length !== 0) {
+    throw new ArtifactProofError("doctor-degraded");
+  }
+  if (!Array.isArray(parsed.warnings) || parsed.warnings.length !== 0) {
+    throw new ArtifactProofError("doctor-warnings");
+  }
+  const data = parsed.data;
+  if (
+    !isObject(data) ||
+    data.ok !== true ||
+    !Array.isArray(data.problems) ||
+    data.problems.length !== 0 ||
+    !isObject(data.ledger) ||
+    data.ledger.ok !== true ||
+    !isObject(data.serve) ||
+    data.serve.ok !== true ||
+    !Array.isArray(data.serve.failures) ||
+    data.serve.failures.length !== 0 ||
+    !Array.isArray(data.serve.rails)
+  ) {
+    throw new ArtifactProofError("doctor-unhealthy");
+  }
+  const expectedLastResult = expectedRailState === "idle" ? null : "ok";
+  const seenRails = new Set<string>();
+  for (const entry of data.serve.rails) {
+    if (!isObject(entry) || typeof entry.rail !== "string") {
+      throw new ArtifactProofError("doctor-unhealthy");
+    }
+    if (
+      entry.status === "degraded" ||
+      entry.last_result === "degraded" ||
+      (typeof entry.degraded_streak === "number" && entry.degraded_streak > 0)
+    ) {
+      throw new ArtifactProofError("doctor-degraded");
+    }
+    if (
+      seenRails.has(entry.rail) ||
+      entry.status !== expectedRailState ||
+      entry.last_result !== expectedLastResult ||
+      entry.reason !== null ||
+      entry.degraded_streak !== 0
+    ) {
+      throw new ArtifactProofError("doctor-unhealthy");
+    }
+    seenRails.add(entry.rail);
+  }
+  if (seenRails.size !== RAIL_IDS.length || RAIL_IDS.some((rail) => !seenRails.has(rail))) {
+    throw new ArtifactProofError("doctor-unhealthy");
+  }
+}
+
+/** Rejects spurious degraded diagnostics emitted on stderr during fresh-user commands. */
+export function assertNoDegradedDiagnostics(id: string, stderr: string): void {
+  if (/\bdegraded[=:]/.test(stderr)) {
+    throw new ArtifactProofError(`${id}-degraded`);
+  }
+}
+
+/**
+ * Bounded execution for `kizuki doctor --json` that enforces the same 16 KiB
+ * stream and 30 s deadline limits as `collectEngineProcess` while keeping
+ * stderr in memory for diagnostic validation (never written to the receipt).
+ */
+async function collectCliDoctorProcess(
+  executable: string,
+  args: readonly string[],
+  cwd: string,
+  env: Record<string, string>,
+): Promise<{ stdout: string; stderr: string; exit_code: number }> {
+  let child;
+  try {
+    child = Bun.spawn([executable, ...args], { cwd, env, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+  } catch {
+    throw new EngineProofError("engine-process-failed");
+  }
+  let failure: EngineProofError | undefined;
+  const fail = (error: EngineProofError): void => {
+    failure ??= error;
+    child.kill("SIGKILL");
+  };
+  const timer = setTimeout(() => fail(new EngineProofError("engine-timeout")), CHILD_TIMEOUT_MS);
+  const consume = async (stream: ReadableStream<Uint8Array>, fatalUtf8: boolean): Promise<string> => {
+    const reader = stream.getReader();
+    const decoder = new TextDecoder("utf-8", { fatal: fatalUtf8 });
+    let size = 0;
+    let output = "";
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > DOCTOR_STREAM_LIMIT) throw new EngineProofError("engine-output-limit");
+        output += decoder.decode(value, { stream: true });
+      }
+      output += decoder.decode();
+      return output;
+    } catch (error) {
+      fail(error instanceof EngineProofError ? error : new EngineProofError("engine-response-invalid"));
+      return "";
+    } finally {
+      reader.releaseLock();
+    }
+  };
+  const stdout = consume(child.stdout, true);
+  const stderr = consume(child.stderr, false);
+  try {
+    child.stdin.end();
+    const [out, err, code] = await Promise.all([stdout, stderr, child.exited]);
+    if (failure) throw failure;
+    return { stdout: out, stderr: err, exit_code: code };
+  } catch (error) {
+    fail(error instanceof EngineProofError ? error : new EngineProofError("engine-process-failed"));
+    await Promise.allSettled([stdout, stderr, child.exited]);
+    throw failure;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function run(
   executable: string,
   cwd: string,
@@ -141,15 +289,18 @@ function run(
     stdout: "pipe",
     timeout: CHILD_TIMEOUT_MS,
   });
-  const step = {
+  const step: StepReceipt = {
     id,
     command: ["kizuki", ...args],
     exit_code: result.exitCode,
-    passed: result.exitCode === 0,
+    passed: false,
     timeout_ms: CHILD_TIMEOUT_MS,
   };
   steps.push(step);
   if (result.exitCode !== 0) throw new Error(`${id} exited ${result.exitCode}`);
+  const stderr = new TextDecoder().decode(result.stderr);
+  assertNoDegradedDiagnostics(id, stderr);
+  step.passed = true;
   return new TextDecoder().decode(result.stdout);
 }
 
@@ -233,10 +384,16 @@ export async function runArtifactProof(args: ProofArgs): Promise<string> {
       const command = kind === "cli" ? ["doctor", "--json", "--vault", vault] : ["--vault", vault, "--owner"];
       const step: StepReceipt = { id: `${kind}-engine`, command: [binary, ...command], exit_code: -1, passed: false, timeout_ms: CHILD_TIMEOUT_MS };
       steps.push(step);
-      const result = await collectEngineProcess(join(copiedArtifact, binary), command, execution, env, kind === "mcp");
-      step.exit_code = result.exit_code;
-      if (kind === "cli") engineObservations.kizuki = parseDoctorObservation(result.stdout, result.exit_code, packageHashes[binary]!);
-      else engineObservations.kizuki_mcp = mcpObservationFromOutput(result.stdout, packageHashes[binary]!);
+      if (kind === "cli") {
+        const result = await collectCliDoctorProcess(join(copiedArtifact, binary), command, execution, env);
+        step.exit_code = result.exit_code;
+        engineObservations.kizuki = parseDoctorObservation(result.stdout, result.exit_code, packageHashes[binary]!);
+        assertCleanDoctorEnvelope(result.stdout, result.exit_code, result.stderr);
+      } else {
+        const result = await collectEngineProcess(join(copiedArtifact, binary), command, execution, env, true);
+        step.exit_code = result.exit_code;
+        engineObservations.kizuki_mcp = mcpObservationFromOutput(result.stdout, packageHashes[binary]!);
+      }
       requireUnchangedPackage();
       step.passed = true;
     }
