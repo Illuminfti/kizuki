@@ -14,7 +14,7 @@ function conditionsOf(raw:string|null):ForecastConditions|null {
   if(raw===null)return null;
   let parsed:ForecastConditions;try{parsed=JSON.parse(raw);}catch{return null;}
   if(typeof parsed?.report!=="string"||parseStoredOutcomeEvidence("outcome.self_report",JSON.stringify(parsed.expected))===null)return null;
-  return parsed;
+  return {report:parsed.report,expected:parsed.expected};
 }
 export function chooseResolution(frame:ReadFrame,row:ForecastRow,at:string,admittedThrough?:number):ResolutionDecision|null {
   const db=frame.ctx.db,proofs=forecastInputs(db,row.forecast_id);
