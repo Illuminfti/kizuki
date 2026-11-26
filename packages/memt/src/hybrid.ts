@@ -14,6 +14,12 @@ import {
 import type { MemtSensitivity } from "./db";
 import { ExperienceBank } from "./experience";
 import type { ExperienceRecord, ExperienceSearchHit } from "./experience";
+import { CollaborationSliceStore } from "./collaboration";
+import type {
+  CollaborationSlice,
+  CompileCollaborationSliceInput,
+  PurgeCollaborationResult,
+} from "./collaboration";
 import { normalizeMemTModel } from "./protocol";
 import type {
   MemTCapabilities,
@@ -522,6 +528,7 @@ export interface MemtPurgeResult {
     readonly purgedIds: readonly string[];
     readonly purgedCount: number;
   };
+  readonly collaboration: PurgeCollaborationResult;
 }
 
 export interface MemtEngineOptions {
@@ -539,6 +546,7 @@ export class MemtEngine {
   readonly config: MemtConfig;
   readonly experiences: ExperienceBank;
   readonly snapshots: SnapshotCustodyRegistry;
+  readonly collaboration: CollaborationSliceStore;
   readonly client: MemTClient | null;
 
   private readonly db: Database;
@@ -570,6 +578,7 @@ export class MemtEngine {
     this.db = openMemtRegistryDb(dbPath);
     this.experiences = new ExperienceBank({ db: this.db });
     this.snapshots = new SnapshotCustodyRegistry({ db: this.db });
+    this.collaboration = new CollaborationSliceStore({ db: this.db });
 
     if (options.client !== undefined) {
       this.client = options.client;
@@ -949,13 +958,20 @@ export class MemtEngine {
     };
   }
 
+  compileCollaborationSlice(
+    input: CompileCollaborationSliceInput,
+  ): CollaborationSlice {
+    return this.collaboration.compileSlice(input);
+  }
+
   purgeSources(sourceIds: readonly string[]): MemtPurgeResult {
     const snapshots = this.snapshots.invalidateForPurgedSources(sourceIds);
     for (const partitionKey of snapshots.invalidatedPartitions) {
       this.loadedSnapshotByPartition.delete(partitionKey);
     }
     const experiences = this.experiences.purgeBySourceRefs(sourceIds);
-    return { snapshots, experiences };
+    const collaboration = this.collaboration.purgeBySourceRefs(sourceIds);
+    return { snapshots, experiences, collaboration };
   }
 
   async close(): Promise<void> {

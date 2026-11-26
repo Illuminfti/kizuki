@@ -13,5 +13,5 @@ export const attentionFragment: McpWorldOp = {
       z.strictObject({ state: z.literal("provider_failure"), reason: z.enum(["model_unavailable", "provider_error"]) }),
     ])).min(1).max(68), coverage: worldCoverage,
   } },
-  summary: "attention reads scoped goal-aware cues and distinct quiet, coverage, stale and failure states. Agents cannot dismiss, snooze or deliver cues; attention never changes factual authority or grants execution.",
+  summary: "attention: scoped cues + quiet/coverage/stale/failure states; read-only, no authority or execution.",
 };
