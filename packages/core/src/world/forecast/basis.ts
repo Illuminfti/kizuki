@@ -20,6 +20,7 @@ export interface ForecastConditions {
 export interface ForecastBasis {
   readonly due: string;
   readonly probability: number;
+  readonly laterPrerequisite: boolean;
   readonly proofs: readonly ForecastProof[];
   readonly conditions: ForecastConditions | null;
   readonly class: "prediction" | "analysis";
@@ -96,7 +97,7 @@ export function forecastBasis(frame:ReadFrame,handle:string):ForecastBasis[] {
     laterPrerequisite=prerequisiteDates.some(date=>Date.parse(date)>Date.parse(due));
     const pins=new Map(proofs);candidate.dues.forEach(e=>pins.set(e.claimId,typedProof(frame,e)));
     if(pins.size>256)return [];
-    return [{awaitingInspection,due,probability:laterPrerequisite?0.25:0.5,proofs:[...pins.values()].sort((a,b)=>a.claim.localeCompare(b.claim)),conditions,class:candidate.class}];
+    return [{awaitingInspection,due,laterPrerequisite,probability:laterPrerequisite?0.25:0.5,proofs:[...pins.values()].sort((a,b)=>a.claim.localeCompare(b.claim)),conditions,class:candidate.class}];
   });
 }
 export function basisIdentity(basis:ForecastBasis):string {

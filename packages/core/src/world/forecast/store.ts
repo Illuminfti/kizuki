@@ -7,7 +7,9 @@ import type { Database } from "bun:sqlite";
 import { canonicalJson, sha256Hex } from "../../util/hash";
 import { ulid } from "../../util/ulid";
 import { isRfc3339 } from "../../util/time";
+import { isPlainObject } from "../../util/validate";
 import type { ForecastQuestion, ForecastStatus } from "../../contracts/forecast";
+import { parseForecastCalibration } from "./calibration";
 import { parseForecastProof, type ForecastProof } from "./proof";
 
 export interface ForecastRow {
@@ -70,7 +72,13 @@ export function validForecastRecord(db:Database,row:ForecastRow,proofs:readonly 
   const owners=new Set(claims.flatMap(c=>c?.discriminator==="assertion"&&c.predicate==="situation.has_commitment"&&c.polarity==="positive"&&c.perspective.mode==="asserted"&&c.object.kind==="subject"&&rawSubjectRefKey(c.object.ref)===key?[rawSubjectRefKey(c.subject)]:[]));
   const prerequisites=new Set(claims.flatMap(c=>c?.discriminator==="assertion"&&c.predicate==="situation.requires"&&c.polarity==="positive"&&c.perspective.mode==="asserted"&&owners.has(rawSubjectRefKey(c.subject))&&c.object.kind==="subject"?[rawSubjectRefKey(c.object.ref)]:[]));
   const late=claims.some(c=>c?.discriminator==="assertion"&&c.predicate==="commitment.due"&&c.polarity==="positive"&&c.perspective.mode==="asserted"&&prerequisites.has(rawSubjectRefKey(c.subject))&&c.object.kind==="literal"&&Date.parse(deadlineInstant(c.object.value)??"")>Date.parse(row.due_at!));
-  if(row.probability!==(late?0.25:0.5))return false;
   let conditions:unknown;try{conditions=row.conditions===null?null:JSON.parse(row.conditions);}catch{return false;}
+  const expectedPrior=late?0.25:0.5;
+  if(isPlainObject(conditions)&&Object.hasOwn(conditions,"calibration")){
+    const keys=Object.keys(conditions).sort().join(",");
+    if(keys!=="calibration"&&keys!=="calibration,expected,report")return false;
+    const calibration=parseForecastCalibration(conditions.calibration);
+    if(calibration===null||calibration.priorMean!==expectedPrior||row.probability!==calibration.probability)return false;
+  }else if(row.probability!==expectedPrior)return false;
   return row.basis_key===sha256Hex(canonicalJson([row.due_at,row.record_class,row.probability,conditions,[...proofs].sort((a,b)=>a.claim.localeCompare(b.claim))]));
 }

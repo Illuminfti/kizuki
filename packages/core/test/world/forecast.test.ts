@@ -24,6 +24,9 @@ import { legacyProof } from "../../src/world/forecast/proof";
 import { collectReadFrames } from "../../src/world/pipeline/frame";
 import { validateForecastJournal } from "../../src/world/forecast/validate";
 import { resupersedeClaim, reinstateClaim } from "../../src/claims/store";
+import { calibratedProbability, parseForecastCalibration } from "../../src/world/forecast/calibration";
+import { cardFixture } from "./card-fixture";
+import type { SituationCardV2 } from "../../src/contracts/situation-card-v2";
 const WHEN={valid:{kind:"all"},knownAt:{kind:"current"}} as const;
 function assertJournalRestore(f:{db:ReturnType<typeof openLedger>;ctx:{vaultPath:string}}):void {
  const temp=tempVault("forecast-readmission-restore-");try{
@@ -282,3 +285,150 @@ test("an inconclusive independent inspection is censored and later success canno
   expect(f.read().records.find(r=>r.question===initial.question)).toEqual(initial);validateForecastJournal(f.db);
  }finally{f.dispose();}
 },120_000);
+
+test("live calibrated forecast admission activates after 20 authorized resolutions, stays idempotent, validates across restore, and rejects private leakage",async()=>{
+ const purposes=["capture","derive","recall","correction","export"] as const;
+ const f=await cardFixture(undefined,{purposes:[...purposes]});
+ try{
+  await f.write("world.kind",vocabulary("world/situation"),{subject:"project:cal-board"});
+  await f.write("situation.label",literal("Calibration board"),{subject:"project:cal-board"});
+  for(let i=0;i<12;i++){
+   const subject=`commitment:cal-${i}`;
+   await f.write("world.kind",vocabulary("world/commitment"),{subject});
+   await f.write("commitment.label",literal(`Cal item ${i}`),{subject});
+   await f.write("commitment.due",literal(SITUATION_REVIEW_DUE),{subject});
+   await f.write("commitment.deliverable",literal("reviewed"),{subject});
+   await f.write("situation.has_commitment",{kind:"subject",ref:f.ref(subject)},{subject:"project:cal-board"});
+  }
+  const actors=["reporter","observer"].map(name=>{
+   const agent=addAgent(f.db,`cal-${name}`,OWNER_AGENT_GRANT),connector=`forecast.cal.${name}`;
+   return {ctx:{...f.ctx,principal:authenticate(f.db,agent.token)!},connector,source:enrollSource(f.db,connector,"public",undefined,undefined,[...purposes])};
+  });
+  const readBoard=(ctx:typeof f.ctx)=>{
+   const found=serveWorldView(ctx,{operation:"find_situations",label:"Calibration board",...WHEN}).data as any;
+   return (serveWorldView(ctx,{operation:"situation",situation:found.result.data.matches[0].ref,card:"kizuki.situation-card/v2",...WHEN}).data as any).result.data as SituationCardV2;
+  };
+  const fileOutcome=async(actorIndex:number,label:string,subject:string,result:"met"|"not_met")=>{
+   const actor=actors[actorIndex]!;
+   const captured=accept(f.db,{...validEvent(),occurred_at:new Date().toISOString(),connector_id:actor.connector,source_record_id:ulid(),text:`Calibrated ${actorIndex} ${subject} ${result} ${ulid()}`,sensitivity_hint:"public",subjects:[{subject_id:subject,role:"about"}]},{source:{source_key:actor.source,expected_revision:1}});
+   if(captured.status!=="stored")throw Error("capture failed");
+   const token=readBoard(actor.ctx).commitments.find(c=>c.label?.object.kind==="literal"&&c.label.object.value===label)!.commitment;
+   const answer=await servePropose(actor.ctx,{kind:"claim",subject,subjects:[subject],predicate:actorIndex===0?"outcome.self_report":"outcome.observation",object:JSON.stringify({subjectRef:token.token,task:"review",attempt:"first",criterion:"reviewed",artifactVersion:"draft-1",environment:"test",result,assistance:"assisted",confounded:false}),body:"Calibrated inspection",provenance:[captured.event.event_id],confidence:0.8});
+   expect(answer.data?.outcome).toBe("stored");
+  };
+  const run=async()=>{
+   const report=await runWorldJobs({db:f.db,vaultPath:f.ctx.vaultPath,now:()=>new Date().toISOString(),stopRequested:()=>false,modelConfigured:false});
+   expect(report.errors).toEqual([]);
+  };
+
+  // Freeze 24 cold-start predictions (all 0.5), then resolve 10 met (20 resolutions) + 2 not_met (2 inspection resolutions) = 22 resolved.
+  for(let i=0;i<12;i++)await fileOutcome(0,`Cal item ${i}`,`commitment:cal-${i}`,"met");
+  await run();await run();
+  expect(f.db.query<{n:number},[]>("SELECT count(*) n FROM world_forecasts WHERE probability=0.5").get()!.n).toBe(24);
+  for(let i=0;i<12;i++)await fileOutcome(1,`Cal item ${i}`,`commitment:cal-${i}`,i<10?"met":"not_met");
+  await run();await run();await run();
+  expect(f.db.query<{n:number},[]>("SELECT count(*) n FROM world_forecast_resolutions WHERE status IN ('resolved_met','resolved_not_met')").get()!.n).toBe(22);
+
+  // Add a 13th commitment after >= 20 authorized resolutions exist; it must receive calibrated probabilities.
+  const nextSubject="commitment:cal-live";
+  await f.write("world.kind",vocabulary("world/commitment"),{subject:nextSubject});
+  await f.write("commitment.label",literal("Cal item live"),{subject:nextSubject});
+  await f.write("commitment.due",literal(SITUATION_REVIEW_DUE),{subject:nextSubject});
+  await f.write("commitment.deliverable",literal("reviewed"),{subject:nextSubject});
+  await f.write("situation.has_commitment",{kind:"subject",ref:f.ref(nextSubject)},{subject:"project:cal-board"});
+  await fileOutcome(0,"Cal item live",nextSubject,"met");
+  await run();await run();await run();
+
+  const liveRef=readBoard(f.ctx).commitments.find(c=>c.label?.object.kind==="literal"&&c.label.object.value==="Cal item live")!.commitment;
+  const liveForecast=(serveWorldView(f.ctx,{operation:"forecast",commitment:liveRef,...WHEN}).data as any).result.data as Forecast;
+  expect(liveForecast.records).toHaveLength(2);
+  // commitment_met_by_due: 10 met / 10 resolved; next_independent_inspection_meets_criterion: 10 met / 12 resolved.
+  const expectedByDue=calibratedProbability(0.5,4,10,10);
+  const expectedByInspection=calibratedProbability(0.5,4,10,12);
+  const dueRec=liveForecast.records.find(r=>r.question==="commitment_met_by_due")!;
+  const inspRec=liveForecast.records.find(r=>r.question==="next_independent_inspection_meets_criterion")!;
+  expect(dueRec.probability).toBe(expectedByDue);
+  expect(inspRec.probability).toBe(expectedByInspection);
+  expect(dueRec.probability).toBeGreaterThan(inspRec.probability);
+  expect(inspRec.probability).toBeGreaterThan(0.5);
+
+  // Stored conditions carry a strict, replay-verifiable calibration snapshot.
+  const liveRows=f.db.query<{conditions:string|null},[]>("SELECT f.conditions FROM world_forecasts f JOIN semantic_bindings b USING(handle_id) WHERE b.raw_id='commitment:cal-live'").all();
+  expect(liveRows).toHaveLength(2);
+  for(const row of liveRows){
+   const parsed=JSON.parse(row.conditions!);
+   expect(parseForecastCalibration(parsed.calibration)).not.toBeNull();
+  }
+
+  // Idempotency: running the job again after another resolution must not duplicate unchanged commitments.
+  const countBefore=f.db.query<{n:number},[]>("SELECT count(*) n FROM world_forecasts").get()!.n;
+  await run();await run();
+  expect(f.db.query<{n:number},[]>("SELECT count(*) n FROM world_forecasts").get()!.n).toBe(countBefore);
+
+  // Restore validation passes and rejects forged calibrated probabilities.
+  validateForecastJournal(f.db);
+  assertJournalRestore(f);
+  f.db.transaction(()=>{
+   f.db.exec("DROP TRIGGER world_forecast_immutable");
+   f.db.query("UPDATE world_forecasts SET probability=0.99 WHERE handle_id=(SELECT handle_id FROM semantic_bindings WHERE raw_id='commitment:cal-live')").run();
+   expect(()=>validateForecastJournal(f.db)).toThrow("invalid frozen forecast journal");
+   throw Error("rollback tamper check");
+  })();
+ }catch(error){
+  if(!(error instanceof Error)||error.message!=="rollback tamper check")throw error;
+ }finally{f.dispose();}
+},180_000);
+
+test("private resolved forecasts cannot influence a public commitment's live calibration",async()=>{
+ const purposes=["capture","derive","recall","correction","export"] as const;
+ const f=await cardFixture(undefined,{purposes:[...purposes]});
+ try{
+  await f.write("world.kind",vocabulary("world/situation"),{subject:"project:priv-cal",floor:"private"});
+  await f.write("situation.label",literal("Private calibration board"),{subject:"project:priv-cal",floor:"private"});
+  for(let i=0;i<10;i++){
+   const subject=`commitment:priv-${i}`;
+   await f.write("world.kind",vocabulary("world/commitment"),{subject,floor:"private"});
+   await f.write("commitment.label",literal(`Priv item ${i}`),{subject,floor:"private"});
+   await f.write("commitment.due",literal(SITUATION_REVIEW_DUE),{subject,floor:"private"});
+   await f.write("commitment.deliverable",literal("reviewed"),{subject,floor:"private"});
+   await f.write("situation.has_commitment",{kind:"subject",ref:f.ref(subject)},{subject:"project:priv-cal",floor:"private"});
+  }
+  const actors=["reporter","observer"].map(name=>{
+   const agent=addAgent(f.db,`priv-cal-${name}`,OWNER_AGENT_GRANT),connector=`forecast.priv.${name}`;
+   return {ctx:{...f.ctx,principal:authenticate(f.db,agent.token)!},connector,source:enrollSource(f.db,connector,"private",undefined,undefined,[...purposes])};
+  });
+  const readBoard=(actor:typeof actors[number])=>{
+   const found=serveWorldView(actor.ctx,{operation:"find_situations",label:"Private calibration board",...WHEN}).data as any;
+   return (serveWorldView(actor.ctx,{operation:"situation",situation:found.result.data.matches[0].ref,card:"kizuki.situation-card/v2",...WHEN}).data as any).result.data as SituationCardV2;
+  };
+  const file=async(actorIndex:number,i:number)=>{
+   const actor=actors[actorIndex]!,subject=`commitment:priv-${i}`;
+   const captured=accept(f.db,{...validEvent(),occurred_at:new Date().toISOString(),connector_id:actor.connector,source_record_id:ulid(),text:`Private cal ${actorIndex} ${i} ${ulid()}`,sensitivity_hint:"private",subjects:[{subject_id:subject,role:"about"}]},{source:{source_key:actor.source,expected_revision:1}});
+   if(captured.status!=="stored")throw Error("capture failed");
+   const token=readBoard(actor).commitments.find(c=>c.label?.object.kind==="literal"&&c.label.object.value===`Priv item ${i}`)!.commitment;
+   const answer=await servePropose(actor.ctx,{kind:"claim",subject,subjects:[subject],predicate:actorIndex===0?"outcome.self_report":"outcome.observation",object:JSON.stringify({subjectRef:token.token,task:"review",attempt:"first",criterion:"reviewed",artifactVersion:"draft-1",environment:"test",result:"met",assistance:"assisted",confounded:false}),body:"Private inspection",provenance:[captured.event.event_id],confidence:0.8});
+   expect(answer.data?.outcome).toBe("stored");
+  };
+  const run=async()=>{
+   const report=await runWorldJobs({db:f.db,vaultPath:f.ctx.vaultPath,now:()=>new Date().toISOString(),stopRequested:()=>false,modelConfigured:false});
+   expect(report.errors).toEqual([]);
+  };
+  for(let i=0;i<10;i++)await file(0,i);
+  await run();await run();
+  for(let i=0;i<10;i++)await file(1,i);
+  await run();await run();await run();
+  expect(f.db.query<{n:number},[]>("SELECT count(*) n FROM world_forecast_resolutions WHERE status='resolved_met'").get()!.n).toBe(20);
+
+  // Now add a strictly PUBLIC commitment on a public source: it must NOT borrow private calibration history.
+  const pub=await cardFixture(f.db,{purposes:[...purposes]});
+  try{
+   await pub.write("world.kind",vocabulary("world/commitment"),{subject:"commitment:public-isolated",floor:"public"});
+   await pub.write("commitment.label",literal("Public isolated item"),{subject:"commitment:public-isolated",floor:"public"});
+   await pub.write("commitment.due",literal(SITUATION_REVIEW_DUE),{subject:"commitment:public-isolated",floor:"public"});
+   await run();await run();await run();
+   const pubRow=f.db.query<{probability:number;conditions:string|null},[]>("SELECT f.probability, f.conditions FROM world_forecasts f JOIN semantic_bindings b USING(handle_id) WHERE b.raw_id='commitment:public-isolated'").get()!;
+   expect(pubRow.probability).toBe(0.5);
+   expect(pubRow.conditions).toBeNull();
+  }finally{pub.dispose();}
+ }finally{f.dispose();}
+},180_000);
