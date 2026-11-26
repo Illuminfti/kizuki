@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { verifyPackageDirectory } from "./release-artifacts";
@@ -6,7 +6,14 @@ import { mcpSession } from "./smoke-release-mcp";
 
 import { selectedReleaseTarget } from "./release-targets";
 import { parseBuildInfo } from "./stranger-proof";
-import { PACKAGED_CLI_COMMANDS, packagedCommandLine } from "./build-release";
+import {
+  PACKAGED_CLI_COMMANDS,
+  PACKAGED_POLICY_CREATE_COMMAND,
+  PACKAGED_SOURCE_POLICY,
+  isValidBuildTimestamp,
+  packagedCommandLine,
+} from "./build-release";
+import { RELEASE_RAIL_IDS as RAIL_IDS } from "./release-rails";
 const target = selectedReleaseTarget();
 
 const root = resolve(import.meta.dir, "..");
@@ -28,18 +35,153 @@ const readme = readFileSync(join(release, "README.txt"), "utf8");
 for (const argv of Object.values(PACKAGED_CLI_COMMANDS)) {
   if (!readme.includes(packagedCommandLine(argv))) throw new Error(`package README missing ${argv.join(" ")}`);
 }
+if (!readme.includes("./kizuki version") || !readme.includes(`  ${PACKAGED_POLICY_CREATE_COMMAND}`)) {
+  throw new Error("package README missing runnable ./kizuki version or source policy setup command");
+}
 
 function run(command: string, args: string[], env: Record<string, string>): string {
   const result = Bun.spawnSync([command, ...args], { env, stderr: "pipe", stdout: "pipe", timeout: 30_000 });
   if (result.exitCode !== 0) {
-    throw new Error("compiled command failed");
+    throw new Error(`compiled command failed (${args[0] ?? "kizuki"} exited ${result.exitCode})`);
   }
   return `${result.stdout}${result.stderr}`;
 }
 function runJson(command: string, args: string[], env: Record<string, string>): { stdout: string; stderr: string } {
   const result = Bun.spawnSync([command, ...args], { env, stderr: "pipe", stdout: "pipe", timeout: 30_000 });
-  if (result.exitCode !== 0) throw new Error("compiled JSON command failed");
+  if (result.exitCode !== 0) {
+    throw new Error(`compiled JSON command failed (${args[0] ?? "kizuki"} exited ${result.exitCode})`);
+  }
   return { stdout: result.stdout.toString(), stderr: result.stderr.toString() };
+}
+
+interface DoctorRail {
+  rail?: string;
+  status?: string;
+  last_result?: string | null;
+  reason?: string | null;
+  degraded_streak?: number;
+}
+
+interface DoctorJsonEnvelope {
+  schema?: string;
+  status?: string;
+  degraded?: unknown[];
+  warnings?: unknown[];
+  data?: {
+    ok?: boolean;
+    problems?: unknown[];
+    ledger?: { ok?: boolean };
+    effective_config?: { model_ref?: string | null };
+    connections?: { connector_id?: string; health?: string; problem?: string | null }[];
+    memt?: { mode?: string; gpu_backend?: string; gpu_configured?: boolean; endpoint_host?: string | null };
+    serve?: {
+      ok?: boolean;
+      failures?: unknown[];
+      model?: { canon_writing?: string; model_ref?: string | null };
+      stores?: { vector_layer?: { state?: string } };
+      rails?: DoctorRail[];
+    };
+  };
+}
+
+function assertHealthyNoModelDoctor(
+  raw: { stdout: string; stderr: string },
+  label: string,
+  options: { expectMarkdownConnection?: boolean; expectedRailState: "idle" | "ok" },
+): void {
+  if (raw.stderr !== "") throw new Error(`${label} doctor emitted unexpected stderr`);
+  const doctor = JSON.parse(raw.stdout) as DoctorJsonEnvelope;
+  if (
+    doctor.schema !== "kizuki.cli.doctor/v1" ||
+    doctor.status !== "ok" ||
+    !Array.isArray(doctor.degraded) ||
+    doctor.degraded.length !== 0 ||
+    !Array.isArray(doctor.warnings) ||
+    doctor.warnings.length !== 0 ||
+    doctor.data?.ok !== true ||
+    !Array.isArray(doctor.data.problems) ||
+    doctor.data.problems.length !== 0 ||
+    doctor.data.ledger?.ok !== true ||
+    doctor.data.effective_config?.model_ref !== null ||
+    doctor.data.serve?.ok !== true ||
+    !Array.isArray(doctor.data.serve.failures) ||
+    doctor.data.serve.failures.length !== 0 ||
+    !Array.isArray(doctor.data.serve.rails) ||
+    doctor.data.serve.model?.canon_writing !== "off" ||
+    doctor.data.serve.model?.model_ref !== null ||
+    doctor.data.serve.stores?.vector_layer?.state !== "off" ||
+    doctor.data.memt?.mode !== "local-hybrid" ||
+    doctor.data.memt?.gpu_backend !== "offline" ||
+    doctor.data.memt?.gpu_configured !== false ||
+    doctor.data.memt?.endpoint_host !== null
+  ) {
+    throw new Error(`${label} doctor did not report a clean healthy no-model vault with zero degraded flags`);
+  }
+  const expectedLastResult = options.expectedRailState === "idle" ? null : "ok";
+  const railsById = new Map<string, DoctorRail>();
+  for (const rail of doctor.data.serve.rails) {
+    if (typeof rail.rail !== "string" || railsById.has(rail.rail)) {
+      throw new Error(`${label} doctor reported malformed or duplicate rail entries`);
+    }
+    railsById.set(rail.rail, rail);
+  }
+  if (railsById.size !== RAIL_IDS.length) {
+    throw new Error(`${label} doctor reported ${railsById.size} rails, expected ${RAIL_IDS.length}`);
+  }
+  for (const expectedRail of RAIL_IDS) {
+    const rail = railsById.get(expectedRail);
+    if (
+      rail === undefined ||
+      rail.status !== options.expectedRailState ||
+      rail.last_result !== expectedLastResult ||
+      rail.reason !== null ||
+      rail.degraded_streak !== 0
+    ) {
+      throw new Error(
+        `${label} doctor rail ${expectedRail} unhealthy: status=${String(rail?.status)} last_result=${String(rail?.last_result)} degraded_streak=${String(rail?.degraded_streak)}`,
+      );
+    }
+  }
+  if (options.expectMarkdownConnection) {
+    const importedConnection = doctor.data.connections?.find(
+      (connection) => connection.connector_id === "kizuki.markdown-folder",
+    );
+    if (importedConnection?.health !== "ok" || importedConnection.problem !== null) {
+      throw new Error(`${label} doctor did not report a healthy markdown-folder connection`);
+    }
+  }
+}
+
+function assertCleanEnvelope(
+  raw: { stdout: string; stderr: string },
+  expectedSchema: string,
+  label: string,
+): { stdout: string; envelope: { schema?: string; status?: string; degraded?: unknown[]; warnings?: unknown[]; data?: unknown } } {
+  if (raw.stderr !== "") throw new Error(`${label} emitted unexpected stderr`);
+  const envelope = JSON.parse(raw.stdout) as { schema?: string; status?: string; degraded?: unknown[]; warnings?: unknown[]; data?: unknown };
+  if (
+    envelope.schema !== expectedSchema ||
+    envelope.status !== "ok" ||
+    !Array.isArray(envelope.degraded) ||
+    envelope.degraded.length !== 0 ||
+    !Array.isArray(envelope.warnings) ||
+    envelope.warnings.length !== 0
+  ) {
+    throw new Error(`${label} reported degraded or warning state`);
+  }
+  return { stdout: raw.stdout, envelope };
+}
+
+function assertContextPacket(
+  raw: { stdout: string; stderr: string },
+  expectedText: string,
+  label: string,
+): void {
+  const { envelope } = assertCleanEnvelope(raw, "kizuki.cli.context/v1", label);
+  const packetMd = (envelope.data as { data?: { packet_md?: unknown } } | undefined)?.data?.packet_md;
+  if (typeof packetMd !== "string" || !packetMd.includes(expectedText)) {
+    throw new Error(`${label} packet_md is missing expected fixture text`);
+  }
 }
 
 /**
@@ -76,8 +218,15 @@ try {
 
   // The binary identifies its exact build: BUILD.json's revision, and a compiled-in build time.
   const versionLine = run(cli, ["version"], env).trim();
-  const identity = versionLine.match(/^(\S+) source=([0-9a-f]{40}) built=(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z)$/);
-  if (identity === null || identity[1] !== version || identity[2] !== build.source_sha) throw new Error("CLI version does not identify the packaged build");
+  const identity = versionLine.match(/^(\S+) source=([0-9a-f]{40}) built=(\S+)$/);
+  if (
+    identity === null ||
+    identity[1] !== version ||
+    identity[2] !== build.source_sha ||
+    !isValidBuildTimestamp(identity[3]!)
+  ) {
+    throw new Error("CLI version does not identify the packaged build");
+  }
   const help = run(cli, ["--help"], env);
   if (!help.includes("usage: kizuki")) throw new Error("CLI help missing");
   for (const argv of Object.values(PACKAGED_CLI_COMMANDS)) {
@@ -95,45 +244,34 @@ try {
     throw new Error("Beeper is missing from the compiled connection catalog");
   }
   run(cli, ["init", vault, "--no-service"], env);
+  assertHealthyNoModelDoctor(runJson(cli, ["doctor", "--json", "--vault", vault], env), "fresh-init", {
+    expectedRailState: "idle",
+  });
+  if (existsSync(join(vault, ".kizuki", "memt", "registry.sqlite"))) {
+    throw new Error("fresh-init doctor created memt registry on untouched vault");
+  }
   const policy = join(rootTemp, "source-policy.json");
-  writeFileSync(policy, JSON.stringify({ purposes: ["capture", "recall", "session", "derive", "extract", "export"],
-    allowed_fields: ["text", "subjects", "attachments", "metadata"], retention: "persistent_owned_until_revoked",
-    egress: "local_only", sensitivity_floor: "private" }), { mode: 0o600 });
+  writeFileSync(policy, JSON.stringify(PACKAGED_SOURCE_POLICY), { mode: 0o600 });
   run(cli, ["import", "markdown-folder", "--source", notes, "--vault", vault,
     "--policy", policy, "--expected-revision", "0", "--operation-id", "release-smoke-consent"], env);
-  const query = run(cli, ["query", "Ada", "--vault", vault], env);
-  if (!query.includes("Ada")) {
-    throw new Error(`imported note was not queryable: ${query}`);
-  }
-  const doctor = JSON.parse(runJson(cli, ["doctor", "--json", "--vault", vault], env).stdout) as {
-    schema?: string;
-    status?: string;
-    data?: {
-      ok?: boolean;
-      problems?: unknown[];
-      ledger?: { ok?: boolean };
-      effective_config?: { model_ref?: string | null };
-      connections?: { connector_id?: string; health?: string; problem?: string | null }[];
-      serve?: { model?: { canon_writing?: string; model_ref?: string | null } };
-    };
-  };
-  const importedConnection = doctor.data?.connections?.find(
-    (connection) => connection.connector_id === "kizuki.markdown-folder",
+  const query = assertCleanEnvelope(
+    runJson(cli, ["query", "Ada", "--json", "--vault", vault], env),
+    "kizuki.cli.query/v1",
+    "imported query",
   );
-  if (
-    doctor.schema !== "kizuki.cli.doctor/v1" ||
-    doctor.status !== "ok" ||
-    doctor.data?.ok !== true ||
-    doctor.data.problems?.length !== 0 ||
-    doctor.data.ledger?.ok !== true ||
-    importedConnection?.health !== "ok" ||
-    importedConnection.problem !== null ||
-    doctor.data.effective_config?.model_ref !== null ||
-    doctor.data.serve?.model?.canon_writing !== "off" ||
-    doctor.data.serve?.model?.model_ref !== null
-  ) throw new Error("doctor did not report a healthy imported no-model vault");
-  const context = run(cli, ["context", "--query", "Ada", "--vault", vault], env);
-  if (!context.includes("Ada")) throw new Error("imported note is missing from compiled context");
+  if (!query.stdout.includes("Ada")) {
+    throw new Error("imported note was not queryable");
+  }
+  assertHealthyNoModelDoctor(
+    runJson(cli, ["doctor", "--json", "--vault", vault], env),
+    "imported",
+    { expectMarkdownConnection: true, expectedRailState: "idle" },
+  );
+  assertContextPacket(
+    runJson(cli, ["context", "--query", "Ada", "--json", "--vault", vault], env),
+    "Ada met Grace at the library.",
+    "imported context",
+  );
   const memtStatus = JSON.parse(runJson(cli, ["memt", "status", "--json", "--vault", vault], env).stdout) as {
     schema?: string;
     status?: string;
@@ -162,18 +300,111 @@ try {
   if (world.schema !== "kizuki.cli.world/v1" || world.status !== "ok") throw new Error("compiled world command smoke failed");
   requireConceptDiscovery(world.data, "compiled CLI");
   run(cli, ["serve", "--once", "--no-http", "--vault", vault], env);
+  assertHealthyNoModelDoctor(
+    runJson(cli, ["doctor", "--json", "--vault", vault], env),
+    "post-serve-once",
+    { expectMarkdownConnection: true, expectedRailState: "ok" },
+  );
   const exported = join(rootTemp, "export");
   const restored = join(rootTemp, "restored");
   run(cli, ["export", "--out", exported, "--vault", vault], env);
   run(cli, ["restore", "--from", exported, "--verify"], env);
   run(cli, ["restore", "--from", exported, "--into", restored], env);
-  const restoredQuery = run(cli, ["query", "Ada", "--degraded", "--vault", restored], env);
-  if (!restoredQuery.includes("Ada")) throw new Error("restored vault was not queryable");
+  assertHealthyNoModelDoctor(
+    runJson(cli, ["doctor", "--json", "--vault", restored], env),
+    "restored",
+    { expectMarkdownConnection: true, expectedRailState: "idle" },
+  );
+  const restoredQuery = assertCleanEnvelope(
+    runJson(cli, ["query", "Ada", "--json", "--vault", restored], env),
+    "kizuki.cli.query/v1",
+    "restored query",
+  );
+  if (!restoredQuery.stdout.includes("Ada")) throw new Error("restored vault was not queryable");
+  assertContextPacket(
+    runJson(cli, ["context", "--query", "Ada", "--json", "--vault", restored], env),
+    "Ada met Grace at the library.",
+    "restored context",
+  );
   run(cli, ["serve", "--install", "--vault", vault], env);
   run(cli, ["serve", "--uninstall", "--vault", vault], env);
   if (!existsSync(join(vault, ".kizuki"))) throw new Error("uninstall removed the vault");
-  const afterUninstall = run(cli, ["query", "Ada", "--vault", vault], env);
-  if (!afterUninstall.includes("Ada")) throw new Error("uninstall did not preserve queryable vault data");
+  const afterUninstall = assertCleanEnvelope(
+    runJson(cli, ["query", "Ada", "--json", "--vault", vault], env),
+    "kizuki.cli.query/v1",
+    "post-uninstall query",
+  );
+  if (!afterUninstall.stdout.includes("Ada")) throw new Error("uninstall did not preserve queryable vault data");
+
+  // Exercise the printed terminal quick-start sequence verbatim in a clean PATH=/usr/bin:/bin shell from the package folder.
+  const quickstartRoot = join(rootTemp, "quickstart");
+  const quickstartWorkspace = join(quickstartRoot, "workspace");
+  const quickstartNotes = join(quickstartRoot, "notes");
+  const quickstartPolicy = join(quickstartRoot, "policy.json");
+  mkdirSync(quickstartRoot, { mode: 0o700 });
+  mkdirSync(quickstartNotes, { mode: 0o700 });
+  writeFileSync(join(quickstartNotes, "note.md"), "Acme release onboarding check.\n", "utf8");
+  const quickstartEnv = {
+    PATH: "/usr/bin:/bin",
+    HOME: join(quickstartRoot, "home"),
+    XDG_CONFIG_HOME: join(quickstartRoot, "xdg"),
+    KIZUKI_CONFIG: join(quickstartRoot, "config.toml"),
+    KIZUKI_SUPERVISOR: "none",
+  };
+  const substituteQuickstart = (line: string): string =>
+    line
+      .replaceAll("/absolute/workspace", quickstartWorkspace)
+      .replaceAll("/absolute/notes", quickstartNotes)
+      .replaceAll("/absolute/policy.json", quickstartPolicy);
+  const quickstartScript = [
+    "./kizuki version",
+    PACKAGED_POLICY_CREATE_COMMAND,
+    PACKAGED_CLI_COMMANDS.init.join(" "),
+    PACKAGED_CLI_COMMANDS.import.join(" "),
+    PACKAGED_CLI_COMMANDS.query.join(" "),
+    PACKAGED_CLI_COMMANDS.doctor.join(" "),
+  ]
+    .map(substituteQuickstart)
+    .join("\n");
+  const quickstartRun = Bun.spawnSync(["/bin/sh", "-eu", "-c", quickstartScript], {
+    cwd: release,
+    env: quickstartEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+    timeout: 60_000,
+  });
+  const quickstartStdout = quickstartRun.stdout.toString();
+  const quickstartStderr = quickstartRun.stderr.toString();
+  if (
+    quickstartRun.exitCode !== 0 ||
+    !quickstartStdout.includes(versionLine) ||
+    !quickstartStdout.includes("Acme release onboarding check.")
+  ) {
+    throw new Error(
+      `printed terminal quick-start sequence failed (exit ${quickstartRun.exitCode}): ${quickstartStderr}`,
+    );
+  }
+  assertHealthyNoModelDoctor(
+    runJson(cli, ["doctor", "--json", "--vault", quickstartWorkspace], quickstartEnv),
+    "quickstart",
+    { expectMarkdownConnection: true, expectedRailState: "idle" },
+  );
+
+  // Exercise the documented zero-friction local PATH symlink install in the temp HOME.
+  const localBin = join(env.HOME, ".local", "bin");
+  mkdirSync(localBin, { recursive: true });
+  symlinkSync(cli, join(localBin, "kizuki"));
+  symlinkSync(mcp, join(localBin, "kizuki-mcp"));
+  const symlinkEnv = { ...env, PATH: `${localBin}:${env.PATH}` };
+  if (run("kizuki", ["version"], symlinkEnv).trim() !== versionLine) {
+    throw new Error("local PATH symlink kizuki version mismatch");
+  }
+  const symlinkMcp = await mcpSession("kizuki-mcp", symlinkEnv, ["--vault", vault, "--owner"], [
+    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"release-smoke-symlink","version":"0"}}}',
+  ]);
+  if (symlinkMcp.code !== 0 || !symlinkMcp.output.includes('"protocolVersion"')) {
+    throw new Error("local PATH symlink kizuki-mcp initialize failed");
+  }
 
   const grant = join(rootTemp, "agent-grant.json");
   const credential = join(rootTemp, "agent-credential");

@@ -1,5 +1,5 @@
-import { mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import { checksumManifest, ensureReleaseDirectory, requireAbsent, CURRENT_PACKAGE_FILES, parseBuildInfo, verifyPackageDirectory } from "./release-artifacts";
 
 import { createPackageDistribution, BUN_DISTRIBUTION_PIN } from "./release-notices";
@@ -20,6 +20,18 @@ export const PACKAGED_CLI_COMMANDS = {
   restoreVerify: ["./kizuki", "restore", "--from", "/absolute/backup", "--verify"],
   restore: ["./kizuki", "restore", "--from", "/absolute/backup", "--into", "/absolute/restored"],
 } as const;
+
+/** Local-only source policy documented in the packaged quick-start and exercised in release smoke. */
+export const PACKAGED_SOURCE_POLICY = {
+  purposes: ["capture", "recall", "session", "derive", "extract", "export"],
+  allowed_fields: ["text", "subjects", "attachments", "metadata"],
+  retention: "persistent_owned_until_revoked",
+  egress: "local_only",
+  sensitivity_floor: "private",
+} as const;
+
+export const PACKAGED_POLICY_CREATE_COMMAND =
+  `(umask 077 && printf '%s\\n' '${JSON.stringify(PACKAGED_SOURCE_POLICY)}' > /absolute/policy.json)`;
 
 /**
  * Every app credential this build may compile into the package, by name, with
@@ -52,6 +64,59 @@ export const MIT_AES: import("bun").BunPlugin = {
     }));
   },
 };
+
+function canonicalRelativePath(targetPath: string, normalizedRoot: string, realRoot: string): string {
+  const direct = relative(normalizedRoot, targetPath).replaceAll("\\", "/");
+  if (!direct.startsWith("..") && direct !== "") return `/${direct}`;
+  const viaReal = relative(realRoot, realpathSync(targetPath)).replaceAll("\\", "/");
+  if (!viaReal.startsWith("..") && viaReal !== "") return `/${viaReal}`;
+  throw new Error(`bundled dependency resolved outside build root: ${targetPath}`);
+}
+
+/**
+ * Binds free CommonJS `__dirname` and `__filename` references in bundled
+ * `node_modules` files to canonical checkout-independent paths so Bun does not
+ * inline the build machine's absolute checkout directory into standalone
+ * release binaries.
+ */
+export function canonicalCjsPathsPlugin(root: string): import("bun").BunPlugin {
+  const normalizedRoot = resolve(root);
+  const realRoot = realpathSync(normalizedRoot);
+  return {
+    name: "kizuki-canonical-cjs-paths",
+    setup(build) {
+      build.onLoad({ filter: /[\\/]node_modules[\\/].*\.c?js$/ }, (args) => {
+        const text = readFileSync(args.path, "utf8");
+        const needsDir = /\b__dirname\b/.test(text) && !/\b(?:var|let|const|function)\s+__dirname\b/.test(text);
+        const needsFile = /\b__filename\b/.test(text) && !/\b(?:var|let|const|function)\s+__filename\b/.test(text);
+        if (!needsDir && !needsFile) return undefined;
+        const resolvedPath = resolve(args.path);
+        const relFile = canonicalRelativePath(resolvedPath, normalizedRoot, realRoot);
+        const relDir = canonicalRelativePath(dirname(resolvedPath), normalizedRoot, realRoot);
+        const declarations: string[] = [];
+        if (needsDir) declarations.push(`var __dirname = ${JSON.stringify(relDir)};`);
+        if (needsFile) declarations.push(`var __filename = ${JSON.stringify(relFile)};`);
+        const prefix = declarations.join(" ");
+        const strictMatch = text.match(/^\s*["']use strict["']\s*;?/);
+        const contents = strictMatch
+          ? `${strictMatch[0]}\n${prefix}\n${text.slice(strictMatch[0].length)}`
+          : `${prefix}\n${text}`;
+        return { contents, loader: "js" };
+      });
+    },
+  };
+}
+
+/** Refuses any compiled release binary that embeds the build machine's checkout path. */
+export function assertNoEmbeddedRootPath(binaryPath: string, root: string): void {
+  const bytes = readFileSync(binaryPath);
+  const candidates = new Set([resolve(root), realpathSync(root)]);
+  for (const candidate of candidates) {
+    if (candidate.length > 1 && bytes.includes(Buffer.from(candidate))) {
+      throw new Error(`compiled release binary embeds build checkout path: ${binaryPath}`);
+    }
+  }
+}
 
 /** One provider's app credentials: every name is required, or none of them. */
 export interface CredentialGroup {
@@ -109,13 +174,75 @@ export function resolveCompiledCredentials(
   return { names: names.sort(), define };
 }
 
+const UNIX_EPOCH_SECONDS = /^(?:0|[1-9][0-9]{0,12})$/;
+/** Maximum Unix epoch second representable as a 4-digit UTC ISO-8601 year (`9999-12-31T23:59:59.000Z`). */
+export const MAX_BUILD_TIMESTAMP_EPOCH_SECONDS = 253_402_300_799;
+export const BUILD_TIMESTAMP_ISO_PATTERN = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
+
+/**
+ * True iff `value` is a canonical 4-digit UTC ISO-8601 build timestamp within
+ * `[1970-01-01T00:00:00.000Z, 9999-12-31T23:59:59.999Z]`.
+ */
+export function isValidBuildTimestamp(value: string): boolean {
+  if (!BUILD_TIMESTAMP_ISO_PATTERN.test(value)) return false;
+  const ms = Date.parse(value);
+  return (
+    Number.isFinite(ms) &&
+    ms >= 0 &&
+    ms <= MAX_BUILD_TIMESTAMP_EPOCH_SECONDS * 1000 + 999 &&
+    new Date(ms).toISOString() === value
+  );
+}
+
+function parseEpochTimestamp(raw: string, formatError: string, rangeError: string): Date {
+  if (!UNIX_EPOCH_SECONDS.test(raw)) throw new Error(formatError);
+  const seconds = Number(raw);
+  if (!Number.isSafeInteger(seconds) || seconds < 0 || seconds > MAX_BUILD_TIMESTAMP_EPOCH_SECONDS) {
+    throw new Error(rangeError);
+  }
+  const timestamp = new Date(seconds * 1000);
+  if (Number.isNaN(timestamp.getTime()) || !isValidBuildTimestamp(timestamp.toISOString())) {
+    throw new Error(rangeError);
+  }
+  return timestamp;
+}
+
+/**
+ * Resolves a deterministic build timestamp for reproducible release artifacts.
+ * Precedence: validated SOURCE_DATE_EPOCH, then the exact Git commit timestamp
+ * of the clean source revision, then wall-clock time as a last resort.
+ */
+export function resolveBuildTimestamp(
+  environment: Readonly<Record<string, string | undefined>>,
+  commitEpochSeconds?: string,
+): Date {
+  const raw = environment.SOURCE_DATE_EPOCH;
+  if (raw !== undefined) {
+    return parseEpochTimestamp(
+      raw,
+      "SOURCE_DATE_EPOCH must be a non-negative integer Unix timestamp in seconds",
+      "SOURCE_DATE_EPOCH is out of valid date range",
+    );
+  }
+  if (commitEpochSeconds !== undefined) {
+    return parseEpochTimestamp(
+      commitEpochSeconds,
+      "build metadata needs a valid source commit timestamp",
+      "build metadata source commit timestamp is out of range",
+    );
+  }
+  return new Date();
+}
+
 /**
  * What `kizuki version` reports for a release binary. Both values are compiled
  * in, never read from the environment at run time.
  */
 export function buildMetadataDefines(sourceSha: string, builtAt: Date): Record<string, string> {
   if (!/^[0-9a-f]{40}$/.test(sourceSha)) throw new Error("build metadata needs a full source revision");
-  if (Number.isNaN(builtAt.getTime())) throw new Error("build metadata needs a valid build time");
+  if (Number.isNaN(builtAt.getTime()) || !isValidBuildTimestamp(builtAt.toISOString())) {
+    throw new Error("build metadata needs a valid build time");
+  }
   return { KIZUKI_BUILD_SHA: JSON.stringify(sourceSha), KIZUKI_BUILD_TIME: JSON.stringify(builtAt.toISOString()) };
 }
 
@@ -135,14 +262,16 @@ export function packagedQuickStart(input: { version: string; target: ReleaseTarg
     "",
     "Verify the package files before running either executable:",
     `  ${input.target.checksum_command}`,
-    "Confirm the build identity matches source_sha in BUILD.json with: kizuki version",
+    "Confirm the build identity matches source_sha in BUILD.json from this folder: ./kizuki version",
     "",
     "Optional: put kizuki and kizuki-mcp on your PATH using local symlinks (no network):",
     '  mkdir -p "$HOME/.local/bin"',
     '  ln -sf "$PWD/kizuki" "$HOME/.local/bin/kizuki"',
     '  ln -sf "$PWD/kizuki-mcp" "$HOME/.local/bin/kizuki-mcp"',
-    'Ensure "$HOME/.local/bin" is in PATH. Always run serve --install from this real',
-    "version folder rather than a moving symlink; see the upgrade runbook below.",
+    '  export PATH="$HOME/.local/bin:$PATH"',
+    'Add that export to your shell profile (~/.bashrc or ~/.zshrc). Always run',
+    "serve --install from this real version folder rather than a moving symlink;",
+    "see the upgrade runbook below.",
     "",
     "Keep both executables together in their final folder before setup.",
     "Use a graphical desktop with a default web browser. Linux requires",
@@ -160,7 +289,9 @@ export function packagedQuickStart(input: { version: string; target: ReleaseTarg
     "If the browser cannot open, check the desktop session and default browser",
     "and retry. --no-open is diagnostic; its printed address does not sign you in.",
     "",
-    "Terminal setup without a browser or background service:",
+    "Terminal setup without a browser or background service (run from this folder):",
+    "First create a local source policy file with owner-only permissions (0600):",
+    `  ${PACKAGED_POLICY_CREATE_COMMAND}`,
     packagedCommandLine(PACKAGED_CLI_COMMANDS.init),
     packagedCommandLine(PACKAGED_CLI_COMMANDS.import),
     packagedCommandLine(PACKAGED_CLI_COMMANDS.query),
@@ -266,7 +397,8 @@ if (import.meta.main) {
     }
   }
   requireBuildState();
-  const metadata = buildMetadataDefines(sourceSha, new Date());
+  const commitEpoch = gitText(["show", "-s", "--format=%ct", sourceSha]);
+  const metadata = buildMetadataDefines(sourceSha, resolveBuildTimestamp(process.env, commitEpoch));
   const staging = mkdtempSync(join(dist, ".kizuki-release-"));
 
   const binaries = [
@@ -274,25 +406,28 @@ if (import.meta.main) {
     { entrypoint: "packages/mcp/src/bin.ts", name: "kizuki-mcp" },
   ] as const;
 
+  const canonicalPaths = canonicalCjsPathsPlugin(root);
   const metafiles: Partial<Record<"kizuki" | "kizuki-mcp", NonNullable<Awaited<ReturnType<typeof Bun.build>>["metafile"]>>> = {};
   let published = false;
   try {
     for (const binary of binaries) {
+      const outfile = resolve(staging, binary.name);
       const result = await Bun.build({
         entrypoints: [resolve(root, binary.entrypoint)],
         compile: {
           target,
-          outfile: resolve(staging, binary.name),
+          outfile,
           autoloadDotenv: false,
           autoloadBunfig: false,
         },
         define: { KIZUKI_COMPILED: "true", ...metadata, ...credentials.define },
         metafile: true,
-        plugins: [MIT_AES],
+        plugins: [MIT_AES, canonicalPaths],
       });
       if (!result.success || !result.metafile) {
         throw new Error(`could not compile ${binary.name}: ${result.logs.join("\n")}`);
       }
+      assertNoEmbeddedRootPath(outfile, root);
       metafiles[binary.name] = result.metafile;
     }
 
