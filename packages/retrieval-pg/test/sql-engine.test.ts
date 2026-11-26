@@ -8,6 +8,63 @@ import type { Chunk, RetrievalDoc } from "@kizuki/core";
 setDefaultTimeout(60000);
 const doc = (id: string, extras: Partial<RetrievalDoc> = {}): RetrievalDoc => ({ ...SYNTHETIC_DOCS[0]!, doc_id: id, ...extras });
 describe("real embedded SQL engine", () => {
+  test("a cold daemon lease serves no premature reads and queued mutations commit after startup", async () => {
+    const fixture = temporaryPortContext();
+    let ready!: Promise<void>;
+    const port = await openEmbeddedRetrievalPort(fixture.ctx, { backgroundStartup: opening => { ready = opening; } });
+    try {
+      expect(await port.health()).toMatchObject({ status: "unavailable" });
+      await expect(port.search(SYNTHETIC_QUERY)).rejects.toMatchObject({ code: "unavailable", retryable: true });
+      await expect(openEmbeddedRetrievalPort(fixture.ctx)).rejects.toMatchObject({ code: "lease_required" });
+      const write = port.upsert(SYNTHETIC_DOCS);
+      await ready;
+      expect((await write).processed).toBe(SYNTHETIC_DOCS.length);
+      expect((await port.search(SYNTHETIC_QUERY)).hits).toHaveLength(2);
+    } finally { await port.close(); fixture.cleanup(); }
+  });
+
+  test("failed worker transactions roll back and a failed startup releases ownership on close", async () => {
+    const fixture = temporaryPortContext();
+    try {
+      const store = await SqlStore.connect(fixture.ctx.data_dir, true);
+      try {
+        await store.initialize(fixture.ctx.data_dir);
+        const rejected = await store.transaction(async tx => {
+          await store.setMeta("test-key", 7, tx);
+          throw new Error("cancel synthetic update");
+        }).catch(error => error);
+        expect(rejected).toBeInstanceOf(Error);
+        expect(rejected.message).toBe("cancel synthetic update");
+        expect(await store.meta("test-key")).toBeNull();
+        await store.db.exec("INSERT INTO schema_migrations VALUES(99)");
+      } finally { await store.close(); }
+      let ready!: Promise<void>;
+      const port = await openEmbeddedRetrievalPort(fixture.ctx, { backgroundStartup: opening => { ready = opening; } });
+      try { expect(await ready.catch(error => error)).toMatchObject({ code: "config_invalid" }); }
+      finally { await port.close(); }
+      const reopened = await openEmbeddedRetrievalPort(fixture.ctx).catch(error => error);
+      expect(reopened).toMatchObject({ code: "config_invalid" });
+    } finally { fixture.cleanup(); }
+  });
+
+  test("erasure sees active hydration and refuses mutations queued before custody changed", async () => {
+    const fixture = temporaryPortContext();
+    const store = await SqlStore.connect(fixture.ctx.data_dir, true);
+    const settling = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    try {
+      const ready = store.initialize(fixture.ctx.data_dir, async () => { settling.resolve(); await release.promise; });
+      await settling.promise;
+      const mutation = store.run(() => store.setMeta("queued-key", 1));
+      await Promise.resolve();
+      expect(store.abortForErasure()).toBe(true);
+      release.resolve();
+      await ready;
+      await expect(mutation).rejects.toThrow("owned_generation_changed_restart_required");
+      expect(await store.meta("queued-key")).toBeNull();
+    } finally { release.resolve(); await store.close(); fixture.cleanup(); }
+  });
+
   test("SQL indexes exist and planner can use HNSW, FTS and trigram after reopen", async () => {
     const fixture = temporaryPortContext();
     const port = await openEmbeddedRetrievalPort(fixture.ctx, { embedding: new FixtureEmbeddingPort() });

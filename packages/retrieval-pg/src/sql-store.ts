@@ -1,4 +1,4 @@
-import type { PGlite, Transaction } from "@electric-sql/pglite";
+import { openWorkerDatabase, type SqlDatabase, type SqlExecutor } from "./worker-database";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { PortError, SENSITIVITY_ORDER } from "@kizuki/core";
@@ -64,47 +64,62 @@ export class SqlStore {
   private terminal = false;
   private active = 0;
   private cleanSpaceKey: string | null = null;
-  private constructor(readonly db: PGlite, private readonly dispose: () => void) { }
-  static async open(dataDir: string): Promise<SqlStore> {
+  private ready: Promise<void> = Promise.resolve();
+  private constructor(readonly db: SqlDatabase) { }
+  static async connect(dataDir: string, background: boolean): Promise<SqlStore> {
+    if (background) return new SqlStore(openWorkerDatabase(dataDir));
     const resource = await openDatabase(dataDir);
-    const store = new SqlStore(resource.db, resource.dispose);
-    try {
-      const versionTable=(await resource.db.query<{name:string|null}>("SELECT to_regclass('public.schema_migrations')::text AS name")).rows[0]?.name;
-      if(versionTable!==null && versionTable!==undefined){
-        const versions=(await resource.db.query<{version:number}>("SELECT version FROM schema_migrations")).rows;
-        if(versions.some(row=>row.version!==1 && row.version!==2 && row.version!==3))throw new PortError("config_invalid","unsupported retrieval SQL schema version",false);
-      }
-      await resource.db.exec(SCHEMA);
-      await resource.db.exec("SET pg_trgm.similarity_threshold = 0.2");
-      await resource.db.transaction(async tx => {
-        const applied = await tx.query("SELECT version FROM schema_migrations WHERE version=2");
-        if (applied.rows.length === 0) {
-          await tx.exec("ALTER TABLE retrieval_docs ALTER COLUMN updated_at DROP NOT NULL; INSERT INTO schema_migrations VALUES(2)");
-          await tx.query("UPDATE retrieval_meta SET value='2'::jsonb WHERE key='schema'");
-        }
-      });
-      await resource.db.transaction(async tx => {
-        await tx.exec(`CREATE TABLE IF NOT EXISTS rebuild_docs (doc_id text PRIMARY KEY, doc jsonb NOT NULL);
-          CREATE TABLE IF NOT EXISTS rebuild_vectors (
-            chunk_id text PRIMARY KEY, doc_id text NOT NULL REFERENCES rebuild_docs ON DELETE CASCADE,
-            embedding vector NOT NULL);
-          INSERT INTO schema_migrations VALUES(3) ON CONFLICT DO NOTHING;
-          UPDATE retrieval_meta SET value='3'::jsonb WHERE key='schema'`);
-      });
-      const legacy = ["docs.json", "graph.json"].some(name => existsSync(join(dataDir, "store", name)));
-      if (legacy && await store.meta("rebuilt") === null) {
-        await store.setMeta("migration_required", true);
-      }
-      return store;
+    return new SqlStore({
+      query: resource.db.query.bind(resource.db),
+      exec: resource.db.exec.bind(resource.db),
+      transaction: work => resource.db.transaction(work),
+      async close(disposeAssets = true) {
+        await resource.db.close();
+        if (disposeAssets) resource.dispose();
+      },
+    });
+  }
+  static async open(dataDir: string): Promise<SqlStore> {
+    const store = await SqlStore.connect(dataDir, false);
+    try { await store.initialize(dataDir); return store; }
+    catch (error) { await store.close(); throw error; }
+  }
+  initialize(dataDir: string, finish?: () => Promise<void>): Promise<void> {
+    this.active++;
+    this.ready = this.prepare(dataDir).then(finish).finally(() => { this.active--; });
+    return this.ready;
+  }
+  private async prepare(dataDir: string): Promise<void> {
+    const versionTable=(await this.db.query<{name:string|null}>("SELECT to_regclass('public.schema_migrations')::text AS name")).rows[0]?.name;
+    if(versionTable!==null && versionTable!==undefined){
+      const versions=(await this.db.query<{version:number}>("SELECT version FROM schema_migrations")).rows;
+      if(versions.some(row=>row.version!==1 && row.version!==2 && row.version!==3))throw new PortError("config_invalid","unsupported retrieval SQL schema version",false);
     }
-    catch (error) {
-      await resource.db.close();
-      resource.dispose();
-      throw error;
+    await this.db.exec(SCHEMA);
+    await this.db.exec("SET pg_trgm.similarity_threshold = 0.2");
+    await this.db.transaction(async tx => {
+      const applied = await tx.query("SELECT version FROM schema_migrations WHERE version=2");
+      if (applied.rows.length === 0) {
+        await tx.exec("ALTER TABLE retrieval_docs ALTER COLUMN updated_at DROP NOT NULL; INSERT INTO schema_migrations VALUES(2)");
+        await tx.query("UPDATE retrieval_meta SET value='2'::jsonb WHERE key='schema'");
+      }
+    });
+    await this.db.transaction(async tx => {
+      await tx.exec(`CREATE TABLE IF NOT EXISTS rebuild_docs (doc_id text PRIMARY KEY, doc jsonb NOT NULL);
+        CREATE TABLE IF NOT EXISTS rebuild_vectors (
+          chunk_id text PRIMARY KEY, doc_id text NOT NULL REFERENCES rebuild_docs ON DELETE CASCADE,
+          embedding vector NOT NULL);
+        INSERT INTO schema_migrations VALUES(3) ON CONFLICT DO NOTHING;
+        UPDATE retrieval_meta SET value='3'::jsonb WHERE key='schema'`);
+    });
+    const legacy = ["docs.json", "graph.json"].some(name => existsSync(join(dataDir, "store", name)));
+    if (legacy && await this.meta("rebuilt") === null) {
+      await this.setMeta("migration_required", true);
     }
   }
   run<T>(fn: () => Promise<T>): Promise<T> {
     const pending = this.tail.then(async () => {
+      await this.ready;
       if (this.terminal) throw new PortError("unavailable", "owned_generation_changed_restart_required", false);
       this.active++;
       try { return await fn(); } finally { this.active--; }
@@ -118,23 +133,29 @@ export class SqlStore {
     return pending;
   }
   invalidateSpaceCache(): void { this.cleanSpaceKey = null; }
-  transaction<T>(fn: (tx: Transaction) => Promise<T>): Promise<T> {
+  transaction<T>(fn: (tx: SqlExecutor) => Promise<T>): Promise<T> {
     this.cleanSpaceKey = null;
     return this.db.transaction(tx => runStoreTransaction(() => fn(tx)));
   }
   /** Stops queued/future callbacks. Already active work is explicitly not contained. */
   abortForErasure(): boolean { this.terminal = true; return this.active > 0; }
-  async close(disposeAssets = true): Promise<void> { this.cleanSpaceKey = null; await this.run(() => this.db.close()); if (disposeAssets) this.dispose(); }
+  async close(disposeAssets = true): Promise<void> {
+    this.cleanSpaceKey = null;
+    await this.tail;
+    // Failed initialization still owns a connection (or worker) to dispose.
+    await this.ready.catch(() => {});
+    await this.db.close(disposeAssets);
+  }
   async meta(key: string): Promise<unknown> {
     return (await this.db.query<{
       value: unknown;
     }>("SELECT value FROM retrieval_meta WHERE key=$1", [key])).rows[0]?.value ?? null;
   }
-  async setMeta(key: string, value: unknown, tx: Transaction | PGlite = this.db): Promise<void> {
+  async setMeta(key: string, value: unknown, tx: SqlExecutor = this.db): Promise<void> {
     if (key === "space") this.cleanSpaceKey = null;
     await tx.query("INSERT INTO retrieval_meta VALUES ($1,$2::jsonb) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [key, JSON.stringify(value)]);
   }
-  async writeDoc(tx: Transaction, doc: RetrievalDoc, tokens: number, overlap: number, countTokens?: (text: string) => number, knownEmpty = false): Promise<void> {
+  async writeDoc(tx: SqlExecutor, doc: RetrievalDoc, tokens: number, overlap: number, countTokens?: (text: string) => number, knownEmpty = false): Promise<void> {
     this.cleanSpaceKey = null;
     const old = knownEmpty ? undefined : (await tx.query<{
       title: string;
@@ -162,7 +183,7 @@ export class SqlStore {
     }
   }
   /** Replaces the document's chunks; their vectors are gone until embedded again. */
-  async writeChunks(tx: Transaction, doc: RetrievalDoc, tokens: number, overlap: number, countTokens?: (text: string) => number, knownEmpty = false): Promise<void> {
+  async writeChunks(tx: SqlExecutor, doc: RetrievalDoc, tokens: number, overlap: number, countTokens?: (text: string) => number, knownEmpty = false): Promise<void> {
     this.cleanSpaceKey = null;
     if (!knownEmpty) await tx.query("DELETE FROM retrieval_chunks WHERE doc_id=$1", [doc.doc_id]);
     const chunks = chunkDocument(doc, tokens, overlap, countTokens);

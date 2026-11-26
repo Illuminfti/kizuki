@@ -1,12 +1,14 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openLedger } from "@kizuki/core/testing";
-import { initVault, readDerivedMeta } from "@kizuki/core";
+import { initVault, readDerivedMeta, readServeEndpoint, readServeProcessMarker } from "@kizuki/core";
 import { rebuildDerived } from "@kizuki/core/internal";
 import { recordedPage } from "../../core/test/helpers/recorded-page";
 import { storedEvent } from "../../core/test/search/helpers";
+import { liveReadDaemon } from "../src/commands/daemon-read";
+import { createHelpers } from "./helpers";
 import { refreshDerived } from "../src/derived";
 
 test("an idle incremental pass repairs a skipped page restored to receipted bytes", async () => {
@@ -45,3 +47,52 @@ test("incremental refresh reconciles an upgraded watermark with durable earlier 
     expect(readDerivedMeta(db, "search")?.ledger_watermark).toBe(watermark);
   } finally { db.close(); rmSync(vault, { recursive: true, force: true }); }
 });
+
+test("the compiled daemon serves health during cold hydration and can stop and reopen that generation", async () => {
+  const helpers = createHelpers();
+  const { vault, env } = helpers.tempVault();
+  const id = "kizuki.retrieval.embedded-pg";
+  writeFileSync(join(vault, ".kizuki/serve.toml"), `[ports]\nretrieval = "${id}"\n`, { mode: 0o600 });
+  const engine = join(vault, ".kizuki", "retrieval", id, "engine.json");
+  const binary = join(helpers.tempDir(), "kizuki");
+  const built = Bun.spawnSync([process.execPath, "build", "--compile", "--define", "KIZUKI_COMPILED=true",
+    join(import.meta.dir, "../src/main.ts"), "--outfile", binary], { stdout: "ignore", stderr: "pipe", timeout: 30_000 });
+  expect(built.exitCode, built.stderr.toString()).toBe(0);
+  const startDaemon = () => Bun.spawn([binary, "serve", "--port", "0", "--vault", vault], {
+    env: { ...process.env, ...env }, stdout: "ignore", stderr: "ignore",
+  });
+  let daemon = startDaemon();
+  async function waitForHttp(): Promise<void> {
+    const deadline = performance.now() + 15_000;
+    while (!readServeEndpoint(vault, readServeProcessMarker(vault))) {
+      if (daemon.exitCode !== null || performance.now() >= deadline) throw new Error("daemon did not publish HTTP");
+      await Bun.sleep(10);
+    }
+  }
+  try {
+    await waitForHttp();
+    const client = liveReadDaemon({ env, vaultOverride: vault, stdinIsTTY: false,
+      stdoutIsTTY: false, stderrIsTTY: false, prompt: async () => "", out() {}, err() {} });
+    if (!client) throw new Error("cold daemon read client unavailable");
+    expect(await client.health()).toMatchObject({ tool: "system_health", data: { events: 0 } });
+    expect(existsSync(engine)).toBe(false);
+    daemon.kill("SIGTERM");
+    expect(await daemon.exited).toBe(0);
+    expect(existsSync(engine)).toBe(true);
+    expect(readServeProcessMarker(vault)).toBeNull();
+    daemon = startDaemon();
+    await waitForHttp();
+    const query = Bun.spawn([binary, "query", "synthetic", "--json", "--vault", vault], {
+      env: { ...process.env, ...env }, stdout: "pipe", stderr: "ignore",
+    });
+    const output = await new Response(query.stdout).text();
+    expect(await query.exited).toBe(0);
+    expect(JSON.parse(output).data.hits).toEqual([]);
+    daemon.kill("SIGTERM");
+    expect(await daemon.exited).toBe(0);
+  } finally {
+    if (daemon.exitCode === null) daemon.kill("SIGKILL");
+    await daemon.exited;
+    helpers.cleanup();
+  }
+}, 30_000);
