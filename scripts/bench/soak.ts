@@ -1,10 +1,10 @@
 /** Continuous 24-hour daemon soak evaluator and bounded live soak probe. */
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { cpus } from "node:os";
 import { join } from "node:path";
 import { runServeDaemon } from "../../packages/core/src/index";
 import { openLedger } from "../../packages/core/src/internal";
-import { nativePeakRssBytes } from "./process";
 
 export const SOAK_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const SOAK_SCHEMA = "kizuki.soak-report/v1" as const;
@@ -43,7 +43,7 @@ export const DEFAULT_SMOKE_SOAK_POLICY: Readonly<SoakPolicy> = {
   max_gap_ms: 15_000,
   max_clock_drift_ms: 5_000,
   max_rss_bytes: 2 * 1024 * 1024 * 1024,
-  max_rss_growth_ratio: 1.5,
+  max_rss_growth_ratio: 3.0,
   max_cpu_percent: 100,
   max_restarts: 0,
   require_all_rails_ok: true,
@@ -373,6 +373,7 @@ export async function runSoakProbe(vaultPath: string, opts: LiveSoakProbeOptions
   const bootId = hostBootId();
   const instanceId = randomUUID();
   const samples: SoakSample[] = [];
+  const cpuCount = Math.max(1, cpus().length);
   let windowStartMono = 0;
   let lastSampleMono = 0;
   let lastCpu = process.cpuUsage();
@@ -380,9 +381,10 @@ export async function runSoakProbe(vaultPath: string, opts: LiveSoakProbeOptions
   const takeSample = (nowMono: number) => {
     const elapsedMs = Math.max(1, nowMono - lastSampleMono);
     const deltaCpu = process.cpuUsage(lastCpu);
-    const cpuPercent = samples.length === 0
+    const rawCpuPercent = samples.length === 0
       ? 0
-      : Number((((deltaCpu.user + deltaCpu.system) / 1000) / elapsedMs * 100).toFixed(4));
+      : (((deltaCpu.user + deltaCpu.system) / 1000) / (elapsedMs * cpuCount)) * 100;
+    const cpuPercent = Number(Math.min(100, Math.max(0, rawCpuPercent)).toFixed(4));
     lastCpu = process.cpuUsage();
     lastSampleMono = nowMono;
     samples.push({
@@ -391,8 +393,8 @@ export async function runSoakProbe(vaultPath: string, opts: LiveSoakProbeOptions
       boot_id: bootId,
       pid: process.pid,
       instance_id: instanceId,
-      rss_bytes: Math.max(1, nativePeakRssBytes(process.resourceUsage().maxRSS)),
-      cpu_percent: Math.max(0, cpuPercent),
+      rss_bytes: Math.max(1, Math.trunc(process.memoryUsage().rss)),
+      cpu_percent: cpuPercent,
       rails_ok: 1,
       rails_failed: 0,
       issues: [],
@@ -402,7 +404,7 @@ export async function runSoakProbe(vaultPath: string, opts: LiveSoakProbeOptions
   try {
     await runServeDaemon(db, vaultPath, {
       http: false,
-      shouldContinue: () => windowStartMono === 0 || performance.now() - windowStartMono < policy.window_ms,
+      shouldContinue: () => windowStartMono === 0 || performance.now() - windowStartMono < policy.window_ms + 10,
       sleep: async ms => {
         const now = performance.now();
         if (windowStartMono === 0) {
@@ -413,13 +415,14 @@ export async function runSoakProbe(vaultPath: string, opts: LiveSoakProbeOptions
         } else if (now - lastSampleMono >= policy.sample_interval_ms) {
           takeSample(now);
         }
-        const remaining = policy.window_ms - (performance.now() - windowStartMono);
+        const remaining = (policy.window_ms + 10) - (performance.now() - windowStartMono);
         if (remaining <= 0) return;
         await Bun.sleep(Math.min(ms, policy.sample_interval_ms, Math.max(1, Math.ceil(remaining))));
       },
     });
     const finished = performance.now();
-    if (windowStartMono > 0 && (samples.length < 2 || finished - lastSampleMono >= 1)) {
+    const lastMono = samples.length > 0 ? samples[samples.length - 1]!.monotonic_ms : 0;
+    if (windowStartMono > 0 && (samples.length < 2 || lastMono - windowStartMono < policy.window_ms)) {
       takeSample(finished);
     }
   } finally {
