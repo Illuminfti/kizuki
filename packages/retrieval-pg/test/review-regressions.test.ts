@@ -115,13 +115,24 @@ test("independent processes cannot simultaneously reclaim one dead lease", async
   const source = new URL("../src/lease.ts", import.meta.url).pathname;
   const script = `import { WriterLease } from ${JSON.stringify(source)};
     const lease = new WriterLease(${JSON.stringify(fixture.ctx.data_dir)});
-    try { lease.tryAcquire('child'); console.log('acquired'); await Bun.sleep(200); lease.release(); }
-    catch { console.log('busy'); }`;
+    let held = false;
+    try { lease.tryAcquire('child'); held = true; console.log('acquired'); }
+    catch { console.log('busy'); }
+    if (held) { await Bun.stdin.text(); lease.release(); }`;
+  const children: Array<ReturnType<typeof Bun.spawn>> = [];
   try {
-    const children = [0, 1].map(() => Bun.spawn([process.execPath, "-e", script], {stdout: "pipe", stderr: "pipe"}));
-    const results = await Promise.all(children.map(async child => { const text = await new Response(child.stdout).text(); expect(await child.exited).toBe(0); return text.trim(); }));
-    expect(results.sort()).toEqual(["acquired", "busy"]);
-  } finally { fixture.cleanup(); }
+    for (let i = 0; i < 2; i++) children.push(Bun.spawn([process.execPath, "-e", script], {stdin: "pipe", stdout: "pipe", stderr: "pipe"}));
+    // A holder keeps the lease until the parent has both outcomes, so spawn latency cannot let the second child acquire after a release.
+    const firstLines = await Promise.all(children.map(async child => {
+      const reader = (child.stdout as ReadableStream<Uint8Array>).getReader();
+      let text = "";
+      while (!text.includes("\n")) { const chunk = await reader.read(); if (chunk.done) break; text += new TextDecoder().decode(chunk.value); }
+      return text.trim();
+    }));
+    for (const child of children) { (child.stdin as import("bun").FileSink).end(); }
+    for (const child of children) expect(await child.exited).toBe(0);
+    expect(firstLines.sort()).toEqual(["acquired", "busy"]);
+  } finally { for (const child of children) child.kill(); fixture.cleanup(); }
 });
 
 test("SQL promotion failure rolls back staged documents and vectors together", async () => {
