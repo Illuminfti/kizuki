@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test";
-import { serveWorldView } from "@kizuki/core/world";
+import { serveWorldView, type Forecast, type ForecastScores } from "@kizuki/core/world";
 import { forecastJob } from "../../core/src/world/forecast/job";
-import { situationV2Fixture, SITUATION_REVIEW_DUE } from "../../core/test/helpers/situation-v2-fixture";
+import { calibratedProbability } from "../../core/src/world/forecast/calibration";
+import { literal, vocabulary, situationV2Fixture, SITUATION_REVIEW_DUE } from "../../core/test/helpers/situation-v2-fixture";
+import { forecastVerificationFixture } from "../../core/test/helpers/forecast-verification";
+import { cardFixture } from "../../core/test/world/card-fixture";
 import { startLoopback } from "../../core/test/helpers/world-kit/loopback";
 import { twoClients } from "../../mcp/test/helpers/two-clients";
 import { envelopeOf } from "../../mcp/test/client";
@@ -34,3 +37,59 @@ test("frozen forecasts and score abstention agree across Core, MCP, HTTP, CLI an
     }
   }finally{await http?.stop();await host.close();f.dispose();await clients.close();h.cleanup();}
 },120_000);
+
+test("calibrated live forecasts and resolved Brier scores agree across Core, MCP, HTTP, CLI and App", async () => {
+  const clients=await twoClients({seed:{subject:"topic:cal-initial",label:"Cal Initial"},agent:{subjects:null}});
+  const seeded=await forecastVerificationFixture(clients.db);
+  const f=await cardFixture(clients.db,{purposes:["capture","derive","recall","correction","export"]});
+  const h=createHelpers(),env=h.isolatedEnv();
+  const ctx={...f.ctx,vaultPath:clients.vaultPath};
+  const host=createAppHost({env,vaultOverride:clients.vaultPath,stdinIsTTY:false,stdoutIsTTY:false,stderrIsTTY:false,out:()=>{},err:()=>{},prompt:async()=>""});
+  let http:Awaited<ReturnType<typeof startLoopback>>|undefined;
+  try{
+    expect(h.runCli(env,"init",clients.vaultPath,"--no-service","--no-default").exitCode).toBe(0);
+    // Add a second situation and commitment after 20 authorized resolutions exist so live calibration triggers.
+    const parityBoard="project:calibrated-parity-board";
+    const nextSubject="commitment:calibrated-parity";
+    await f.write("world.kind",vocabulary("world/situation"),{subject:parityBoard});
+    await f.write("situation.label",literal("Calibrated parity board"),{subject:parityBoard});
+    await f.write("world.kind",vocabulary("world/commitment"),{subject:nextSubject});
+    await f.write("commitment.label",literal("Calibrated parity item"),{subject:nextSubject});
+    await f.write("commitment.due",literal(SITUATION_REVIEW_DUE),{subject:nextSubject});
+    await f.write("commitment.deliverable",literal("reviewed"),{subject:nextSubject});
+    await f.write("situation.has_commitment",{kind:"subject",ref:f.ref(nextSubject)},{subject:parityBoard});
+    await forecastJob.run({db:clients.db,vaultPath:clients.vaultPath,now:()=>new Date().toISOString(),stopRequested:()=>false,modelConfigured:false});
+    await forecastJob.run({db:clients.db,vaultPath:clients.vaultPath,now:()=>new Date().toISOString(),stopRequested:()=>false,modelConfigured:false});
+    await forecastJob.run({db:clients.db,vaultPath:clients.vaultPath,now:()=>new Date().toISOString(),stopRequested:()=>false,modelConfigured:false});
+
+    const board=(serveWorldView(ctx,{operation:"find_situations",label:"Calibrated parity board",valid:{kind:"all"},knownAt:{kind:"current"}}).data as any).result.data.matches[0].ref;
+    const card=(serveWorldView(ctx,{operation:"situation",situation:board,card:"kizuki.situation-card/v2",valid:{kind:"all"},knownAt:{kind:"current"}}).data as any).result.data;
+    const commitment=card.commitments.find((c:any)=>c.label?.object.kind==="literal"&&c.label.object.value==="Calibrated parity item").commitment;
+    const expectedProb=calibratedProbability(0.5,4,10,10);
+
+    http=await startLoopback(clients.db,clients.vaultPath);
+    for(const operation of ["forecast","forecast_scores"] as const){
+      const input={operation,...(operation==="forecast"?{commitment}:{}),valid:{kind:"all"},knownAt:{kind:"current"}};
+      const core=serveWorldView(ctx,input);
+      if(operation==="forecast"){
+        const data=(core.data as any).result.data as Forecast;
+        expect(data.records).toHaveLength(1);
+        expect(data.records[0]!.probability).toBe(expectedProb);
+      }else{
+        const data=(core.data as any).result.data as ForecastScores;
+        expect(data.resolved).toBe(20);
+        expect(data.unresolved).toBe(1);
+        expect(data.brier).toBe(0.25);
+      }
+      const mcp=await clients.owner.call("world_view",input);expect(mcp.isError??false).toBe(false);expect(envelopeOf(mcp).data).toEqual(core.data);
+      const app=await(await host.handle(new Request("http://127.0.0.1/app/v1/world_view",{method:"POST",body:JSON.stringify(input)}))).json() as any;
+      expect(app.ok).toBe(true);expect(app.data).toEqual(core.data);
+      const response=await http.post("world_view",input);expect(response.status).toBe(200);expect((response.body as any).value.data).toEqual(core.data);
+      const args=["--vault",clients.vaultPath,"world","--operation",operation,...(operation==="forecast"?["--ref",commitment.token]:[])];
+      const json=h.runCli(env,...args,"--json");expect(json.exitCode,json.stderr).toBe(0);expect(JSON.parse(json.stdout).data.data).toEqual(core.data);
+      if(operation==="forecast_scores"){
+        const text=h.runCli(env,...args);expect(text.exitCode,text.stderr).toBe(0);expect(text.stdout).toContain("Resolved 20");expect(text.stdout).toContain("Brier 0.25");
+      }
+    }
+  }finally{await http?.stop();await host.close();f.dispose();seeded.dispose();await clients.close();h.cleanup();}
+},180_000);

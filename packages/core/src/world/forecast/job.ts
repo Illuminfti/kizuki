@@ -2,14 +2,45 @@ import { setImmediate as yieldToHost } from "node:timers/promises";
 import { WorldProjectionBudgetError } from "../pipeline/frame";
 import { OWNER } from "../../agents";
 import { activeWorldRegistry } from "../../contracts/world-vocabulary";
-import { canonicalJson } from "../../util/hash";
+import { canonicalJson, sha256Hex } from "../../util/hash";
 import type { WorldJob, WorldJobContext } from "../../serve/world-jobs";
 import { scanMatches } from "../pipeline/collect";
 import { newReadFrame, type ReadFrame } from "../pipeline/frame";
 import { worldNamespace } from "../references";
-import { basisIdentity, forecastBasis } from "./basis";
-import { insertForecast, insertResolution, type ForecastRow } from "./store";
+import { basisIdentity, forecastBasis, type ForecastConditions } from "./basis";
+import {
+  deriveLiveCalibration,
+  mergeForecastConditions,
+  stripCalibrationFromConditions,
+  targetProofsCeiling,
+} from "./calibration";
+import { forecastInputs, insertForecast, insertResolution, type ForecastRow } from "./store";
 import { chooseResolution } from "./resolution";
+import type { ForecastProof } from "./proof";
+
+function hasMatchingFrozenBasis(
+  db: WorldJobContext["db"],
+  handleId: string,
+  question: ForecastRow["question"],
+  recordClass: ForecastRow["record_class"],
+  dueAt: string,
+  conditions: ForecastConditions | null,
+  proofs: readonly ForecastProof[],
+): boolean {
+  const targetSignature = canonicalJson([conditions, [...proofs].sort((a, b) => a.claim.localeCompare(b.claim))]);
+  const existing = db
+    .query<{ forecast_id: string; conditions: string | null }, [string, string, string, string]>(
+      "SELECT forecast_id, conditions FROM world_forecasts WHERE handle_id=? AND question=? AND record_class=? AND due_at=?",
+    )
+    .all(handleId, question, recordClass, dueAt);
+  for (const row of existing) {
+    const savedProofs = forecastInputs(db, row.forecast_id);
+    if (savedProofs === null) continue;
+    const baseConditions = stripCalibrationFromConditions(row.conditions);
+    if (canonicalJson([baseConditions, savedProofs]) === targetSignature) return true;
+  }
+  return false;
+}
 
 function frame(ctx:WorldJobContext):ReadFrame {
   return newReadFrame({db:ctx.db,vaultPath:ctx.vaultPath,principal:OWNER,sourcePurpose:"derive"},worldNamespace(ctx.db,OWNER),{kind:"all"});
@@ -51,11 +82,25 @@ export const forecastJob:WorldJob={id:"forecast",async run(ctx){
       if(Date.parse(clock.last_recorded_at)>Date.parse(frozenAt))return;
       for(const basis of forecastBasis(current,match.handle)){
         if(Date.parse(basis.due)<=Date.parse(frozenAt))continue;
-        for(const question of ["commitment_met_by_due",...(basis.conditions===null||!basis.awaitingInspection?[]:["next_independent_inspection_meets_criterion"])] as const){
-          const basisKey=basisIdentity(basis);
+        const targetCeiling=targetProofsCeiling(ctx.db,basis.proofs);
+        const baselineKey=basisIdentity(basis);
+        const questions: readonly ForecastRow["question"][] =
+          basis.conditions === null || !basis.awaitingInspection
+            ? ["commitment_met_by_due"]
+            : ["commitment_met_by_due", "next_independent_inspection_meets_criterion"];
+        for(const question of questions){
+          if(hasMatchingFrozenBasis(ctx.db,match.handle,question,basis.class,basis.due,basis.conditions,basis.proofs))continue;
+          const calibration=basis.class==="prediction"
+            ? deriveLiveCalibration(ctx.db,{question,laterPrerequisite:basis.laterPrerequisite,ceiling:targetCeiling,maxSequence:clock.last_sequence})
+            : null;
+          const storedConditions=mergeForecastConditions(basis.conditions,calibration);
+          const probability=calibration?.probability??basis.probability;
+          const basisKey=calibration===null
+            ? baselineKey
+            : sha256Hex(canonicalJson([basis.due,basis.class,probability,storedConditions,basis.proofs]));
           if(ctx.db.query("SELECT 1 FROM world_forecasts WHERE handle_id=? AND question=? AND record_class=? AND basis_key=?").get(match.handle,question,basis.class,basisKey)!==null)continue;
           insertForecast(ctx.db,{handle_id:match.handle,question:question as ForecastRow["question"],record_class:basis.class,frozen_at:frozenAt,frozen_sequence:clock.last_sequence,rule_version:"dependency-v1",
-            probability:basis.probability,due_at:basis.due,conditions:basis.conditions===null?null:canonicalJson(basis.conditions),basis_key:basisKey},basis.proofs);
+            probability,due_at:basis.due,conditions:storedConditions===null?null:canonicalJson(storedConditions),basis_key:basisKey},basis.proofs);
         }
       }
     }).immediate(); }catch(error){if(!(error instanceof WorldProjectionBudgetError))throw error;}

@@ -6,6 +6,7 @@ import type {
   ClaimMeaning,
   RawSubjectRef,
 } from "../contracts/claim-v2";
+import { reconcileIdentityLinkFromAllocation } from "./corroboration";
 
 export function assertionEndpoints(
   semantic: ClaimV2Assertion | ClaimMeaning,
@@ -70,4 +71,5 @@ export function allocateWorldEndpoints(
       ).run(randomBytes(16).toString("hex"), handle, supportKey, at);
     }
   }
+  reconcileIdentityLinkFromAllocation(db, semantic, at);
 }
