@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from 'bun:test';
 import { mkdirSync, writeFileSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
+import { ExperienceBank, SnapshotCustodyRegistry, defaultMemtRegistryPath, openMemtRegistryDb } from '@kizuki/memt';
 import { createHelpers } from './helpers';
 import { createAppHost } from '../src/app/host';
 import { Database } from 'bun:sqlite';
@@ -407,6 +408,237 @@ test('app host rejects wrong API prefixes and non-POST methods and batches sourc
         expect(sources.find(s => s.source_key === keyA)?.backfill_complete).toBe(true);
         expect(sources.find(s => s.source_key === keyB)?.backfill_complete).toBe(true);
         expect(sources.find(s => s.source_key === keyB)?.last_run).toBeString();
+    } finally {
+        await host.close();
+    }
+});
+
+test('memt_status and memt_experiences stay strictly read-only on an untouched vault, inspect populated data, and redact paths and secrets', async () => {
+    const setup = h.tempVault();
+    const env = {
+        ...setup.env,
+        KIZUKI_MEMT_URL: 'http://127.0.0.1:9999/secret-memt-path',
+        KIZUKI_MEMT_API_KEY: 'SYNTHETIC_MEMT_SECRET_KEY',
+        KIZUKI_MEMT_MODEL: 'memt-flash',
+    };
+    const io: CliIo = { env, vaultOverride: setup.vault, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false, out() {}, err() {}, prompt: async () => '' };
+    const host = createAppHost(io);
+    const call = async (route: string, body: unknown = {}) => (await host.handle(new Request('http://127.0.0.1/app/v1/' + route, { method: 'POST', body: JSON.stringify(body) }))).json() as Promise<any>;
+    const registryPath = defaultMemtRegistryPath(setup.vault);
+    try {
+        expect(existsSync(registryPath)).toBe(false);
+        const initialStatus = await call('memt_status');
+        expect(initialStatus.ok).toBe(true);
+        expect(initialStatus.data).toMatchObject({
+            mode: 'gpu_configured',
+            enabled: true,
+            gpu_configured: true,
+            api_key_configured: true,
+            registry_present: false,
+            model: 'memt-flash',
+            experiences: { total: 0, verified: 0, observed: 0, failed: 0, uninternalized: 0 },
+            snapshots: { total: 0, clean: 0, stale: 0, purged_invalidated: 0, partitions: [] },
+        });
+        const initialExp = await call('memt_experiences', {});
+        expect(initialExp).toEqual({ ok: true, data: { experiences: [], domains: [], truncated: false, mode: 'list' } });
+        // Strictly read-only: inspecting an untouched vault must never create registry.sqlite.
+        expect(existsSync(registryPath)).toBe(false);
+        const serialized = JSON.stringify([initialStatus, initialExp]);
+        for (const leaked of ['secret-memt-path', 'SYNTHETIC_MEMT_SECRET_KEY', setup.vault]) {
+            expect(serialized).not.toContain(leaked);
+        }
+
+        // Seed synthetic experiences and snapshot custody records.
+        const memtDb = openMemtRegistryDb(registryPath);
+        try {
+            const bank = new ExperienceBank({ db: memtDb });
+            const custody = new SnapshotCustodyRegistry({ db: memtDb });
+            bank.recordExperience({
+                domain: 'deploy',
+                scope_key: 'release-gate',
+                sensitivity: 'public',
+                condition: 'When canary rollback triggers on elevated latency',
+                recommendation: 'Halt promotion and restore the prior verified artifact',
+                verification: 'Verified across two staging drills',
+                outcome: 'verified',
+                confidence: 0.94,
+                citations: ['event:syn-1'],
+            });
+            bank.recordExperience({
+                domain: 'testing',
+                scope_key: 'ci-suite',
+                sensitivity: 'work',
+                condition: 'When SQLite busy timeouts appear in parallel tests',
+                recommendation: 'Ensure each fixture uses an isolated temporary vault',
+                outcome: 'observed',
+                confidence: 0.78,
+            });
+            bank.recordExperience({
+                domain: 'security',
+                scope_key: 'private-audit',
+                sensitivity: 'private',
+                condition: 'Private canary audit note for local custody',
+                recommendation: 'Keep private findings restricted to private ceiling',
+                outcome: 'failed',
+                confidence: 0.45,
+            });
+            custody.registerSnapshot({
+                partition_key: 'default',
+                sensitivity_ceiling: 'work',
+                source_ids: ['event:syn-1'],
+                snapshot_name: 'snap-default-v1.safetensors',
+                identity_sha256: 'a'.repeat(64),
+                event_watermark: '2026-11-25T10:00:00.000Z',
+                taint_state: 'clean',
+            });
+            custody.registerSnapshot({
+                partition_key: 'private-archive',
+                sensitivity_ceiling: 'private',
+                source_ids: ['event:syn-purged'],
+                snapshot_name: 'snap-private-v1.safetensors',
+                identity_sha256: 'b'.repeat(64),
+                event_watermark: '2026-11-25T11:00:00.000Z',
+                taint_state: 'purged_invalidated',
+            });
+        } finally {
+            memtDb.close();
+        }
+
+        const liveStatus = await call('memt_status');
+        expect(liveStatus.ok).toBe(true);
+        expect(liveStatus.data.registry_present).toBe(true);
+        expect(liveStatus.data.experiences).toEqual({ total: 3, verified: 1, observed: 1, failed: 1, uninternalized: 2 });
+        expect(liveStatus.data.snapshots).toMatchObject({ total: 2, clean: 1, stale: 0, purged_invalidated: 1 });
+        expect(liveStatus.data.snapshots.partitions).toHaveLength(2);
+
+        const allExp = await call('memt_experiences', {});
+        expect(allExp.ok).toBe(true);
+        expect(allExp.data.mode).toBe('list');
+        expect(allExp.data.experiences).toHaveLength(3);
+        expect(allExp.data.domains).toEqual(['deploy', 'security', 'testing']);
+
+        const publicOnly = await call('memt_experiences', { ceiling: 'public' });
+        expect(publicOnly.ok).toBe(true);
+        expect(publicOnly.data.experiences).toHaveLength(1);
+        expect(publicOnly.data.experiences[0].domain).toBe('deploy');
+        expect(publicOnly.data.domains).toEqual(['deploy']);
+
+        const verifiedOnly = await call('memt_experiences', { outcome: 'verified' });
+        expect(verifiedOnly.ok).toBe(true);
+        expect(verifiedOnly.data.experiences).toHaveLength(1);
+        expect(verifiedOnly.data.experiences[0].outcome).toBe('verified');
+
+        const searched = await call('memt_experiences', { query: 'canary rollback' });
+        expect(searched.ok).toBe(true);
+        expect(searched.data.mode).toBe('search');
+        expect(searched.data.experiences[0].domain).toBe('deploy');
+        expect(typeof searched.data.experiences[0].score).toBe('number');
+
+        for (const bad of [{ ceiling: 'root' }, { outcome: 'bogus' }, { limit: 999 }, { extra: true }]) {
+            expect(await call('memt_experiences', bad)).toEqual({ ok: false, error: { code: 'invalid_request', retryable: false } });
+        }
+    } finally {
+        await host.close();
+    }
+});
+
+test('memt_experiences pushes outcome filters into SQL past 250 newer rows, aligns search and list on superseded rows, and fails closed on corrupt registry', async () => {
+    const setup = h.tempVault();
+    const io: CliIo = { env: setup.env, vaultOverride: setup.vault, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false, out() {}, err() {}, prompt: async () => '' };
+    const host = createAppHost(io);
+    const call = async (route: string, body: unknown = {}) => (await host.handle(new Request('http://127.0.0.1/app/v1/' + route, { method: 'POST', body: JSON.stringify(body) }))).json() as Promise<any>;
+    const registryPath = defaultMemtRegistryPath(setup.vault);
+    try {
+        const memtDb = openMemtRegistryDb(registryPath);
+        try {
+            const bank = new ExperienceBank({ db: memtDb });
+            bank.recordExperience({
+                domain: 'ops',
+                scope_key: 'older-fail-1',
+                sensitivity: 'work',
+                condition: 'When older failed rollback condition triggers first',
+                recommendation: 'Capture diagnostic receipt before retrying',
+                outcome: 'failed',
+                confidence: 0.35,
+                now: '2026-11-24T01:00:00.000Z',
+            });
+            bank.recordExperience({
+                domain: 'ops',
+                scope_key: 'older-fail-2',
+                sensitivity: 'work',
+                condition: 'When older failed rollback condition triggers second',
+                recommendation: 'Check disk quota and retry bounded sync',
+                outcome: 'failed',
+                confidence: 0.4,
+                now: '2026-11-24T02:00:00.000Z',
+            });
+            bank.recordExperience({
+                domain: 'legacy',
+                scope_key: 'replaced-flow',
+                sensitivity: 'work',
+                condition: 'When zephyr_superseded_token appears during migration',
+                recommendation: 'Use the current deterministic handoff instead',
+                outcome: 'superseded',
+                confidence: 0.5,
+                now: '2026-11-24T03:00:00.000Z',
+            });
+            for (let i = 0; i < 260; i++) {
+                const stamp = new Date(Date.UTC(2026, 10, 25, 0, 0, i)).toISOString();
+                bank.recordExperience({
+                    domain: 'build',
+                    scope_key: `newer-verified-${i}`,
+                    sensitivity: 'work',
+                    condition: `When verified build step ${i} completes cleanly`,
+                    recommendation: `Advance synthetic release marker ${i}`,
+                    outcome: 'verified',
+                    confidence: 0.9,
+                    now: stamp,
+                });
+            }
+        } finally {
+            memtDb.close();
+        }
+
+        // More than 250 newer verified rows precede the two older failed rows.
+        const failedAll = await call('memt_experiences', { outcome: 'failed', limit: 25 });
+        expect(failedAll.ok).toBe(true);
+        expect(failedAll.data.mode).toBe('list');
+        expect(failedAll.data.truncated).toBe(false);
+        expect(failedAll.data.experiences.map((item: any) => item.scope_key)).toEqual(['older-fail-2', 'older-fail-1']);
+
+        const failedPage = await call('memt_experiences', { outcome: 'failed', limit: 1 });
+        expect(failedPage.ok).toBe(true);
+        expect(failedPage.data.truncated).toBe(true);
+        expect(failedPage.data.experiences.map((item: any) => item.scope_key)).toEqual(['older-fail-2']);
+
+        // List and search both include superseded rows when outcome is 'all'.
+        const listedSuperseded = await call('memt_experiences', { domain: 'legacy', outcome: 'all', limit: 10 });
+        expect(listedSuperseded.ok).toBe(true);
+        expect(listedSuperseded.data.mode).toBe('list');
+        expect(listedSuperseded.data.experiences.map((item: any) => item.outcome)).toEqual(['superseded']);
+
+        const searchedAll = await call('memt_experiences', { query: 'zephyr_superseded_token', outcome: 'all', limit: 10 });
+        expect(searchedAll.ok).toBe(true);
+        expect(searchedAll.data.mode).toBe('search');
+        expect(searchedAll.data.experiences).toHaveLength(1);
+        expect(searchedAll.data.experiences[0].outcome).toBe('superseded');
+        expect(searchedAll.data.experiences[0].scope_key).toBe('replaced-flow');
+
+        const searchedSuperseded = await call('memt_experiences', { query: 'zephyr_superseded_token', outcome: 'superseded', limit: 10 });
+        expect(searchedSuperseded.ok).toBe(true);
+        expect(searchedSuperseded.data.experiences).toHaveLength(1);
+
+        const searchedVerified = await call('memt_experiences', { query: 'zephyr_superseded_token', outcome: 'verified', limit: 10 });
+        expect(searchedVerified.ok).toBe(true);
+        expect(searchedVerified.data.experiences).toHaveLength(0);
+
+        // Corrupt registry fails closed cleanly on both MemT routes.
+        writeFileSync(registryPath, 'not-a-valid-sqlite-header');
+        const corruptStatus = await call('memt_status');
+        expect(corruptStatus.ok).toBe(true);
+        expect(corruptStatus.data.mode).toBe('unavailable');
+        const corruptExp = await call('memt_experiences', {});
+        expect(corruptExp).toEqual({ ok: false, error: { code: 'unavailable', retryable: true } });
     } finally {
         await host.close();
     }
