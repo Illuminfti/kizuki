@@ -13,7 +13,7 @@ import {
   isValidBuildTimestamp,
   packagedCommandLine,
 } from "./build-release";
-import { RAIL_IDS } from "../packages/core/src/serve/rail-registry";
+import { RELEASE_RAIL_IDS as RAIL_IDS } from "./release-rails";
 const target = selectedReleaseTarget();
 
 const root = resolve(import.meta.dir, "..");

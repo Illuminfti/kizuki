@@ -8,7 +8,7 @@ import { releaseTarget, requireNativeHost, selectedReleaseTarget } from "./relea
 import { ArtifactProofError, validateArtifactProof } from "./artifact-proof";
 import type { ArtifactProofSchema, CliEngineObservation, McpEngineObservation } from "./artifact-proof";
 import { EngineProofError, collectEngineProcess, mcpObservationFromOutput, parseDoctorObservation } from "./artifact-engine";
-import { RAIL_IDS } from "../packages/core/src/serve/rail-registry";
+import { RELEASE_RAIL_IDS as RAIL_IDS } from "./release-rails";
 
 const root = resolve(import.meta.dir, "..");
 import type { BuildInfo } from "./release-artifacts";
