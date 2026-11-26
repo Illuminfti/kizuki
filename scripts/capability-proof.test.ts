@@ -2,7 +2,7 @@ import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { appendFileSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { parseCapabilityArgs } from "./capability-proof";
+import { endStateProofInventory, parseCapabilityArgs } from "./capability-proof";
 import { CAPABILITY_PROOF_FILE, EVALUATOR_ROOT, SURFACE_DOC_FILES, SURFACE_GATE, SURFACE_PRODUCER, hash } from "./release-evidence";
 import { TOOL_DESCRIPTIONS } from "../packages/mcp/src/index";
 
@@ -213,3 +213,12 @@ test("receipt pins the surface schema and the compiled MCP tool surface", () => 
   expect(receipt.mcp_tools).toEqual(tools);
   expect(new Set(receipt.mcp_tools).size).toBe(receipt.mcp_tools.length);
 }, 240_000);
+
+test("end-state proof inventory lists #1065 golden, scale-10x, and soak files without changing surface receipts", () => {
+  const inventory = endStateProofInventory();
+  expect(inventory.schema).toBe("kizuki.endstate-inventory/v1");
+  expect(inventory.all_present).toBe(true);
+  expect(inventory.golden_1065_stages).toHaveLength(14);
+  expect(inventory.golden.every(item => item.present && /^[0-9a-f]{64}$/.test(item.sha256 ?? ""))).toBe(true);
+  expect(inventory.bench.every(item => item.present && /^[0-9a-f]{64}$/.test(item.sha256 ?? ""))).toBe(true);
+});

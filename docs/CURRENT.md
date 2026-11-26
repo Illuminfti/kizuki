@@ -1,6 +1,6 @@
 # Current direction
 
-Implementation inventory updated 2026-11-25. This describes the checked-out
+Implementation inventory updated 2026-11-26. This describes the checked-out
 source, not the version installed on any particular host. The readiness decision
 below remains the owner's recorded 2026-09-23 decision.
 
@@ -82,6 +82,21 @@ use a frozen, explicitly uncalibrated heuristic and independent outcome evidence
 their scores are not a prediction-accuracy claim. Attention dispositions do not
 alter truth or confidence. The [golden journey](world/golden-journey.md) documents
 the tested cross-client lifecycle and its scripted-model limitations.
+
+End-state proof and benchmark tooling: `scripts/bench/scale-targets.ts` evaluates
+`kizuki.benchmark/v1` reports against the recorded S and M baselines (or another
+full report) for 10x speedup targets and non-regression bounds
+(`kizuki.benchmark-scale-10x/v1`). `scripts/bench/soak.ts` validates 24-hour
+continuous daemon soak observations (`kizuki.soak-report/v1`, 86,400,000 ms wall
+and monotonic continuity, zero unexpected restarts, bounded RSS growth, bounded
+CPU, and rail health) and includes a bounded live smoke probe that never grants
+24h certification. `scripts/bench/endstate-proof.ts` aggregates the `#1065`
+golden journey suite digests and runs, 10x scale comparison, and 24h soak status
+into `kizuki.endstate-proof/v1`; diagnostic helpers are exposed from
+`scripts/go-no-go.ts` and `scripts/capability-proof.ts` with
+`release_credit: false` so offline acceptance gates remain unchanged. Full 10x
+speedup attainment and live 24h continuous host soak require dedicated full runs
+outside unit smoke checks.
 
 A default session context packet starts with `owner`, `now`, `commitments`
 and `uncertain` sections read from authorized claims and Situations, each empty

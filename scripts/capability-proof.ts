@@ -8,6 +8,7 @@ import {
   absolute, bindEvaluatorCheckout, digest, evaluateSurfaceReceipt, expectedSurfaceInventory, hash, parents, read, reject,
 } from "./release-evidence";
 import type { GateReceiptReference } from "./release-evidence";
+import { GOLDEN_1065_STAGES, inspectEndStateFiles } from "./bench/endstate-proof";
 
 export interface CapabilityArgs { candidate: string; out: string }
 export function parseCapabilityArgs(args: readonly string[]): CapabilityArgs {
@@ -76,6 +77,17 @@ export function runCapabilityProof(args: CapabilityArgs): GateReceiptReference {
     published.unchanged();
     return { producer: SURFACE_PRODUCER, gate_id: SURFACE_GATE, target: null, path: out, sha256: published.sha256 };
   } catch { reject("published-receipt-verification-failed"); }
+}
+
+/** Read-only checkout digest inventory for M10 end-state proof suites (#1065, scale-10x, 24h soak).
+ * Kept strictly separate from kizuki.surface-inventory/v1 so surface receipts keep their exact schema. */
+export function endStateProofInventory(root = EVALUATOR_ROOT) {
+  const files = inspectEndStateFiles(root);
+  return {
+    schema: "kizuki.endstate-inventory/v1" as const,
+    golden_1065_stages: GOLDEN_1065_STAGES,
+    ...files,
+  };
 }
 
 if (import.meta.main) {
