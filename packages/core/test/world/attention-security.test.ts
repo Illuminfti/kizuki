@@ -15,10 +15,21 @@ import { attentionDoctor } from "../../src/serve/doctor-attention";
 import { serveWorldView } from "../../src/serving/world-view";
 import { deliverAttention, deliverPendingAttention } from "../../src/world/attention/deliver";
 import { currentAttention, setAttentionDisposition } from "../../src/world/attention/state";
-import { resolveWorldObject, withUnissuedWorldReferences } from "../../src/world/references";
+import {
+  compileTaskDomainSlice,
+  createExpansionLedger,
+  evaluateDomainExpansion,
+  readDomainGraph,
+  type TasteRecord,
+} from "../../src/world/attention/adaptive-domain";
+import { worldDependenciesCurrent } from "../../src/world/dependencies";
+import { activeWorldOps } from "../../src/world/ops/registry";
+import { resolveWorldObject, withUnissuedWorldReferences, worldNamespace } from "../../src/world/references";
 import { collectReadFrames } from "../../src/world/pipeline/frame";
 import { ATTENTION_TABLE_SPECS } from "../../src/world/tables/attention";
 import { attentionFixture, ATTENTION_WHEN } from "../helpers/attention-fixture";
+import { cardFixture } from "./card-fixture";
+import { EMPTY_SUMMARY_MODEL } from "../helpers/world-consolidation";
 
 test("scoped attention ignores hidden changes and owner dispositions without extra work", async () => {
   const f = await attentionFixture();
@@ -185,5 +196,107 @@ test("diagnostic reference tokens cannot resolve or be shared after their synchr
     }
     const current = f.candidates()[0]!.subject;
     expect(current.token).not.toBe(preview.ref.token);
+  } finally { f.dispose(); }
+}, 120_000);
+
+test("A5 and A6 cross-domain links and task slices enforce both-ends noninterference and source revocation without widening scope", async () => {
+  const f = await cardFixture(undefined, { model: EMPTY_SUMMARY_MODEL });
+  try {
+    await f.write("world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/concept" } }, { subject: "topic:posters-public", floor: "public" });
+    await f.write("concept.label", { kind: "literal", value: "Public poster design" }, { subject: "topic:posters-public", floor: "public" });
+    await f.write("concept.definition", { kind: "literal", value: "Public Swiss poster craft" }, { subject: "topic:posters-public", floor: "public" });
+
+    const agent = addAgent(f.db, "domain-scoped-reader", {
+      ...OWNER_AGENT_GRANT, ceiling: "public", subjects: ["topic:posters-public"],
+    });
+    const readerCtx = { ...f.ctx, principal: authenticate(f.db, agent.token)! };
+    const found = serveWorldView(readerCtx, { operation: "find_concepts", label: "Public poster design", ...ATTENTION_WHEN }).data;
+    if (!("result" in found) || !("data" in found.result) || !("matches" in found.result.data)) throw new Error("public domain missing");
+    const readerDomainRef = found.result.data.matches[0]!.ref;
+
+    const observeReader = () => collectReadFrames(() => f.db.transaction(() => {
+      const ns = worldNamespace(f.db, readerCtx.principal);
+      const frame = { ctx: readerCtx, ns, registry: activeWorldOps() };
+      return readDomainGraph(frame, readerDomainRef, { kind: "all" }, { now: "2030-01-10T00:00:00.000Z" });
+    }).immediate());
+
+    const before = observeReader();
+    expect(before.result).not.toBeNull();
+    expect(before.result!.crossDomainLinks).toEqual([]);
+
+    // Add a private framework linking to the public domain; scoped reader must see identical bytes and identical frame stats.
+    await f.write("world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/framework" } }, { subject: "framework:private-launch", floor: "private" });
+    await f.write("framework.label", { kind: "literal", value: "Private confidential launch" }, { subject: "framework:private-launch", floor: "private" });
+    await f.write("framework.applies_to", { kind: "subject", ref: f.ref("topic:posters-public") }, { subject: "framework:private-launch", floor: "private" });
+
+    const after = observeReader();
+    expect(after.result!.crossDomainLinks).toEqual(before.result!.crossDomainLinks);
+    expect(after.result!.concepts).toEqual(before.result!.concepts);
+    expect(after.frames.map(frame => frame.stats)).toEqual(before.frames.map(frame => frame.stats));
+    expect(JSON.stringify(after.result)).not.toContain("Private confidential launch");
+
+    // Owner sees the private cross-domain link and taste slice; revoking the source invalidates dependencies, drops taste, and halts expansion.
+    const ownerFound = serveWorldView(f.ctx, { operation: "find_concepts", label: "Public poster design", ...ATTENTION_WHEN }).data;
+    if (!("result" in ownerFound) || !("data" in ownerFound.result) || !("matches" in ownerFound.result.data)) throw new Error("owner domain missing");
+    const ownerDomainRef = ownerFound.result.data.matches[0]!.ref;
+
+    const initialSlice = f.db.transaction(() => {
+      const ns = worldNamespace(f.db, f.ctx.principal);
+      const frame = { ctx: f.ctx, ns, registry: activeWorldOps() };
+      const g = readDomainGraph(frame, ownerDomainRef, { kind: "all" }, { now: "2030-01-10T00:00:00.000Z" })!;
+      const taste: TasteRecord[] = [{
+        id: "t-revokable", domain: "Public poster design", context: ["poster"],
+        stance: "accepted", exampleLabel: "Bold Swiss numeral poster",
+        reasons: ["Immediate legibility at distance"],
+        provenance: g.concepts.items[0]!.evidence, observedAt: "2030-01-09T00:00:00.000Z",
+        sourceKey: f.sourceKey, independence: "independent",
+      }];
+      return {
+        ownerLinkCount: g.crossDomainLinks.length,
+        slice: compileTaskDomainSlice(frame, {
+          domainRef: ownerDomainRef, task: "poster", budgetTokens: 2000, valid: { kind: "all" },
+          now: "2030-01-10T00:00:00.000Z", tasteRecords: taste,
+        })!,
+        taste,
+      };
+    }).immediate();
+
+    expect(initialSlice.ownerLinkCount).toBe(1);
+    expect(initialSlice.slice.tasteAccepted).toHaveLength(1);
+    expect(f.db.transaction(() => worldDependenciesCurrent(f.ctx, initialSlice.slice.dependencies)).immediate()).toBe(true);
+
+    // Revoke the domain source grant: dependencies invalidate, slice drops revoked content without widening scope, and expansion stops.
+    revokeSourceGrant(f.db, { source_key: f.sourceKey, expected_revision: 1, operation_id: "adaptive-domain-revoke" });
+    expect(f.db.transaction(() => worldDependenciesCurrent(f.ctx, initialSlice.slice.dependencies)).immediate()).toBe(false);
+    const afterRevokeSlice = f.db.transaction(() => {
+      const ns = worldNamespace(f.db, f.ctx.principal);
+      const frame = { ctx: f.ctx, ns, registry: activeWorldOps() };
+      return compileTaskDomainSlice(frame, {
+        domainRef: ownerDomainRef, task: "poster", budgetTokens: 2000, valid: { kind: "all" },
+        now: "2030-01-10T00:00:00.000Z", tasteRecords: initialSlice.taste,
+      });
+    }).immediate();
+    expect(afterRevokeSlice).toBeNull();
+
+    const ledger = createExpansionLedger({
+      configuredSources: [f.sourceKey],
+      configuredModelEndpoint: null,
+      requiredPurpose: "extract",
+      minSalience: 0.75,
+      minIndependentSignals: 2,
+      budget: { maxModelCalls: 2, maxTokens: 2000, maxWrites: 2, maxDepth: 2 },
+    });
+    const decision = evaluateDomainExpansion(f.ctx, ledger, {
+      trigger: {
+        domain: "Public poster design", salience: 1.5, independentCount: 3, stage: "sustained",
+        evidenceRefs: initialSlice.taste[0]!.provenance,
+      },
+      candidateSources: [f.sourceKey],
+      requiresModel: false,
+      coverageComplete: true,
+      estimatedCost: { modelCalls: 0, tokens: 0, writes: 1, depthDelta: 1 },
+    });
+    expect(decision.status).toBe("stopped");
+    expect(decision.stopReason).toBe("missing_source_permission");
   } finally { f.dispose(); }
 }, 120_000);

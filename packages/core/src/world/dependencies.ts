@@ -13,6 +13,38 @@ import { knownSupportSql, knownHeldSql, cutoffSequence, type KnownCutoff } from 
 import { issueWorldRef, type WorldNamespace } from "./references";
 import { sourceCoverage, type SourceCoverageGap } from "./coverage";
 
+export type DependencyWeightClass =
+  | "owner_assertion"
+  | "independent_evidence"
+  | "cross_domain_link"
+  | "dependent_copy"
+  | "generated_summary";
+
+export const DEPENDENCY_WEIGHTS: Readonly<Record<DependencyWeightClass, number>> = Object.freeze({
+  owner_assertion: 1.0,
+  independent_evidence: 0.75,
+  cross_domain_link: 0.5,
+  dependent_copy: 0.0,
+  generated_summary: 0.0,
+});
+
+export interface DependencyWeightEntry {
+  readonly key: string;
+  readonly kind: "claim" | "support" | "event" | "consolidation";
+  readonly weightClass: DependencyWeightClass;
+  readonly weight?: number;
+  readonly observedAt: string | null;
+}
+
+export interface EffectiveDependencyWeight {
+  readonly totalWeight: number;
+  readonly independentWeight: number;
+  readonly independentCount: number;
+  readonly dependentCopyCount: number;
+  readonly summaryReplayCount: number;
+  readonly entryCount: number;
+}
+
 /** Complete authorized evidence used by a projection, including evidence omitted from its wire body. */
 export interface WorldDependencies {
   /** Independent guards for bounded operation composition; never overwrite a sibling baseline. */
@@ -34,10 +66,112 @@ export interface WorldDependencies {
   readonly consolidations: Map<string, { responseHash: string; completedAt: string; expiresAt: string }>;
   /** Authorized sources and the completeness/backlog gaps observed during assembly. */
   coverage: { readonly sources: readonly string[]; readonly gaps: readonly SourceCoverageGap[] } | null;
+  /** Optional bounded evidence weights used by adaptive domain salience and depth accounting. */
+  weights?: Map<string, DependencyWeightEntry>;
 }
 
 export function worldDependencies(): WorldDependencies {
   return { children: [], forecasts: new Map(), observations: new Map(), claims: new Set(), legacyClaims: new Map(), supports: new Set(), events: new Set(), identityReceipts: new Map(), consolidations: new Map(), coverage: null };
+}
+
+function normalizedDependencyWeight(entry: DependencyWeightEntry): number {
+  if (entry.weightClass === "dependent_copy" || entry.weightClass === "generated_summary") return 0;
+  const raw = entry.weight ?? DEPENDENCY_WEIGHTS[entry.weightClass];
+  if (!Number.isFinite(raw) || raw <= 0) return 0;
+  return Math.min(1, raw);
+}
+
+/** Record one weighted evidence entry. Copies and generated summary replays never gain positive weight. */
+export function recordDependencyWeight(deps: WorldDependencies, entry: DependencyWeightEntry): void {
+  const weights = deps.weights ?? (deps.weights = new Map());
+  const nextWeight = normalizedDependencyWeight(entry);
+  const existing = weights.get(entry.key);
+  if (existing === undefined) {
+    weights.set(entry.key, { ...entry, weight: nextWeight });
+    return;
+  }
+  const existingWeight = normalizedDependencyWeight(existing);
+  if (nextWeight > existingWeight) {
+    weights.set(entry.key, { ...entry, weight: nextWeight });
+  }
+}
+
+/** Attach a bounded child dependency closure without exceeding the composition ceiling. */
+export function mergeWorldDependencies(target: WorldDependencies, child: WorldDependencies): void {
+  if (target.children.length >= 32) throw new Error("world dependency composition limit");
+  target.children.push(child);
+}
+
+function collectDependencyWeights(
+  deps: WorldDependencies,
+  out: Map<string, DependencyWeightEntry>,
+  depth: number,
+): void {
+  if (depth > 2 || deps.children.length > 32) throw new Error("world dependency composition limit");
+  if (deps.weights !== undefined) {
+    for (const [key, entry] of deps.weights) {
+      const prior = out.get(key);
+      if (prior === undefined || normalizedDependencyWeight(entry) > normalizedDependencyWeight(prior)) {
+        out.set(key, entry);
+      }
+    }
+  }
+  for (const child of deps.children) collectDependencyWeights(child, out, depth + 1);
+}
+
+/**
+ * Aggregate deduplicated dependency weights across a bounded closure.
+ * Dependent copies and generated summaries contribute zero weight so replay never inflates depth.
+ */
+export function effectiveDependencyWeight(
+  deps: WorldDependencies,
+  options: { readonly now?: string; readonly halfLifeDays?: number } = {},
+): EffectiveDependencyWeight {
+  const deduped = new Map<string, DependencyWeightEntry>();
+  collectDependencyWeights(deps, deduped, 0);
+  const nowMs = options.now !== undefined ? Date.parse(options.now) : Number.NaN;
+  const halfLife = options.halfLifeDays !== undefined && Number.isFinite(options.halfLifeDays) && options.halfLifeDays > 0
+    ? options.halfLifeDays
+    : null;
+  let totalWeight = 0;
+  let independentWeight = 0;
+  let independentCount = 0;
+  let dependentCopyCount = 0;
+  let summaryReplayCount = 0;
+  for (const entry of deduped.values()) {
+    if (entry.weightClass === "dependent_copy") {
+      dependentCopyCount += 1;
+      continue;
+    }
+    if (entry.weightClass === "generated_summary") {
+      summaryReplayCount += 1;
+      continue;
+    }
+    const base = normalizedDependencyWeight(entry);
+    let factor = 1;
+    if (halfLife !== null && Number.isFinite(nowMs) && entry.observedAt !== null) {
+      const observedMs = Date.parse(entry.observedAt);
+      if (Number.isFinite(observedMs)) {
+        const ageDays = Math.max(0, (nowMs - observedMs) / 86_400_000);
+        factor = Math.pow(0.5, ageDays / halfLife);
+      }
+    }
+    const weighted = base * factor;
+    totalWeight += weighted;
+    if (entry.weightClass === "owner_assertion" || entry.weightClass === "independent_evidence") {
+      independentWeight += weighted;
+      independentCount += 1;
+    }
+  }
+  const round = (n: number) => Math.round(n * 1_000_000) / 1_000_000;
+  return {
+    totalWeight: round(totalWeight),
+    independentWeight: round(independentWeight),
+    independentCount,
+    dependentCopyCount,
+    summaryReplayCount,
+    entryCount: deduped.size,
+  };
 }
 
 export function recordWorldDependencies(deps: WorldDependencies, item: Eligible): void {

@@ -6,7 +6,12 @@ import { readOutcomes } from "../outcomes";
 import type { Enricher } from "../pipeline/enrich";
 /** Outcomes may change usefulness and qualify observation attribution, never truth assessments. */
 export const procedureEnricher: Enricher = (frame, body) => {
-  const classification = body.claims.find(({ eligible: e }) => e.semantic.predicate === "world.kind" && e.semantic.object.kind === "vocabulary" && ["world/procedure", "world/skill"].includes(e.semantic.object.ref.id));
+  const classification = body.claims.find(({ eligible: e }) =>
+    e.semantic.predicate === "world.kind" &&
+    e.semantic.polarity === "positive" &&
+    e.semantic.perspective.mode === "asserted" &&
+    e.semantic.object.kind === "vocabulary" &&
+    ["world/procedure", "world/skill"].includes(e.semantic.object.ref.id));
   if (classification === undefined) return body;
   if (frame.cutoff.kind !== "current" || frame.valid.kind !== "all") return { ...body, outcomeUsefulness: { status: "unknown", reason: "history" } };
   const card = readOutcomes(frame, classification.eligible.semantic.subject.id, sha256Hex(rawSubjectRefKey(classification.eligible.semantic.subject)));

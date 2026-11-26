@@ -1,11 +1,21 @@
 import type { RawSubjectRef } from "../contracts/claim-v2";
 import type { ServeContext } from "../serving/types";
-import { authorizedSupportSql } from "./policy-sql";
+import { authorizedClaimSql, authorizedSupportSql } from "./policy-sql";
 import { eligibleWorldClaim, type ReadBudget } from "./projection";
 import { resolveWorldObject, type WorldNamespace } from "./references";
 
 /** More than one claim is never needed: a node is readable when any claim naming it is. */
 const CANDIDATES = 16;
+
+/**
+ * Check whether a principal's current grant allows reading a subject identifier.
+ * Owner grants are unrestricted; agent grants with an explicit subject list fail closed.
+ */
+export function readableSubjectForGrant(ctx: ServeContext, subjectId: string): boolean {
+  if (ctx.principal.kind === "owner") return true;
+  const subjects = ctx.principal.grant.subjects;
+  return subjects === null || subjects.includes(subjectId);
+}
 
 /**
  * The raw endpoint an object token names for this principal, or null when the
@@ -23,22 +33,33 @@ export function readableWorldNode(ctx: ServeContext, ns: WorldNamespace, token: 
     )
     .get(handle);
   if (raw === null) return null;
+  if (!readableSubjectForGrant(ctx, raw.raw_id)) return null;
   const ref: RawSubjectRef =
     raw.raw_namespace === ""
       ? { kind: raw.raw_kind, id: raw.raw_id }
       : { kind: "supplied", id: raw.raw_id, namespace: JSON.parse(raw.raw_namespace) };
+  const claimPermitted = authorizedClaimSql(ctx, "base");
   const permitted = authorizedSupportSql(ctx);
   const claims = ctx.db
     .query<{ claim_id: string }, (string | number)[]>(
       `SELECT c.claim_id FROM claim_v2_semantics c JOIN claims base USING(claim_id)
-        WHERE c.discriminator='assertion' AND base.status='live' AND
+        WHERE c.discriminator='assertion' AND base.status='live' AND ${claimPermitted.sql} AND
           ((c.subject_kind=? AND c.subject_id=? AND coalesce(json_extract(c.payload,'$.subject.namespace'),'')=?) OR
            (json_extract(c.payload,'$.object.ref.kind')=? AND json_extract(c.payload,'$.object.ref.id')=?
             AND coalesce(json_extract(c.payload,'$.object.ref.namespace'),'')=?))
           AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql})
         ORDER BY c.claim_id LIMIT ${CANDIDATES}`,
     )
-    .all(raw.raw_kind, raw.raw_id, raw.raw_namespace, raw.raw_kind, raw.raw_id, raw.raw_namespace, ...permitted.bindings);
+    .all(
+      ...claimPermitted.bindings,
+      raw.raw_kind,
+      raw.raw_id,
+      raw.raw_namespace,
+      raw.raw_kind,
+      raw.raw_id,
+      raw.raw_namespace,
+      ...permitted.bindings,
+    );
   const budget: ReadBudget = ctx.worldReadBudget ?? { bytes: 0 };
   const readable = claims.some(({ claim_id }) => eligibleWorldClaim(ctx, claim_id, { kind: "all" }, budget) !== null);
   return readable ? ref : null;

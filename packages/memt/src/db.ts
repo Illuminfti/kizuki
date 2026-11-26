@@ -193,6 +193,127 @@ CREATE VIRTUAL TABLE IF NOT EXISTS experiences_fts USING fts5(
 
 INSERT INTO experiences_fts(experiences_fts, rank)
   VALUES('rank', 'bm25(0.0, 2.5, 2.0, 3.0, 2.5, 1.0)');
+
+CREATE TABLE IF NOT EXISTS collaboration_records (
+  id TEXT PRIMARY KEY,
+  person_id TEXT NOT NULL,
+  partition_key TEXT NOT NULL,
+  area TEXT NOT NULL CHECK (
+    area IN (
+      'communication',
+      'work_standards',
+      'collaboration_protocol',
+      'knowledge',
+      'decision_values',
+      'developing_taste'
+    )
+  ),
+  kind TEXT NOT NULL CHECK (
+    kind IN ('rule', 'example_positive', 'example_negative', 'criterion')
+  ),
+  condition TEXT NOT NULL,
+  guidance TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  verification TEXT NOT NULL DEFAULT '',
+  scope_json TEXT NOT NULL,
+  exceptions_json TEXT NOT NULL,
+  evidence_refs_json TEXT NOT NULL,
+  source_roots_json TEXT NOT NULL,
+  sensitivity TEXT NOT NULL CHECK (
+    sensitivity IN ('public', 'work', 'personal', 'private')
+  ),
+  taint TEXT NOT NULL CHECK (taint IN ('clean', 'quoted')),
+  authority_level TEXT NOT NULL CHECK (
+    authority_level IN ('inferred_taste', 'observed_preference', 'owner_instruction')
+  ),
+  epistemic_status TEXT NOT NULL CHECK (
+    epistemic_status IN ('hypothesis', 'corroborated', 'owner_instruction', 'contested', 'retracted')
+  ),
+  confidence REAL NOT NULL CHECK (confidence >= 0.0 AND confidence <= 1.0),
+  uncertainty REAL NOT NULL CHECK (uncertainty >= 0.0 AND uncertainty <= 1.0),
+  valid_from TEXT,
+  valid_until TEXT,
+  conflict_group TEXT,
+  superseded_by TEXT,
+  dedup_key TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_collab_records_lookup
+  ON collaboration_records(person_id, partition_key, sensitivity, area, epistemic_status);
+
+CREATE INDEX IF NOT EXISTS idx_collab_records_dedup
+  ON collaboration_records(person_id, partition_key, dedup_key);
+
+CREATE TABLE IF NOT EXISTS collaboration_record_sources (
+  record_id TEXT NOT NULL REFERENCES collaboration_records(id) ON DELETE CASCADE,
+  source_ref TEXT NOT NULL,
+  PRIMARY KEY (record_id, source_ref)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_collab_record_sources_ref
+  ON collaboration_record_sources(source_ref);
+
+CREATE TABLE IF NOT EXISTS collaboration_handoffs (
+  id TEXT PRIMARY KEY,
+  idempotency_key TEXT NOT NULL,
+  person_id TEXT NOT NULL,
+  partition_key TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  served_slice_hash TEXT NOT NULL,
+  task TEXT NOT NULL,
+  area TEXT NOT NULL CHECK (
+    area IN (
+      'communication',
+      'work_standards',
+      'collaboration_protocol',
+      'knowledge',
+      'decision_values',
+      'developing_taste'
+    )
+  ),
+  kind TEXT NOT NULL CHECK (
+    kind IN ('agent_claim', 'owner_edit', 'owner_correction', 'observed_outcome')
+  ),
+  outcome_status TEXT NOT NULL CHECK (
+    outcome_status IN ('unverified_agent_claim', 'observed_pass', 'observed_fail', 'owner_corrected')
+  ),
+  work_summary TEXT NOT NULL,
+  artifact_ref TEXT NOT NULL DEFAULT '',
+  correction_text TEXT NOT NULL DEFAULT '',
+  supersedes_record_id TEXT,
+  created_record_id TEXT,
+  evidence_refs_json TEXT NOT NULL,
+  sensitivity TEXT NOT NULL CHECK (
+    sensitivity IN ('public', 'work', 'personal', 'private')
+  ),
+  reverted_at TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE (person_id, partition_key, idempotency_key)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_collab_handoffs_lookup
+  ON collaboration_handoffs(person_id, partition_key, sensitivity, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS collaboration_handoff_sources (
+  handoff_id TEXT NOT NULL REFERENCES collaboration_handoffs(id) ON DELETE CASCADE,
+  source_ref TEXT NOT NULL,
+  PRIMARY KEY (handoff_id, source_ref)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_collab_handoff_sources_ref
+  ON collaboration_handoff_sources(source_ref);
+
+CREATE TABLE IF NOT EXISTS collaboration_progress (
+  person_id TEXT NOT NULL,
+  partition_key TEXT NOT NULL,
+  stage TEXT NOT NULL CHECK (stage IN ('connecting', 'partial_backfill', 'complete')),
+  historical_complete INTEGER NOT NULL CHECK (historical_complete IN (0, 1)),
+  resume_cursor TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (person_id, partition_key)
+) STRICT;
 `;
 
 function enforceFileMode0600(filePath: string): void {
