@@ -144,6 +144,30 @@ function optionalFilterText(value: unknown, max: number): string {
     if (typeof value !== 'string' || value.length > max || /[\x00-\x1f\x7f]/.test(value)) throw new AppFailure('invalid_request');
     return value.trim();
 }
+function parseMemtCitations(raw: string): string[] {
+    if (raw === '[]' || raw.length === 0) return [];
+    try {
+        const parsed: unknown = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed.filter((item): item is string => typeof item === 'string');
+    } catch { /* Treat malformed citation JSON as empty rather than crashing read inspection. */ }
+    return [];
+}
+interface MemtExperienceSqlRow {
+    id: string;
+    domain: string;
+    scope_key: string;
+    sensitivity: string;
+    condition: string;
+    recommendation: string;
+    verification: string;
+    outcome: string;
+    citations_json: string;
+    confidence: number;
+    use_count: number;
+    internalized_in_snapshot: string | null;
+    has_embedding: number;
+    updated_at: string;
+}
 function projectMemtExperience(record: ExperienceRecord, score?: number): AppMemtExperienceItem {
     return {
         id: record.id,
@@ -179,7 +203,7 @@ function inspectAppMemtStatus(vaultPath: string, env: Record<string, string | un
     }
     const registryPresent = existsSync(config.registryPath);
     const gpuConfigured = config.enabled && config.url !== null;
-    let mode: AppMemtStatus['mode'] = !config.enabled ? 'off' : gpuConfigured ? 'gpu_configured' : registryPresent ? 'local_hybrid' : 'off';
+    const mode: AppMemtStatus['mode'] = !config.enabled ? 'off' : gpuConfigured ? 'gpu_configured' : registryPresent ? 'local_hybrid' : 'off';
     if (!registryPresent) {
         return {
             mode, enabled: config.enabled, gpu_configured: gpuConfigured, api_key_configured: config.apiKey !== null,
@@ -223,24 +247,28 @@ function inspectAppMemtExperiences(
     env: Record<string, string | undefined>,
     input: { query: string; domain: string; outcome: 'all' | ExperienceOutcome; ceiling: MemtSensitivity; limit: number },
 ): AppMemtExperiencesResponse {
-    const config = loadMemtConfig(vaultPath, env);
+    let config: ReturnType<typeof loadMemtConfig>;
+    try { config = loadMemtConfig(vaultPath, env); }
+    catch { throw new AppFailure('unavailable'); }
     const mode: 'list' | 'search' = input.query.length > 0 ? 'search' : 'list';
     if (!existsSync(config.registryPath)) {
         return { experiences: [], domains: [], truncated: false, mode };
     }
-    const db = new Database(config.registryPath, { readonly: true });
+    const outcomes: readonly ExperienceOutcome[] = input.outcome === 'all' ? EXPERIENCE_OUTCOMES : [input.outcome];
+    let db: Database | null = null;
     try {
-        const bank = new ExperienceBank({ db });
+        db = new Database(config.registryPath, { readonly: true });
         const allowed = allowedSensitivitiesForCeiling(input.ceiling);
         const domains = db.query<{ domain: string }, string[]>(
             `SELECT DISTINCT domain FROM experiences WHERE sensitivity IN (${allowed.map(() => '?').join(', ')}) ORDER BY domain ASC LIMIT 64`,
         ).all(...allowed).map(row => row.domain);
         if (mode === 'search') {
+            const bank = new ExperienceBank({ db });
             const hits = bank.searchExperiences({
                 query: input.query,
                 sensitivityCeiling: input.ceiling,
                 ...(input.domain ? { domain: input.domain } : {}),
-                ...(input.outcome !== 'all' ? { outcomes: [input.outcome] } : {}),
+                outcomes,
                 limit: input.limit + 1,
             });
             return {
@@ -250,20 +278,50 @@ function inspectAppMemtExperiences(
                 mode,
             };
         }
-        const rawLimit = input.outcome === 'all' ? input.limit + 1 : Math.min(250, (input.limit + 1) * 5);
-        const rows = bank.listExperiences({
-            sensitivityCeiling: input.ceiling,
-            ...(input.domain ? { domain: input.domain } : {}),
-            limit: rawLimit,
-        });
-        const filtered = input.outcome === 'all' ? rows : rows.filter(row => row.outcome === input.outcome);
+        const clauses: string[] = [
+            `e.sensitivity IN (${allowed.map(() => '?').join(', ')})`,
+            `e.outcome IN (${outcomes.map(() => '?').join(', ')})`,
+        ];
+        const params: (string | number)[] = [...allowed, ...outcomes];
+        if (input.domain) {
+            clauses.push('e.domain = ?');
+            params.push(input.domain);
+        }
+        const rows = db.query<MemtExperienceSqlRow, (string | number)[]>(
+            `SELECT e.id, e.domain, e.scope_key, e.sensitivity, e.condition, e.recommendation,
+                    e.verification, e.outcome, e.citations_json, e.confidence, e.use_count,
+                    e.internalized_in_snapshot,
+                    (e.embedding IS NOT NULL AND length(e.embedding) > 0) AS has_embedding,
+                    e.updated_at
+             FROM experiences e
+             WHERE ${clauses.join(' AND ')}
+             ORDER BY e.updated_at DESC
+             LIMIT ?`,
+        ).all(...params, input.limit + 1);
         return {
-            experiences: filtered.slice(0, input.limit).map(row => projectMemtExperience(row)),
+            experiences: rows.slice(0, input.limit).map(row => ({
+                id: row.id,
+                domain: row.domain,
+                scope_key: row.scope_key,
+                sensitivity: isMemtSensitivity(row.sensitivity) ? row.sensitivity : 'private',
+                condition: row.condition,
+                recommendation: row.recommendation,
+                verification: row.verification,
+                outcome: row.outcome as ExperienceOutcome,
+                confidence: row.confidence,
+                use_count: row.use_count,
+                citations: parseMemtCitations(row.citations_json),
+                internalized_in_snapshot: row.internalized_in_snapshot,
+                has_embedding: row.has_embedding !== 0,
+                updated_at: row.updated_at,
+            })),
             domains,
-            truncated: filtered.length > input.limit || (input.outcome !== 'all' && rows.length === rawLimit),
+            truncated: rows.length > input.limit,
             mode,
         };
-    } finally { db.close(); }
+    } catch {
+        throw new AppFailure('unavailable');
+    } finally { db?.close(); }
 }
 const fullFields = ['text', 'subjects', 'metadata', 'attachments'];
 export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { noService?: boolean } = {}) {

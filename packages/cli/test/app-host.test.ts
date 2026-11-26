@@ -541,3 +541,105 @@ test('memt_status and memt_experiences stay strictly read-only on an untouched v
         await host.close();
     }
 });
+
+test('memt_experiences pushes outcome filters into SQL past 250 newer rows, aligns search and list on superseded rows, and fails closed on corrupt registry', async () => {
+    const setup = h.tempVault();
+    const io: CliIo = { env: setup.env, vaultOverride: setup.vault, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false, out() {}, err() {}, prompt: async () => '' };
+    const host = createAppHost(io);
+    const call = async (route: string, body: unknown = {}) => (await host.handle(new Request('http://127.0.0.1/app/v1/' + route, { method: 'POST', body: JSON.stringify(body) }))).json() as Promise<any>;
+    const registryPath = defaultMemtRegistryPath(setup.vault);
+    try {
+        const memtDb = openMemtRegistryDb(registryPath);
+        try {
+            const bank = new ExperienceBank({ db: memtDb });
+            bank.recordExperience({
+                domain: 'ops',
+                scope_key: 'older-fail-1',
+                sensitivity: 'work',
+                condition: 'When older failed rollback condition triggers first',
+                recommendation: 'Capture diagnostic receipt before retrying',
+                outcome: 'failed',
+                confidence: 0.35,
+                now: '2026-11-24T01:00:00.000Z',
+            });
+            bank.recordExperience({
+                domain: 'ops',
+                scope_key: 'older-fail-2',
+                sensitivity: 'work',
+                condition: 'When older failed rollback condition triggers second',
+                recommendation: 'Check disk quota and retry bounded sync',
+                outcome: 'failed',
+                confidence: 0.4,
+                now: '2026-11-24T02:00:00.000Z',
+            });
+            bank.recordExperience({
+                domain: 'legacy',
+                scope_key: 'replaced-flow',
+                sensitivity: 'work',
+                condition: 'When zephyr_superseded_token appears during migration',
+                recommendation: 'Use the current deterministic handoff instead',
+                outcome: 'superseded',
+                confidence: 0.5,
+                now: '2026-11-24T03:00:00.000Z',
+            });
+            for (let i = 0; i < 260; i++) {
+                const stamp = new Date(Date.UTC(2026, 10, 25, 0, 0, i)).toISOString();
+                bank.recordExperience({
+                    domain: 'build',
+                    scope_key: `newer-verified-${i}`,
+                    sensitivity: 'work',
+                    condition: `When verified build step ${i} completes cleanly`,
+                    recommendation: `Advance synthetic release marker ${i}`,
+                    outcome: 'verified',
+                    confidence: 0.9,
+                    now: stamp,
+                });
+            }
+        } finally {
+            memtDb.close();
+        }
+
+        // More than 250 newer verified rows precede the two older failed rows.
+        const failedAll = await call('memt_experiences', { outcome: 'failed', limit: 25 });
+        expect(failedAll.ok).toBe(true);
+        expect(failedAll.data.mode).toBe('list');
+        expect(failedAll.data.truncated).toBe(false);
+        expect(failedAll.data.experiences.map((item: any) => item.scope_key)).toEqual(['older-fail-2', 'older-fail-1']);
+
+        const failedPage = await call('memt_experiences', { outcome: 'failed', limit: 1 });
+        expect(failedPage.ok).toBe(true);
+        expect(failedPage.data.truncated).toBe(true);
+        expect(failedPage.data.experiences.map((item: any) => item.scope_key)).toEqual(['older-fail-2']);
+
+        // List and search both include superseded rows when outcome is 'all'.
+        const listedSuperseded = await call('memt_experiences', { domain: 'legacy', outcome: 'all', limit: 10 });
+        expect(listedSuperseded.ok).toBe(true);
+        expect(listedSuperseded.data.mode).toBe('list');
+        expect(listedSuperseded.data.experiences.map((item: any) => item.outcome)).toEqual(['superseded']);
+
+        const searchedAll = await call('memt_experiences', { query: 'zephyr_superseded_token', outcome: 'all', limit: 10 });
+        expect(searchedAll.ok).toBe(true);
+        expect(searchedAll.data.mode).toBe('search');
+        expect(searchedAll.data.experiences).toHaveLength(1);
+        expect(searchedAll.data.experiences[0].outcome).toBe('superseded');
+        expect(searchedAll.data.experiences[0].scope_key).toBe('replaced-flow');
+
+        const searchedSuperseded = await call('memt_experiences', { query: 'zephyr_superseded_token', outcome: 'superseded', limit: 10 });
+        expect(searchedSuperseded.ok).toBe(true);
+        expect(searchedSuperseded.data.experiences).toHaveLength(1);
+
+        const searchedVerified = await call('memt_experiences', { query: 'zephyr_superseded_token', outcome: 'verified', limit: 10 });
+        expect(searchedVerified.ok).toBe(true);
+        expect(searchedVerified.data.experiences).toHaveLength(0);
+
+        // Corrupt registry fails closed cleanly on both MemT routes.
+        writeFileSync(registryPath, 'not-a-valid-sqlite-header');
+        const corruptStatus = await call('memt_status');
+        expect(corruptStatus.ok).toBe(true);
+        expect(corruptStatus.data.mode).toBe('unavailable');
+        const corruptExp = await call('memt_experiences', {});
+        expect(corruptExp).toEqual({ ok: false, error: { code: 'unavailable', retryable: true } });
+    } finally {
+        await host.close();
+    }
+});
