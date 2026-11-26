@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { TOOLS, addAgent, authenticate, revokeAgent, setGrant } from "@kizuki/core";
+import { TOOLS, accept, addAgent, authenticate, revokeAgent, setGrant } from "@kizuki/core";
 import type { Grant, ServeContext } from "@kizuki/core";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -94,6 +94,33 @@ describe("MCP Person x Task Collaboration Slices (B1-B7)", () => {
     const adaAgent = await connectClient(adaAgentCtx, engine, "host-claude");
     const adaRelay = await connectClient(adaRelayCtx, engine, "host-codex");
 
+    // 0. Advertised MCP schema includes all collaboration inputs and stays strict
+    const listedTools = await owner.listTools();
+    const expTool = listedTools.tools.find((t) => t.name === "memt_experience");
+    const expProps = (expTool?.inputSchema as { properties?: Record<string, unknown>; additionalProperties?: boolean })
+      ?.properties ?? {};
+    for (const requiredCollabField of [
+      "person",
+      "partition_key",
+      "area",
+      "kind",
+      "guidance",
+      "scope",
+      "exceptions",
+      "source_roots",
+      "authority_level",
+      "idempotency_key",
+      "served_slice_hash",
+      "task",
+      "work_summary",
+      "correction_text",
+      "stage",
+      "historical_complete",
+      "resume_cursor",
+    ]) {
+      expect(Object.prototype.hasOwnProperty.call(expProps, requiredCollabField)).toBe(true);
+    }
+
     // Owner seeds a work rule + a private secret rule + a Bob rule
     const recPublic = await call(owner, "memt_experience", {
       action: "record_facet",
@@ -118,7 +145,7 @@ describe("MCP Person x Task Collaboration Slices (B1-B7)", () => {
     expect(recPublic.isError ?? false).toBe(false);
     const workRuleId = (payloadOf(recPublic)["record"] as { id: string }).id;
 
-    await call(owner, "memt_experience", {
+    const recPriv = await call(owner, "memt_experience", {
       action: "record_facet",
       person: "person:ada",
       partition_key: "work",
@@ -131,8 +158,9 @@ describe("MCP Person x Task Collaboration Slices (B1-B7)", () => {
       sensitivity: "private",
       authority_level: "owner_instruction",
     });
+    expect(recPriv.isError ?? false).toBe(false);
 
-    await call(owner, "memt_experience", {
+    const recBob = await call(owner, "memt_experience", {
       action: "record_facet",
       person: "person:bob",
       partition_key: "work",
@@ -145,6 +173,7 @@ describe("MCP Person x Task Collaboration Slices (B1-B7)", () => {
       sensitivity: "public",
       authority_level: "owner_instruction",
     });
+    expect(recBob.isError ?? false).toBe(false);
 
     // 1. Scoped agent cannot read outside grant.subjects (person:bob refused)
     const bobDenied = await call(adaAgent, "memt_recall", {
@@ -187,6 +216,59 @@ describe("MCP Person x Task Collaboration Slices (B1-B7)", () => {
     });
     expect(escalateSens.isError).toBe(true);
     expect(errorOf(escalateSens).error).toBe("tool_not_granted");
+
+    // 3b. Non-owner agent cannot mutate connection progress, and read-only progress respects caller ceiling
+    const mutateProgressDenied = await call(adaAgent, "memt_experience", {
+      action: "progress",
+      person: "person:ada",
+      partition_key: "work",
+      stage: "connecting",
+      historical_complete: false,
+    });
+    expect(mutateProgressDenied.isError).toBe(true);
+    expect(errorOf(mutateProgressDenied).error).toBe("tool_not_granted");
+
+    const agentReadProgress = payloadOf(
+      await call(adaAgent, "memt_experience", {
+        action: "progress",
+        person: "person:ada",
+        partition_key: "work",
+      }),
+    );
+    expect((agentReadProgress["progress"] as { high_info_indexed: number }).high_info_indexed).toBe(1);
+
+    // 3c. Single evidence ref with its own source_root stays hypothesis (never corroborated)
+    const ownRootFacet = await call(adaAgent, "memt_experience", {
+      action: "record_facet",
+      person: "person:ada",
+      partition_key: "work",
+      area: "developing_taste",
+      kind: "rule",
+      condition: "Chart labels",
+      guidance: "Use tabular numerals on axes",
+      scope: ["charts"],
+      citations: ["event:chart_ev_1"],
+      source_roots: ["design_review_thread"],
+      sensitivity: "work",
+      authority_level: "inferred_taste",
+    });
+    expect(ownRootFacet.isError ?? false).toBe(false);
+    const ownRootRec = payloadOf(ownRootFacet)["record"] as {
+      epistemic_status: string;
+      source_roots: string[];
+    };
+    expect(ownRootRec.source_roots).toEqual(["design_review_thread"]);
+    expect(ownRootRec.epistemic_status).toBe("hypothesis");
+
+    // 3d. Budget below mandatory slice envelope fails closed with invalid_arguments
+    const tooSmallBudget = await call(adaAgent, "memt_recall", {
+      query: "status update",
+      person: "person:ada",
+      partition_key: "work",
+      budget_tokens: 100,
+    });
+    expect(tooSmallBudget.isError).toBe(true);
+    expect(errorOf(tooSmallBudget).error).toBe("invalid_arguments");
 
     // 4. B7 two-host harness-neutral parity: Host A (adaAgent) and Host B (adaRelay) receive identical slices
     const hostARes = payloadOf(
@@ -303,7 +385,28 @@ describe("MCP Person x Task Collaboration Slices (B1-B7)", () => {
       "Limit status updates to three crisp metric bullets only",
     ]);
 
-    // context_packet also appends Collaboration Brief for permitted person subject within budget
+    // context_packet v2: view token tracks final packet including Collaboration Brief,
+    // refreshes cleanly when a new permitted rule is added, and emits each heading ONCE.
+    const packetBeforeCall = await call(freshAgentB, "context_packet", {
+      purpose: "session",
+      budget_tokens: 1000,
+    });
+    expect(packetBeforeCall.isError ?? false).toBe(false);
+    const packetBeforeEnv = envelopeOf(packetBeforeCall);
+    const packetBeforeResult = (
+      packetBeforeEnv["data"] as {
+        result: {
+          status: string;
+          view: { kind: "view"; token: string };
+          data: { packetMd: string; tokens: number; budgetTokens: number };
+        };
+      }
+    ).result;
+    expect(packetBeforeResult.status).toBe("current");
+    expect(packetBeforeResult.data.packetMd).not.toContain("## Collaboration Brief");
+    const viewBeforeRule = packetBeforeResult.view;
+
+    // Add TWO permitted rules (which also derive rubric items -> 4 collaboration lines total)
     engine.collaboration.recordFacet({
       person_id: "person:ada",
       partition_key: "default",
@@ -311,24 +414,114 @@ describe("MCP Person x Task Collaboration Slices (B1-B7)", () => {
       kind: "rule",
       condition: "Kettle status brief",
       guidance: "Report kettle temperature and readiness in two bullets",
-      scope: ["kettle", "status_update"],
+      verification: "Check temperature and readiness bullet count",
+      scope: ["session", "kettle", "status_update"],
       evidence_refs: [running.eventId],
       sensitivity: "public",
       authority_level: "owner_instruction",
     });
-    const packetCall = await call(freshAgentB, "context_packet", {
+    engine.collaboration.recordFacet({
+      person_id: "person:ada",
+      partition_key: "default",
+      area: "work_standards",
+      kind: "rule",
+      condition: "Kettle safety check",
+      guidance: "Verify kettle valve seal pressure before reporting ready",
+      verification: "Confirm valve seal check recorded",
+      scope: ["session", "kettle", "readiness"],
+      evidence_refs: ["event:kettle_safety_2"],
+      sensitivity: "public",
+      authority_level: "owner_instruction",
+    });
+
+    // Refreshing with priorView from BEFORE the new rule MUST return current (NOT unchanged!)
+    const packetRefreshedCall = await call(freshAgentB, "context_packet", {
+      purpose: "session",
+      budget_tokens: 1000,
+      priorView: viewBeforeRule,
+    });
+    expect(packetRefreshedCall.isError ?? false).toBe(false);
+    const packetRefreshedEnv = envelopeOf(packetRefreshedCall);
+    const packetRefreshedResult = (
+      packetRefreshedEnv["data"] as {
+        result: {
+          status: string;
+          view: { kind: "view"; token: string };
+          data: { packetMd: string; tokens: number; budgetTokens: number };
+        };
+      }
+    ).result;
+    expect(packetRefreshedResult.status).toBe("current");
+    expect(packetRefreshedResult.view.token).not.toBe(viewBeforeRule.token);
+    expect(packetRefreshedResult.data.packetMd).toContain("## Collaboration Brief");
+    expect(
+      packetRefreshedResult.data.packetMd.match(/## Collaboration Brief/g)?.length ?? 0,
+    ).toBe(1);
+    expect(packetRefreshedResult.data.packetMd).toContain(
+      "Report kettle temperature and readiness in two bullets",
+    );
+    expect(packetRefreshedResult.data.packetMd).toContain(
+      "Verify kettle valve seal pressure before reporting ready",
+    );
+    expect(packetRefreshedResult.data.tokens).toBeLessThanOrEqual(
+      packetRefreshedResult.data.budgetTokens,
+    );
+
+    // Refreshing again with the new view token when nothing changed returns unchanged
+    const packetUnchangedCall = await call(freshAgentB, "context_packet", {
+      purpose: "session",
+      budget_tokens: 1000,
+      priorView: packetRefreshedResult.view,
+    });
+    expect(packetUnchangedCall.isError ?? false).toBe(false);
+    const packetUnchangedResult = (
+      envelopeOf(packetUnchangedCall)["data"] as {
+        result: { status: string; view: { kind: "view"; token: string } };
+      }
+    ).result;
+    expect(packetUnchangedResult.status).toBe("unchanged");
+    expect(packetUnchangedResult.view.token).toBe(packetRefreshedResult.view.token);
+
+    // Adding a hidden PRIVATE rule must keep the personal-ceiling caller's refresh unchanged
+    engine.collaboration.recordFacet({
+      person_id: "person:ada",
+      partition_key: "default",
+      area: "communication",
+      kind: "rule",
+      condition: "Private kettle secret",
+      guidance: "PRIVATE_KETTLE_NEVER_LEAK",
+      scope: ["session", "kettle", "readiness"],
+      evidence_refs: ["event:kettle_priv_3"],
+      sensitivity: "private",
+      authority_level: "owner_instruction",
+    });
+    const packetStillUnchanged = (
+      envelopeOf(
+        await call(freshAgentB, "context_packet", {
+          purpose: "session",
+          budget_tokens: 1000,
+          priorView: packetRefreshedResult.view,
+        }),
+      )["data"] as { result: { status: string } }
+    ).result;
+    expect(packetStillUnchanged.status).toBe("unchanged");
+
+    // Recall context_packet with query also appends a single Collaboration Brief within budget
+    const recallPacketCall = await call(freshAgentB, "context_packet", {
       purpose: "recall",
       query: "kettle readiness status",
       budget_tokens: 1000,
     });
-    expect(packetCall.isError ?? false).toBe(false);
-    const packetEnv = envelopeOf(packetCall);
-    const packetMd = (
-      packetEnv["data"] as { result: { data: { packetMd: string; tokens: number; budgetTokens: number } } }
+    expect(recallPacketCall.isError ?? false).toBe(false);
+    const recallPacketData = (
+      envelopeOf(recallPacketCall)["data"] as {
+        result: { data: { packetMd: string; tokens: number; budgetTokens: number } };
+      }
     ).result.data;
-    expect(packetMd.packetMd).toContain("## Collaboration Brief");
-    expect(packetMd.packetMd).toContain("Report kettle temperature and readiness in two bullets");
-    expect(packetMd.tokens).toBeLessThanOrEqual(packetMd.budgetTokens);
+    expect(recallPacketData.packetMd.match(/## Collaboration Brief/g)?.length ?? 0).toBe(1);
+    expect(recallPacketData.packetMd).toContain("Report kettle temperature and readiness in two bullets");
+    expect(recallPacketData.packetMd).not.toContain("PRIVATE_KETTLE_NEVER_LEAK");
+    expect(recallPacketData.tokens).toBeLessThanOrEqual(recallPacketData.budgetTokens);
 
     // Undo handoff reverts correction and restores prior rule
     const undone = payloadOf(
@@ -522,7 +715,7 @@ describe("MCP Person x Task Collaboration Slices (B1-B7)", () => {
       expect(res.isError ?? false).toBe(false);
 
       // Adversarial private, cross-partition, and cross-person decoys for every scenario
-      await call(owner, "memt_experience", {
+      const privDecoy = await call(owner, "memt_experience", {
         action: "record_facet",
         person: "person:ada",
         partition_key: "work",
@@ -535,7 +728,10 @@ describe("MCP Person x Task Collaboration Slices (B1-B7)", () => {
         sensitivity: "private",
         authority_level: "owner_instruction",
       });
-      await call(owner, "memt_experience", {
+      expect(privDecoy.isError ?? false).toBe(false);
+      expect((payloadOf(privDecoy)["record"] as { id?: string })?.id).toBeTruthy();
+
+      const partDecoy = await call(owner, "memt_experience", {
         action: "record_facet",
         person: "person:ada",
         partition_key: "diary",
@@ -548,7 +744,10 @@ describe("MCP Person x Task Collaboration Slices (B1-B7)", () => {
         sensitivity: "public",
         authority_level: "owner_instruction",
       });
-      await call(owner, "memt_experience", {
+      expect(partDecoy.isError ?? false).toBe(false);
+      expect((payloadOf(partDecoy)["record"] as { id?: string })?.id).toBeTruthy();
+
+      const bobDecoy = await call(owner, "memt_experience", {
         action: "record_facet",
         person: "person:bob",
         partition_key: "work",
@@ -561,6 +760,41 @@ describe("MCP Person x Task Collaboration Slices (B1-B7)", () => {
         sensitivity: "public",
         authority_level: "owner_instruction",
       });
+      expect(bobDecoy.isError ?? false).toBe(false);
+      expect((payloadOf(bobDecoy)["record"] as { id?: string })?.id).toBeTruthy();
+    }
+
+    // Prove every decoy is actually stored and owner-readable before testing the fresh agent
+    for (const s of SCENARIOS) {
+      const ownerPriv = await call(owner, "memt_recall", {
+        query: s.prompt,
+        person: "person:ada",
+        partition_key: "work",
+        task_kind: s.taskKind,
+        budget_tokens: 2000,
+      });
+      expect(ownerPriv.isError ?? false).toBe(false);
+      expect(JSON.stringify(payloadOf(ownerPriv))).toContain(`MCP_LEAK_PRIV_${s.id}`);
+
+      const ownerPart = await call(owner, "memt_recall", {
+        query: s.prompt,
+        person: "person:ada",
+        partition_key: "diary",
+        task_kind: s.taskKind,
+        budget_tokens: 2000,
+      });
+      expect(ownerPart.isError ?? false).toBe(false);
+      expect(JSON.stringify(payloadOf(ownerPart))).toContain(`MCP_LEAK_PART_${s.id}`);
+
+      const ownerBob = await call(owner, "memt_recall", {
+        query: s.prompt,
+        person: "person:bob",
+        partition_key: "work",
+        task_kind: s.taskKind,
+        budget_tokens: 2000,
+      });
+      expect(ownerBob.isError ?? false).toBe(false);
+      expect(JSON.stringify(payloadOf(ownerBob))).toContain(`MCP_LEAK_BOB_${s.id}`);
     }
 
     // Fresh MCP agent connects cold with personal ceiling (cannot see private) and person:ada subject scope
@@ -608,5 +842,189 @@ describe("MCP Person x Task Collaboration Slices (B1-B7)", () => {
 
     expect(leaks).toBe(0);
     expect(hits / SCENARIOS.length).toBeGreaterThanOrEqual(0.92);
+  });
+
+  test("revalidates live Kizuki event purge/revocation/window/type on recall and enforces tools/list <= 38 KB", async () => {
+    const running = live();
+    const engine = createMemtEngine(running.vaultPath);
+    cleanups.push(() => engine.close());
+
+    const owner = await connectClient(running.owner(), engine, "owner-ev");
+    const listed = await owner.listTools();
+    expect(Buffer.byteLength(JSON.stringify(listed))).toBeLessThanOrEqual(38 * 1024);
+
+    // Ingest real Kizuki ledger events via accept()
+    const ts = "2026-10-01T10:00:00Z";
+    const evLive = accept(running.db, {
+      schema: "kizuki.event/v1",
+      connector_id: "fixture",
+      source_record_id: "rec-checklist-live",
+      kind: "note",
+      occurred_at: ts,
+      observed_at: ts,
+      text: "Ada likes crisp checklists",
+      subjects: [{ subject_id: "person:ada", role: "from" }],
+      sensitivity_hint: "public",
+      deleted: false,
+      attachments: [],
+      metadata: {},
+    });
+    const evPurged = accept(running.db, {
+      schema: "kizuki.event/v1",
+      connector_id: "fixture",
+      source_record_id: "rec-checklist-purged",
+      kind: "note",
+      occurred_at: ts,
+      observed_at: ts,
+      text: "Purged event rule",
+      subjects: [{ subject_id: "person:ada", role: "from" }],
+      sensitivity_hint: "public",
+      deleted: false,
+      attachments: [],
+      metadata: {},
+    });
+    if (evLive.status !== "stored" || evPurged.status !== "stored") {
+      throw new Error("failed to store test events");
+    }
+    const liveEventId = evLive.event.event_id;
+    const purgedEventId = evPurged.event.event_id;
+
+    const recLive = await call(owner, "memt_experience", {
+      action: "record_facet",
+      person: "person:ada",
+      partition_key: "work",
+      area: "work_standards",
+      kind: "rule",
+      condition: "When reviewing checklists",
+      guidance: "Keep every checklist item verifiable in one line",
+      scope: ["checklists"],
+      citations: [liveEventId],
+      sensitivity: "public",
+      authority_level: "owner_instruction",
+    });
+    expect(recLive.isError ?? false).toBe(false);
+
+    const recPurged = await call(owner, "memt_experience", {
+      action: "record_facet",
+      person: "person:ada",
+      partition_key: "work",
+      area: "work_standards",
+      kind: "rule",
+      condition: "When reviewing checklists",
+      guidance: "PURGED_SOURCE_RULE_MUST_VANISH",
+      scope: ["checklists"],
+      citations: [purgedEventId],
+      sensitivity: "public",
+      authority_level: "owner_instruction",
+    });
+    expect(recPurged.isError ?? false).toBe(false);
+
+    // Record an event_purge receipt for purgedEventId without calling MemT purge manually:
+    // live evidence revalidation must withhold the facet immediately on MCP recall!
+    running.db.query(
+      `INSERT INTO event_purges (receipt_id, event_id, connector_id, reason, purged_at)
+       VALUES ('purge-92', ?, 'local', 'owner_request', ?)`,
+    ).run(purgedEventId, "2026-10-02T00:00:00Z");
+
+    const agentCtx = enrollCustomAgent(running, "window-agent", {
+      ceiling: "public",
+      subjects: ["person:ada"],
+      types: ["note"],
+    });
+    const agent = await connectClient(agentCtx, engine, "window-host");
+    const recall1 = await call(agent, "memt_recall", {
+      query: "reviewing checklists",
+      person: "person:ada",
+      partition_key: "work",
+      task_kind: "checklists",
+    });
+    expect(recall1.isError ?? false).toBe(false);
+    const wire1 = JSON.stringify(payloadOf(recall1));
+    expect(wire1).toContain("Keep every checklist item verifiable in one line");
+    expect(wire1).not.toContain("PURGED_SOURCE_RULE_MUST_VANISH");
+
+    // Event-type and time-window narrowing on the agent grant immediately withholds the facet
+    const wrongTypeCtx = enrollCustomAgent(running, "wrong-type-agent", {
+      ceiling: "public",
+      subjects: ["person:ada"],
+      types: ["email"],
+    });
+    const wrongTypeAgent = await connectClient(wrongTypeCtx, engine, "wrong-type-host");
+    const recallWrongType = await call(wrongTypeAgent, "memt_recall", {
+      query: "reviewing checklists",
+      person: "person:ada",
+      partition_key: "work",
+      task_kind: "checklists",
+    });
+    expect(recallWrongType.isError ?? false).toBe(false);
+    expect(JSON.stringify(payloadOf(recallWrongType))).not.toContain(
+      "Keep every checklist item verifiable in one line",
+    );
+
+    const outOfWindowCtx = enrollCustomAgent(running, "out-of-window-agent", {
+      ceiling: "public",
+      subjects: ["person:ada"],
+      types: ["note"],
+      since: "2026-10-05T00:00:00Z",
+    });
+    const outOfWindowAgent = await connectClient(outOfWindowCtx, engine, "out-of-window-host");
+    const recallOutOfWindow = await call(outOfWindowAgent, "memt_recall", {
+      query: "reviewing checklists",
+      person: "person:ada",
+      partition_key: "work",
+      task_kind: "checklists",
+    });
+    expect(recallOutOfWindow.isError ?? false).toBe(false);
+    expect(JSON.stringify(payloadOf(recallOutOfWindow))).not.toContain(
+      "Keep every checklist item verifiable in one line",
+    );
+
+    // Purging the live event in event_purges immediately withholds its facet too
+    running.db.query(
+      `INSERT INTO event_purges (receipt_id, event_id, connector_id, reason, purged_at)
+       VALUES ('purge-91', ?, 'fixture', 'owner_request', ?)`,
+    ).run(liveEventId, "2026-10-02T00:00:00Z");
+    const recall2 = await call(agent, "memt_recall", {
+      query: "reviewing checklists",
+      person: "person:ada",
+      partition_key: "work",
+      task_kind: "checklists",
+    });
+    expect(recall2.isError ?? false).toBe(false);
+    expect(JSON.stringify(payloadOf(recall2))).not.toContain(
+      "Keep every checklist item verifiable in one line",
+    );
+
+    // Agent restricted to person:bob cannot undo a person:ada handoff
+    const adaSliceHash = (payloadOf(recall1)["collaboration_slice"] as { slice_hash: string }).slice_hash;
+    const adaHandoff = await call(owner, "memt_experience", {
+      action: "handoff",
+      idempotency_key: "owner-undo-scope-test",
+      person: "person:ada",
+      partition_key: "work",
+      area: "work_standards",
+      kind: "owner_correction",
+      served_slice_hash: adaSliceHash,
+      task: "reviewing checklists",
+      work_summary: "Owner correction on checklists",
+      correction_text: "Always attach proof links to checklist items",
+      citations: ["event:manual_proof_1"],
+      sensitivity: "public",
+    });
+    expect(adaHandoff.isError ?? false).toBe(false);
+    const handoffId = (payloadOf(adaHandoff)["handoff"] as { id: string }).id;
+
+    const bobRelayCtx = enrollCustomAgent(running, "bob-relay", {
+      ceiling: "public",
+      subjects: ["person:bob"],
+      relay_owner_corrections: true,
+    });
+    const bobRelay = await connectClient(bobRelayCtx, engine, "bob-host");
+    const undoDenied = await call(bobRelay, "memt_experience", {
+      action: "undo_handoff",
+      id: handoffId,
+    });
+    expect(undoDenied.isError).toBe(true);
+    expect(errorOf(undoDenied).error).toBe("not_found");
   });
 });

@@ -488,6 +488,18 @@ const memtStrings = (maxItems: number, maxLen: number) =>
     (items) => items.length <= maxItems && items.every((item) => item.length >= 1 && item.length <= maxLen),
   );
 const MEMT_SENSITIVITY = z.enum(["public", "work", "personal", "private"]);
+const MEMT_COLLAB_AREA = z.enum([
+  "communication",
+  "work_standards",
+  "collaboration_protocol",
+  "knowledge",
+  "decision_values",
+  "developing_taste",
+]);
+const MEMT_COLLAB_EXCEPTION = z.strictObject({
+  condition: memtText(1, 512),
+  note: memtText(1, 1024),
+});
 
 export const MEMT_STATUS_INPUT = z.strictObject({
   probe: z.boolean().optional(),
@@ -501,17 +513,17 @@ export const MEMT_RECALL_INPUT = z.strictObject({
   scope: z.enum(["canon", "ledger", "all"]).optional(),
   limit: memtInt(1, 50).optional(),
   include_synthesis: z.boolean().optional(),
-  person: z.string().optional(),
-  task: z.string().optional(),
-  task_kind: z.string().optional(),
-  areas: z.array(z.string()).optional(),
+  person: memtText(1, 128).optional(),
+  task: memtText(1, 512).optional(),
+  task_kind: memtText(1, 128).optional(),
+  areas: z.array(MEMT_COLLAB_AREA).max(6).optional(),
   include_collaboration_slice: z.boolean().optional(),
-  prior_slice_hash: z.string().optional(),
-  budget_tokens: z.number().optional(),
-  as_of: z.string().optional(),
+  prior_slice_hash: memtText(1, 128).optional(),
+  budget_tokens: memtInt(100, 4000).optional(),
+  as_of: memtText(20, 40).optional(),
 });
 
-export const MEMT_EXPERIENCE_INPUT = z.looseObject({
+export const MEMT_EXPERIENCE_INPUT = z.strictObject({
   action: z.enum([
     "record",
     "search",
@@ -524,15 +536,53 @@ export const MEMT_EXPERIENCE_INPUT = z.looseObject({
   id: memtText(1, 128).optional(),
   domain: memtText(1, 128).optional(),
   scope_key: memtText(1, 128).optional(),
+  partition_key: memtText(1, 128).optional(),
   sensitivity: MEMT_SENSITIVITY.optional(),
   condition: memtText(1, 2048).optional(),
   recommendation: memtText(1, 2048).optional(),
+  guidance: memtText(1, 2048).optional(),
+  reason: memtText(0, 1024).optional(),
   verification: memtText(0, 1024).optional(),
   outcome: z.enum(["verified", "observed", "failed", "superseded"]).optional(),
   citations: memtStrings(32, 256).optional(),
   confidence: memtUnit().optional(),
   query: memtText(0, 512).optional(),
   limit: memtInt(1, 50).optional(),
+  person: memtText(1, 128).optional(),
+  area: MEMT_COLLAB_AREA.optional(),
+  kind: z
+    .enum([
+      "rule",
+      "example_positive",
+      "example_negative",
+      "criterion",
+      "agent_claim",
+      "owner_edit",
+      "owner_correction",
+      "observed_outcome",
+    ])
+    .optional(),
+  scope: memtStrings(16, 128).optional(),
+  exceptions: z.array(MEMT_COLLAB_EXCEPTION).max(16).optional(),
+  source_roots: memtStrings(32, 256).optional(),
+  authority_level: z
+    .enum(["inferred_taste", "observed_preference", "owner_instruction"])
+    .optional(),
+  valid_from: memtText(20, 40).optional(),
+  valid_until: memtText(20, 40).optional(),
+  conflict_group: memtText(1, 128).optional(),
+  idempotency_key: memtText(1, 256).optional(),
+  served_slice_hash: memtText(1, 128).optional(),
+  task: memtText(1, 512).optional(),
+  work_summary: memtText(1, 2048).optional(),
+  artifact_ref: memtText(1, 256).optional(),
+  correction_text: memtText(1, 2048).optional(),
+  supersedes_record_id: memtText(1, 128).optional(),
+  observed_passed: z.boolean().optional(),
+  agent_id: memtText(1, 128).optional(),
+  stage: z.enum(["connecting", "partial_backfill", "complete"]).optional(),
+  historical_complete: z.boolean().optional(),
+  resume_cursor: memtText(0, 256).optional(),
 });
 
 export const MEMT_SNAPSHOT_INPUT = z.strictObject({

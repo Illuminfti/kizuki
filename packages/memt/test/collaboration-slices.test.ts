@@ -353,6 +353,92 @@ describe("Person x Task Collaboration Slices (B1-B7)", () => {
         expect(replayed.record.confidence).toBeCloseTo(0.55, 5);
       }
 
+      // Independent single evidence ref with its own explicit source_root must NOT become corroborated!
+      const withOwnRoot = store.recordFacet({
+        person_id: "person:ada",
+        partition_key: "work",
+        area: "developing_taste",
+        kind: "rule",
+        condition: "Poster grid rhythm",
+        guidance: "Use strict 12-column Swiss grid",
+        scope: ["poster"],
+        evidence_refs: ["event:own_root_msg_1"],
+        source_roots: ["slack_design_channel"],
+        sensitivity: "work",
+        authority_level: "inferred_taste",
+        confidence: 0.55,
+      });
+      expect(withOwnRoot.record.source_roots).toEqual(["slack_design_channel"]);
+      expect(withOwnRoot.record.epistemic_status).toBe("hypothesis");
+
+      // Replaying the same evidence ref with a different explicit source_root still cannot inflate corroboration
+      const replayedOwnRoot = store.recordFacet({
+        person_id: "person:ada",
+        partition_key: "work",
+        area: "developing_taste",
+        kind: "rule",
+        condition: "Poster grid rhythm",
+        guidance: "Use strict 12-column Swiss grid",
+        scope: ["poster"],
+        evidence_refs: ["event:own_root_msg_1#copy2"],
+        source_roots: ["different_label_same_msg"],
+        sensitivity: "work",
+        authority_level: "inferred_taste",
+        confidence: 0.55,
+      });
+      expect(replayedOwnRoot.deduplicated).toBe(true);
+      expect(replayedOwnRoot.record.source_roots).toEqual(["slack_design_channel"]);
+      expect(replayedOwnRoot.record.epistemic_status).toBe("hypothesis");
+
+      // More explicit source_roots than distinct evidence_refs is rejected
+      expect(() =>
+        store.recordFacet({
+          person_id: "person:ada",
+          partition_key: "work",
+          area: "developing_taste",
+          kind: "rule",
+          condition: "Forged roots",
+          guidance: "Should fail",
+          scope: ["poster"],
+          evidence_refs: ["event:single_ref_only"],
+          source_roots: ["root_a", "root_b"],
+          sensitivity: "work",
+          authority_level: "inferred_taste",
+        }),
+      ).toThrow(/source_roots/);
+
+      // Private record must NEVER be counted when updateConnectionProgress uses a lower ceiling
+      store.recordFacet({
+        person_id: "person:ada",
+        partition_key: "work",
+        area: "decision_values",
+        kind: "rule",
+        condition: "Private owner strategy",
+        guidance: "Hidden private rule",
+        scope: ["strategy"],
+        evidence_refs: ["event:priv_progress_1"],
+        sensitivity: "private",
+        authority_level: "owner_instruction",
+      });
+      const workProgress = store.updateConnectionProgress({
+        person_id: "person:ada",
+        partition_key: "work",
+        stage: "connecting",
+        historical_complete: false,
+        resume_cursor: "cursor:batch-41",
+        sensitivityCeiling: "work",
+      });
+      expect(workProgress.high_info_indexed).toBe(1);
+      const privProgress = store.updateConnectionProgress({
+        person_id: "person:ada",
+        partition_key: "work",
+        stage: "partial_backfill",
+        historical_complete: false,
+        resume_cursor: "cursor:batch-42",
+        sensitivityCeiling: "private",
+      });
+      expect(privProgress.high_info_indexed).toBe(2);
+
       // While historical ingestion is incomplete, empty areas report ingestion_in_progress
       const inProgressSlice = store.compileSlice({
         person_id: "person:ada",
@@ -578,6 +664,58 @@ describe("Person x Task Collaboration Slices (B1-B7)", () => {
       expect(incident.brief.triggered_exceptions[0]!.exception_note).toContain("root-cause timeline");
       expect(incident.brief.active_rules.some((r) => r.guidance.includes("brief updates"))).toBe(false);
 
+      // 2b. Excluded area MUST NOT leak via exception matching!
+      const incidentWorkStandardsOnly = store.compileSlice({
+        person_id: "person:ada",
+        partition_key: "work",
+        task: "Write incident analysis for database failover outage",
+        task_kind: "incident_analysis",
+        areas: ["work_standards"],
+        sensitivityCeiling: "work",
+        asOf: "2026-11-25T00:00:00Z",
+      });
+      expect(incidentWorkStandardsOnly.brief.triggered_exceptions).toHaveLength(0);
+      expect(incidentWorkStandardsOnly.brief.active_rules).toHaveLength(0);
+
+      // 2c. Budget enforcement on complete response: 100-token budget below mandatory envelope fails closed
+      expect(() =>
+        store.compileSlice({
+          person_id: "person:ada",
+          partition_key: "work",
+          task: "Design launch poster layout",
+          task_kind: "design_poster",
+          sensitivityCeiling: "work",
+          budgetTokens: 100,
+          asOf: "2026-11-25T00:00:00Z",
+        }),
+      ).toThrow(/budget_tokens/);
+
+      // Tight valid budget packs strictly within budget_tokens and sets truncated = true when items are dropped
+      const emptySlice = store.compileSlice({
+        person_id: "person:empty",
+        partition_key: "work",
+        task: "Design launch poster layout",
+        task_kind: "design_poster",
+        sensitivityCeiling: "work",
+        budgetTokens: 1200,
+        asOf: "2026-11-25T00:00:00Z",
+      });
+      expect(emptySlice.estimated_tokens).toBeLessThanOrEqual(emptySlice.budget_tokens);
+      expect(emptySlice.truncated).toBe(false);
+
+      const tightBudget = emptySlice.estimated_tokens + 60;
+      const tightPoster = store.compileSlice({
+        person_id: "person:ada",
+        partition_key: "work",
+        task: "Design launch poster layout",
+        task_kind: "design_poster",
+        sensitivityCeiling: "work",
+        budgetTokens: tightBudget,
+        asOf: "2026-11-25T00:00:00Z",
+      });
+      expect(tightPoster.estimated_tokens).toBeLessThanOrEqual(tightPoster.budget_tokens);
+      expect(tightPoster.truncated).toBe(true);
+
       // 3. Poster task gets grounded positive/negative examples with reasons, explicit conflict, and soft rubric cap
       const poster = store.compileSlice({
         person_id: "person:ada",
@@ -715,6 +853,21 @@ describe("Person x Task Collaboration Slices (B1-B7)", () => {
       expect(corrReplay.handoff.id).toBe(corr1.handoff.id);
       expect(corr1.handoff.endorsed_by_owner).toBe(true);
 
+      // Unrelated handoff in a different task/area must NOT appear in api_design slice recent_handoffs
+      engine.collaboration.recordCrossAgentHandoff({
+        idempotency_key: "idem-unrelated-poster-1",
+        person_id: "person:ada",
+        partition_key: "work",
+        agent_id: "agent-c",
+        served_slice_hash: hostASlice.slice_hash,
+        task: "Design autumn editorial poster typography",
+        area: "developing_taste",
+        kind: "agent_claim",
+        work_summary: "Adjusted poster headline kerning",
+        evidence_refs: ["event:unrelated_poster_1"],
+        sensitivity: "work",
+      });
+
       // Agent B's next authorized slice immediately reflects owner correction & triggers refresh
       const agentBRefreshed = engine.compileCollaborationSlice({
         person_id: "person:ada",
@@ -730,6 +883,8 @@ describe("Person x Task Collaboration Slices (B1-B7)", () => {
         "Always return structured machine-readable error codes without stack traces",
       ]);
       expect(agentBRefreshed.rubric[0]!.requirement_level).toBe("hard_owner_instruction");
+      expect(agentBRefreshed.recent_handoffs.some((h) => h.agent_id === "agent-c")).toBe(false);
+      expect(agentBRefreshed.recent_handoffs.some((h) => h.id === corr1.handoff.id)).toBe(true);
 
       // Purge the original source FIRST, then undo the correction: must NOT resurrect purged evidence!
       const purgeInitial = engine.purgeSources(["event:initial_api_1"]);
@@ -1061,7 +1216,7 @@ describe("Person x Task Collaboration Slices (B1-B7)", () => {
       // Adversarial leak decoys: 60 private, 40 other-partition, 40 other-person using identical scopes!
       for (let i = 0; i < 60; i += 1) {
         const s = SCENARIOS[i % SCENARIOS.length]!;
-        store.recordFacet({
+        const res = store.recordFacet({
           person_id: "person:ada",
           partition_key: "work",
           area: s.area,
@@ -1073,10 +1228,11 @@ describe("Person x Task Collaboration Slices (B1-B7)", () => {
           sensitivity: "private",
           authority_level: "owner_instruction",
         });
+        expect(res.record.id.length).toBeGreaterThan(0);
       }
       for (let i = 0; i < 40; i += 1) {
         const s = SCENARIOS[i % SCENARIOS.length]!;
-        store.recordFacet({
+        const res = store.recordFacet({
           person_id: "person:ada",
           partition_key: "personal-diary",
           area: s.area,
@@ -1088,10 +1244,11 @@ describe("Person x Task Collaboration Slices (B1-B7)", () => {
           sensitivity: "public",
           authority_level: "owner_instruction",
         });
+        expect(res.record.id.length).toBeGreaterThan(0);
       }
       for (let i = 0; i < 40; i += 1) {
         const s = SCENARIOS[i % SCENARIOS.length]!;
-        store.recordFacet({
+        const res = store.recordFacet({
           person_id: "person:bob",
           partition_key: "work",
           area: s.area,
@@ -1103,7 +1260,37 @@ describe("Person x Task Collaboration Slices (B1-B7)", () => {
           sensitivity: "public",
           authority_level: "owner_instruction",
         });
+        expect(res.record.id.length).toBeGreaterThan(0);
       }
+
+      // Verify decoys are actually stored and owner-readable before running the fresh-agent zero-leak check
+      const ownerPrivCheck = store.compileSlice({
+        person_id: "person:ada",
+        partition_key: "work",
+        task: SCENARIOS[0]!.freshAgentPrompt,
+        task_kind: SCENARIOS[0]!.taskKind,
+        sensitivityCeiling: "private",
+        budgetTokens: 3000,
+      });
+      expect(JSON.stringify(ownerPrivCheck)).toContain("LEAK_PRIVATE_TOKEN_");
+      const ownerPartCheck = store.compileSlice({
+        person_id: "person:ada",
+        partition_key: "personal-diary",
+        task: SCENARIOS[0]!.freshAgentPrompt,
+        task_kind: SCENARIOS[0]!.taskKind,
+        sensitivityCeiling: "private",
+        budgetTokens: 3000,
+      });
+      expect(JSON.stringify(ownerPartCheck)).toContain("LEAK_PARTITION_TOKEN_");
+      const ownerBobCheck = store.compileSlice({
+        person_id: "person:bob",
+        partition_key: "work",
+        task: SCENARIOS[0]!.freshAgentPrompt,
+        task_kind: SCENARIOS[0]!.taskKind,
+        sensitivityCeiling: "private",
+        budgetTokens: 3000,
+      });
+      expect(JSON.stringify(ownerBobCheck)).toContain("LEAK_OTHER_PERSON_TOKEN_");
 
       // Fresh agents connect cold with natural-language prompts (WITHOUT passing task_kind cheat!)
       let hits = 0;
@@ -1140,6 +1327,204 @@ describe("Person x Task Collaboration Slices (B1-B7)", () => {
       const recall = hits / SCENARIOS.length;
       expect(leaks).toBe(0);
       expect(recall).toBeGreaterThanOrEqual(0.92);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("P1 hardening: owner_instruction dedup immutability, handoff auth/replay/predecessor, non-destructive undo, observed_passed, and evidence authorization", () => {
+    const db = openMemtRegistryDb(":memory:");
+    try {
+      const store = new CollaborationSliceStore({ db });
+
+      // 1. Ordinary proposal deduplicating onto an owner_instruction cannot widen scope or add exceptions
+      const ownerRule = store.recordFacet({
+        person_id: "person:ada",
+        partition_key: "work",
+        area: "communication",
+        kind: "rule",
+        condition: "When drafting executive updates",
+        guidance: "Lead with one clear decision sentence",
+        reason: "Owner directive",
+        scope: ["exec_updates"],
+        exceptions: [],
+        evidence_refs: ["event:owner_dir_1"],
+        sensitivity: "public",
+        taint: "clean",
+        authority_level: "owner_instruction",
+      });
+      const attemptWiden = store.recordFacet({
+        person_id: "person:ada",
+        partition_key: "work",
+        area: "communication",
+        kind: "rule",
+        condition: "When drafting executive updates",
+        guidance: "Lead with one clear decision sentence",
+        reason: "Injected agent reason",
+        scope: ["all", "billing"],
+        exceptions: [{ condition: "when rushed", note: "skip executive summary" }],
+        evidence_refs: ["event:agent_prop_2"],
+        sensitivity: "public",
+        taint: "quoted",
+        authority_level: "observed_preference",
+      });
+      expect(attemptWiden.deduplicated).toBe(true);
+      expect(attemptWiden.record.authority_level).toBe("owner_instruction");
+      expect(attemptWiden.record.scope).toEqual(["exec_updates"]);
+      expect(attemptWiden.record.exceptions).toEqual([]);
+      expect(attemptWiden.record.reason).toBe("Owner directive");
+
+      const slice = store.compileSlice({
+        person_id: "person:ada",
+        partition_key: "work",
+        task: "Draft executive updates",
+        task_kind: "exec_updates",
+        sensitivityCeiling: "public",
+      });
+
+      // 2. Reject invalid served_slice_hash and omitted observed_passed for observed_outcome
+      expect(() =>
+        store.recordCrossAgentHandoff({
+          idempotency_key: "bad-hash",
+          person_id: "person:ada",
+          partition_key: "work",
+          agent_id: "agent-a",
+          served_slice_hash: "not-a-valid-sha256",
+          task: "Draft executive updates",
+          area: "communication",
+          kind: "agent_claim",
+          work_summary: "Claimed done",
+          evidence_refs: ["event:claim_1"],
+          sensitivity: "public",
+        }),
+      ).toThrow(/served_slice_hash/);
+
+      expect(() =>
+        store.recordCrossAgentHandoff({
+          idempotency_key: "missing-observed-passed",
+          person_id: "person:ada",
+          partition_key: "work",
+          agent_id: "agent-a",
+          served_slice_hash: slice.slice_hash,
+          task: "Draft executive updates",
+          area: "communication",
+          kind: "observed_outcome",
+          work_summary: "Attempted unverified pass",
+          evidence_refs: ["event:obs_1"],
+          sensitivity: "public",
+        }),
+      ).toThrow(/observed_passed/);
+
+      // 3. Handoff replay denies other agents or lower sensitivity ceilings
+      const privHandoff = store.recordCrossAgentHandoff({
+        idempotency_key: "priv-replay-key",
+        person_id: "person:ada",
+        partition_key: "work",
+        agent_id: "agent-alpha",
+        served_slice_hash: slice.slice_hash,
+        task: "Draft executive updates",
+        area: "communication",
+        kind: "agent_claim",
+        work_summary: "Confidential executive draft",
+        evidence_refs: ["event:priv_claim_1"],
+        sensitivity: "private",
+        sensitivityCeiling: "private",
+        callerAgentId: "agent-alpha",
+      });
+      expect(privHandoff.idempotentReplay).toBe(false);
+
+      expect(() =>
+        store.recordCrossAgentHandoff({
+          idempotency_key: "priv-replay-key",
+          person_id: "person:ada",
+          partition_key: "work",
+          agent_id: "agent-beta",
+          served_slice_hash: slice.slice_hash,
+          task: "Draft executive updates",
+          area: "communication",
+          kind: "agent_claim",
+          work_summary: "Replay probe",
+          evidence_refs: ["event:probe_1"],
+          sensitivity: "public",
+          sensitivityCeiling: "public",
+          callerAgentId: "agent-beta",
+        }),
+      ).toThrow(/replay denied/);
+
+      // 4. Correction predecessor check runs BEFORE copying predecessor fields
+      const bobPrivate = store.recordFacet({
+        person_id: "person:bob",
+        partition_key: "secret-part",
+        area: "communication",
+        kind: "rule",
+        condition: "SECRET_BOB_CONDITION",
+        guidance: "SECRET_BOB_GUIDANCE",
+        scope: ["secret_bob_scope"],
+        exceptions: [{ condition: "secret_ex", note: "secret_note" }],
+        evidence_refs: ["event:bob_sec_1"],
+        sensitivity: "private",
+        authority_level: "owner_instruction",
+      });
+      const crossPred = store.recordCrossAgentHandoff({
+        idempotency_key: "cross-pred-corr",
+        person_id: "person:ada",
+        partition_key: "work",
+        agent_id: "agent-alpha",
+        served_slice_hash: slice.slice_hash,
+        task: "Draft executive updates",
+        area: "communication",
+        kind: "owner_correction",
+        work_summary: "Attempt to inherit bob predecessor fields",
+        correction_text: "Always include action owner",
+        supersedes_record_id: bobPrivate.record.id,
+        evidence_refs: ["event:ada_corr_1"],
+        sensitivity: "public",
+        sensitivityCeiling: "public",
+      });
+      expect(crossPred.createdRecord).not.toBeNull();
+      expect(crossPred.createdRecord!.condition).not.toBe("SECRET_BOB_CONDITION");
+      expect(crossPred.createdRecord!.scope).not.toContain("secret_bob_scope");
+      expect(crossPred.handoff.supersedes_record_id).toBeNull();
+      expect(store.getFacet(bobPrivate.record.id)!.superseded_by).toBeNull();
+
+      // 5. Undoing a deduplicated correction NEVER retracts the pre-existing rule
+      const dedupCorr = store.recordCrossAgentHandoff({
+        idempotency_key: "dedup-corr-handoff",
+        person_id: "person:ada",
+        partition_key: "work",
+        agent_id: "owner",
+        served_slice_hash: slice.slice_hash,
+        task: "Draft executive updates",
+        area: "communication",
+        kind: "owner_correction",
+        condition: "When drafting executive updates",
+        work_summary: "Re-stated existing owner rule",
+        correction_text: "Lead with one clear decision sentence",
+        scope: ["exec_updates"],
+        evidence_refs: ["event:owner_dir_2"],
+        sensitivity: "public",
+      });
+      expect(dedupCorr.handoff.created_record_id).toBeNull();
+      // Undo respects allowedSubjects
+      const deniedUndo = store.undoHandoff(dedupCorr.handoff.id, "public", undefined, ["person:bob"]);
+      expect(deniedUndo.undone).toBe(false);
+      // Authorized undo does not retract the pre-existing owner rule
+      const okUndo = store.undoHandoff(dedupCorr.handoff.id, "public", undefined, ["person:ada"]);
+      expect(okUndo.undone).toBe(true);
+      expect(okUndo.retracted_record_id).toBeNull();
+      expect(store.getFacet(ownerRule.record.id)!.epistemic_status).toBe("owner_instruction");
+
+      // 6. Evidence authorization filters records and progress counts before selection/hashing
+      const filteredSlice = store.compileSlice({
+        person_id: "person:ada",
+        partition_key: "work",
+        task: "Draft executive updates",
+        task_kind: "exec_updates",
+        sensitivityCeiling: "public",
+        isEvidenceAuthorized: (refs) => !refs.includes("event:owner_dir_1"),
+      });
+      expect(filteredSlice.brief.active_rules.some((r) => r.id === ownerRule.record.id)).toBe(false);
+      expect(filteredSlice.progress.high_info_indexed).toBe(1); // only crossPred remains
     } finally {
       db.close();
     }

@@ -343,11 +343,329 @@ export interface MemtBridge {
   handleRecall: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
   handleExperience: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
   handleSnapshot: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  mayEnrichContextPacket: (args: Record<string, unknown>) => boolean;
   injectContextPacketProceduralMemory: (
     envelope: Envelope<unknown, QuotedChunk | QuotedPageChunk> | EnvelopeV2,
     args: Record<string, unknown>,
   ) => Envelope<unknown, QuotedChunk | QuotedPageChunk> | EnvelopeV2;
   close: () => Promise<void>;
+}
+
+const PACKET_V2_SCHEMA_ID = "kizuki.context-packet/v2";
+
+function computePacketViewV2(
+  content: Record<string, unknown>,
+  canon: unknown,
+  quoted: unknown,
+): { kind: "view"; token: string } {
+  const token = new Bun.CryptoHasher("sha256")
+    .update(`${PACKET_V2_SCHEMA_ID}\0`)
+    .update(JSON.stringify({ content, canon, quoted }))
+    .digest("base64url");
+  return { kind: "view", token };
+}
+
+function extractPriorViewToken(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const obj = value as { kind?: unknown; token?: unknown };
+  if (obj.kind === "view" && typeof obj.token === "string" && obj.token.length > 0) {
+    return obj.token;
+  }
+  return undefined;
+}
+
+function hashPacketBodyV1(packetMd: string): { header: string; body: string; hash: string } {
+  const idx = packetMd.indexOf("\n\n");
+  const header = idx >= 0 ? packetMd.slice(0, idx + 2) : "";
+  const body = idx >= 0 ? packetMd.slice(idx + 2) : packetMd;
+  const hash = new Bun.CryptoHasher("sha256").update(body).digest("hex");
+  return { header, body, hash };
+}
+
+function allowedCoreSensitivities(ceiling: Sensitivity): readonly string[] {
+  if (ceiling === "private") return ["public", "personal", "private"];
+  if (ceiling === "personal") return ["public", "personal"];
+  return ["public"];
+}
+
+/**
+ * Inspect live connector ingestion backfill state from Kizuki's ledger checkpoints.
+ * Strict noninterference: for non-owner agents, only sources with at least one
+ * live event readable under the caller's sensitivity ceiling are considered.
+ */
+function deriveLiveIngestionProgress(
+  ctx: ServeContext,
+  principal: Principal,
+  highInfoIndexed: number,
+): { stage: "connecting" | "partial_backfill"; historical_complete: false; resume_cursor: string } | undefined {
+  try {
+    const hasCheckpoints =
+      ctx.db
+        .query<{ ok: number }, []>(
+          "SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name='checkpoints' LIMIT 1",
+        )
+        .get() !== null;
+    if (!hasCheckpoints) return undefined;
+
+    if (principal.kind === "owner") {
+      const row = ctx.db
+        .query<{ backfill_cursor: string | null; cursor: string | null }, []>(
+          `SELECT cp.backfill_cursor, cp.cursor
+           FROM checkpoints cp
+           LEFT JOIN connections c
+             ON c.connector_id = cp.connector_id AND c.source_key = cp.source_key
+           WHERE cp.backfill_complete = 0
+             AND (c.disconnected_at IS NULL)
+           ORDER BY cp.updated_at DESC, cp.connector_id ASC, cp.source_key ASC
+           LIMIT 1`,
+        )
+        .get();
+      if (row === null) return undefined;
+      return {
+        stage: highInfoIndexed > 0 ? "partial_backfill" : "connecting",
+        historical_complete: false,
+        resume_cursor: row.backfill_cursor ?? row.cursor ?? "",
+      };
+    }
+
+    const hasBindings =
+      ctx.db
+        .query<{ ok: number }, []>(
+          "SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name='source_event_bindings' LIMIT 1",
+        )
+        .get() !== null;
+    if (!hasBindings) return undefined;
+
+    const sens = allowedCoreSensitivities(principal.grant.ceiling);
+    const placeholders = sens.map(() => "?").join(", ");
+    const row = ctx.db
+      .query<{ backfill_cursor: string | null; cursor: string | null }, string[]>(
+        `SELECT cp.backfill_cursor, cp.cursor
+         FROM checkpoints cp
+         WHERE cp.backfill_complete = 0
+           AND EXISTS (
+             SELECT 1
+             FROM source_event_bindings b
+             JOIN events e ON e.event_id = b.event_id
+             WHERE b.source_key = cp.source_key
+               AND e.deleted = 0
+               AND e.sensitivity_hint IN (${placeholders})
+           )
+         ORDER BY cp.updated_at DESC, cp.connector_id ASC, cp.source_key ASC
+         LIMIT 1`,
+      )
+      .get(...sens);
+    if (row === null) return undefined;
+    return {
+      stage: highInfoIndexed > 0 ? "partial_backfill" : "connecting",
+      historical_complete: false,
+      resume_cursor: row.backfill_cursor ?? row.cursor ?? "",
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Revalidate supporting evidence citations against Kizuki's live ledger state:
+ * event purges, soft-deletes, sensitivity ceiling, grant event-type/time-window
+ * bounds, and source grant consent (revoked or purged sources fail closed).
+ */
+function createEvidenceAuthorizer(
+  ctx: ServeContext,
+  principal: Principal,
+): (evidenceRefs: readonly string[]) => boolean {
+  const tableCache = new Map<string, boolean>();
+  const hasTable = (name: string): boolean => {
+    const hit = tableCache.get(name);
+    if (hit !== undefined) return hit;
+    try {
+      const ok =
+        ctx.db
+          .query<{ ok: number }, [string]>(
+            "SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+          )
+          .get(name) !== null;
+      tableCache.set(name, ok);
+      return ok;
+    } catch {
+      tableCache.set(name, false);
+      return false;
+    }
+  };
+
+  const hasEvents = hasTable("events");
+  const hasPurges = hasTable("event_purges");
+  const hasSourceGrants = hasTable("source_grants");
+  const hasSourceBindings = hasTable("source_event_bindings");
+  const ceiling = toMemtSensitivity(principal.grant.ceiling);
+  const purpose = ctx.sourcePurpose ?? "recall";
+
+  const sourceGrantCache = new Map<string, boolean>();
+  const isSourceKeyAuthorized = (sourceKey: string): boolean => {
+    const cached = sourceGrantCache.get(sourceKey);
+    if (cached !== undefined) return cached;
+    if (!hasSourceGrants) {
+      sourceGrantCache.set(sourceKey, true);
+      return true;
+    }
+    try {
+      const row = ctx.db
+        .query<{ status: string; policy: string }, [string]>(
+          "SELECT status, policy FROM source_grants WHERE source_key = ?",
+        )
+        .get(sourceKey);
+      if (row === null) {
+        sourceGrantCache.set(sourceKey, true);
+        return true;
+      }
+      if (row.status !== "active") {
+        sourceGrantCache.set(sourceKey, false);
+        return false;
+      }
+      let allowed = true;
+      try {
+        const policy = JSON.parse(row.policy) as {
+          purposes?: unknown;
+          sensitivity_floor?: unknown;
+        };
+        if (Array.isArray(policy.purposes) && !policy.purposes.includes(purpose)) {
+          allowed = false;
+        }
+        if (
+          allowed &&
+          typeof policy.sensitivity_floor === "string" &&
+          isMemtSensitivity(policy.sensitivity_floor) &&
+          !withinSensitivityCeiling(policy.sensitivity_floor, ceiling)
+        ) {
+          allowed = false;
+        }
+      } catch {
+        allowed = false;
+      }
+      sourceGrantCache.set(sourceKey, allowed);
+      return allowed;
+    } catch {
+      sourceGrantCache.set(sourceKey, false);
+      return false;
+    }
+  };
+
+  const refCache = new Map<string, boolean>();
+  const isSingleRefAuthorized = (rawRef: string): boolean => {
+    const ref = rawRef.trim();
+    if (ref.length === 0) return false;
+    const cached = refCache.get(ref);
+    if (cached !== undefined) return cached;
+
+    const bareEventId = ref.startsWith("event:")
+      ? ref.slice("event:".length)
+      : ref.startsWith("evt:")
+        ? ref.slice("evt:".length)
+        : ref;
+    const bareSourceKey = ref.startsWith("source:") ? ref.slice("source:".length) : ref;
+
+    // 1. Purged event citations fail closed immediately.
+    if (hasPurges) {
+      try {
+        const purged = ctx.db
+          .query<{ ok: number }, [string, string]>(
+            "SELECT 1 AS ok FROM event_purges WHERE event_id = ? OR event_id = ? LIMIT 1",
+          )
+          .get(ref, bareEventId);
+        if (purged !== null) {
+          refCache.set(ref, false);
+          return false;
+        }
+      } catch {
+        refCache.set(ref, false);
+        return false;
+      }
+    }
+
+    // 2. Direct source_key citation against revoked/purged/narrowed source_grants.
+    if (hasSourceGrants) {
+      if (!isSourceKeyAuthorized(ref) || (bareSourceKey !== ref && !isSourceKeyAuthorized(bareSourceKey))) {
+        refCache.set(ref, false);
+        return false;
+      }
+    }
+
+    // 3. Live Kizuki ledger event citation: verify deleted flag, sensitivity ceiling,
+    // event type, time window, and bound source consent.
+    if (hasEvents) {
+      try {
+        const ev = ctx.db
+          .query<{
+            event_id: string;
+            kind: string;
+            occurred_at: string;
+            sensitivity_hint: string | null;
+            deleted: number;
+          }, [string, string]>(
+            `SELECT event_id, kind, occurred_at, sensitivity_hint, deleted
+             FROM events
+             WHERE event_id = ? OR event_id = ?
+             LIMIT 1`,
+          )
+          .get(ref, bareEventId);
+        if (ev !== null) {
+          if (ev.deleted !== 0) {
+            refCache.set(ref, false);
+            return false;
+          }
+          if (
+            ev.sensitivity_hint === null ||
+            !isMemtSensitivity(ev.sensitivity_hint) ||
+            !withinSensitivityCeiling(ev.sensitivity_hint, ceiling)
+          ) {
+            refCache.set(ref, false);
+            return false;
+          }
+          if (principal.kind !== "owner") {
+            const g = principal.grant;
+            if (g.types !== null && !g.types.includes(ev.kind)) {
+              refCache.set(ref, false);
+              return false;
+            }
+            if (g.since !== null && ev.occurred_at < g.since) {
+              refCache.set(ref, false);
+              return false;
+            }
+            if (g.until !== null && ev.occurred_at > g.until) {
+              refCache.set(ref, false);
+              return false;
+            }
+          }
+          if (hasSourceBindings && hasSourceGrants) {
+            const binding = ctx.db
+              .query<{ source_key: string }, [string]>(
+                "SELECT source_key FROM source_event_bindings WHERE event_id = ?",
+              )
+              .get(ev.event_id);
+            if (binding !== null && !isSourceKeyAuthorized(binding.source_key)) {
+              refCache.set(ref, false);
+              return false;
+            }
+          }
+        }
+      } catch {
+        refCache.set(ref, false);
+        return false;
+      }
+    }
+
+    refCache.set(ref, true);
+    return true;
+  };
+
+  return (evidenceRefs: readonly string[]): boolean => {
+    if (evidenceRefs.length === 0) return false;
+    for (const ref of evidenceRefs) {
+      if (!isSingleRefAuthorized(ref)) return false;
+    }
+    return true;
+  };
 }
 
 export function createMemtBridge(
@@ -539,18 +857,35 @@ export function createMemtBridge(
         }
       }
       const areas = rawAreas as CollaborationArea[] | undefined;
-      const slice = engine.collaboration.compileSlice({
-        person_id: person,
-        task: taskText,
-        ...(taskKind !== undefined ? { task_kind: taskKind } : {}),
-        partition_key: partitionKey ?? domain ?? engine.config.defaultPartition,
-        sensitivityCeiling: ceiling,
-        allowedSubjects: principal.kind === "owner" ? null : principal.grant.subjects,
-        ...(areas !== undefined && areas.length > 0 ? { areas } : {}),
-        ...(budgetTokens !== undefined ? { budgetTokens } : {}),
-        ...(asOf !== undefined ? { asOf } : {}),
-        ...(priorSliceHash !== undefined ? { priorSliceHash } : {}),
-      });
+      const targetPartition = partitionKey ?? domain ?? engine.config.defaultPartition;
+      const isEvidenceAuthorized = createEvidenceAuthorizer(ctx, principal);
+      const baseProgress = engine.collaboration.getConnectionProgress(
+        person,
+        targetPartition,
+        ceiling,
+        isEvidenceAuthorized,
+      );
+      const liveIngestion = deriveLiveIngestionProgress(ctx, principal, baseProgress.high_info_indexed);
+      let slice: CollaborationSlice;
+      try {
+        slice = engine.collaboration.compileSlice({
+          person_id: person,
+          task: taskText,
+          ...(taskKind !== undefined ? { task_kind: taskKind } : {}),
+          partition_key: targetPartition,
+          sensitivityCeiling: ceiling,
+          allowedSubjects: principal.kind === "owner" ? null : principal.grant.subjects,
+          ...(areas !== undefined && areas.length > 0 ? { areas } : {}),
+          ...(budgetTokens !== undefined ? { budgetTokens } : {}),
+          ...(asOf !== undefined ? { asOf } : {}),
+          ...(priorSliceHash !== undefined ? { priorSliceHash } : {}),
+          ...(liveIngestion !== undefined ? { ingestionProgress: liveIngestion } : {}),
+          isEvidenceAuthorized,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "invalid arguments";
+        throw new ServeError("invalid_arguments", `invalid arguments: ${message}`);
+      }
       collaborationSlicePayload = redactCollaborationSlice(slice, redactor);
     }
 
@@ -613,8 +948,13 @@ export function createMemtBridge(
       action === "undo_handoff" ||
       (action === "handoff" &&
         (handoffKind === "owner_correction" || handoffKind === "owner_edit"));
+    const isProgressWrite =
+      action === "progress" &&
+      (args["stage"] !== undefined ||
+        args["historical_complete"] !== undefined ||
+        args["resume_cursor"] !== undefined);
     const requiredTools: Tool[] =
-      action === "search"
+      action === "search" || (action === "progress" && !isProgressWrite)
         ? ["search"]
         : needsCorrectionAuthority
           ? ["propose", "correct"]
@@ -681,28 +1021,34 @@ export function createMemtBridge(
         typeof args["confidence"] === "number" && Number.isFinite(args["confidence"])
           ? args["confidence"]
           : undefined;
-      const recorded = engine.collaboration.recordFacet({
-        person_id: person,
-        partition_key: partitionKey,
-        area,
-        kind: rawKind,
-        condition: redactor.text(condition),
-        guidance: redactor.text(guidance),
-        ...(reason !== undefined ? { reason: redactor.text(reason) } : {}),
-        ...(verification !== undefined ? { verification: redactor.text(verification) } : {}),
-        scope,
-        exceptions,
-        evidence_refs: citations,
-        ...(sourceRoots !== undefined ? { source_roots: sourceRoots } : {}),
-        sensitivity,
-        dedupSensitivityCeiling: ceiling,
-        taint: rawAuthority === "owner_instruction" ? "clean" : "quoted",
-        authority_level: rawAuthority,
-        ...(confidence !== undefined ? { confidence } : {}),
-        ...(validFrom !== undefined ? { valid_from: validFrom } : {}),
-        ...(validUntil !== undefined ? { valid_until: validUntil } : {}),
-        ...(conflictGroup !== undefined ? { conflict_group: redactor.text(conflictGroup) } : {}),
-      });
+      let recorded: ReturnType<typeof engine.collaboration.recordFacet>;
+      try {
+        recorded = engine.collaboration.recordFacet({
+          person_id: person,
+          partition_key: partitionKey,
+          area,
+          kind: rawKind,
+          condition: redactor.text(condition),
+          guidance: redactor.text(guidance),
+          ...(reason !== undefined ? { reason: redactor.text(reason) } : {}),
+          ...(verification !== undefined ? { verification: redactor.text(verification) } : {}),
+          scope,
+          exceptions,
+          evidence_refs: citations,
+          ...(sourceRoots !== undefined ? { source_roots: sourceRoots } : {}),
+          sensitivity,
+          dedupSensitivityCeiling: ceiling,
+          taint: rawAuthority === "owner_instruction" ? "clean" : "quoted",
+          authority_level: rawAuthority,
+          ...(confidence !== undefined ? { confidence } : {}),
+          ...(validFrom !== undefined ? { valid_from: validFrom } : {}),
+          ...(validUntil !== undefined ? { valid_until: validUntil } : {}),
+          ...(conflictGroup !== undefined ? { conflict_group: redactor.text(conflictGroup) } : {}),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "invalid facet arguments";
+        throw new ServeError("invalid_arguments", `invalid arguments: ${message}`);
+      }
       return {
         schema: "kizuki.memt-collaboration/v1",
         action: "record_facet",
@@ -764,28 +1110,40 @@ export function createMemtBridge(
       const exceptions = Array.isArray(args["exceptions"])
         ? parseExceptionsArg(args["exceptions"], redactor)
         : undefined;
-      const res = engine.collaboration.recordCrossAgentHandoff({
-        idempotency_key: idempotencyKey,
-        person_id: person,
-        partition_key: partitionKey,
-        agent_id: agentId,
-        served_slice_hash: servedSliceHash,
-        task: redactor.text(task),
-        area,
-        kind,
-        work_summary: redactor.text(workSummary),
-        ...(artifactRef !== undefined ? { artifact_ref: redactor.text(artifactRef) } : {}),
-        ...(correctionText !== undefined ? { correction_text: redactor.text(correctionText) } : {}),
-        ...(condition !== undefined ? { condition: redactor.text(condition) } : {}),
-        ...(scope !== undefined ? { scope } : {}),
-        ...(exceptions !== undefined ? { exceptions } : {}),
-        ...(supersedesRecordId !== undefined ? { supersedes_record_id: supersedesRecordId } : {}),
-        evidence_refs: citations,
-        sensitivity,
-        ...(typeof args["observed_passed"] === "boolean"
-          ? { observed_passed: args["observed_passed"] }
-          : {}),
-      });
+      let res: ReturnType<typeof engine.collaboration.recordCrossAgentHandoff>;
+      try {
+        res = engine.collaboration.recordCrossAgentHandoff({
+          idempotency_key: idempotencyKey,
+          person_id: person,
+          partition_key: partitionKey,
+          agent_id: agentId,
+          served_slice_hash: servedSliceHash,
+          task: redactor.text(task),
+          area,
+          kind,
+          work_summary: redactor.text(workSummary),
+          ...(artifactRef !== undefined ? { artifact_ref: redactor.text(artifactRef) } : {}),
+          ...(correctionText !== undefined ? { correction_text: redactor.text(correctionText) } : {}),
+          ...(condition !== undefined ? { condition: redactor.text(condition) } : {}),
+          ...(scope !== undefined ? { scope } : {}),
+          ...(exceptions !== undefined ? { exceptions } : {}),
+          ...(supersedesRecordId !== undefined ? { supersedes_record_id: supersedesRecordId } : {}),
+          evidence_refs: citations,
+          sensitivity,
+          sensitivityCeiling: ceiling,
+          callerAgentId: principal.kind === "owner" ? null : principal.agent.agent_id,
+          allowedSubjects: principal.kind === "owner" ? null : principal.grant.subjects,
+          ...(typeof args["observed_passed"] === "boolean"
+            ? { observed_passed: args["observed_passed"] }
+            : {}),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "invalid handoff arguments";
+        if (message.includes("denied") || message.includes("exceeds caller ceiling") || message.includes("outside caller grant")) {
+          throw new ServeError("tool_not_granted", message);
+        }
+        throw new ServeError("invalid_arguments", `invalid arguments: ${message}`);
+      }
       return {
         schema: "kizuki.memt-collaboration/v1",
         action: "handoff",
@@ -816,7 +1174,12 @@ export function createMemtBridge(
       if (id === undefined) {
         throw new ServeError("invalid_arguments", "invalid arguments: id is required for undo_handoff");
       }
-      const undone = engine.collaboration.undoHandoff(id, ceiling);
+      const undone = engine.collaboration.undoHandoff(
+        id,
+        ceiling,
+        undefined,
+        principal.kind === "owner" ? null : principal.grant.subjects,
+      );
       if (!undone.undone) {
         throw new ServeError("not_found", "handoff not found");
       }
@@ -829,27 +1192,58 @@ export function createMemtBridge(
 
     if (action === "progress") {
       const person = asString(args["person"]);
-      const stage = args["stage"];
-      if (
-        person === undefined ||
-        (stage !== "connecting" && stage !== "partial_backfill" && stage !== "complete")
-      ) {
-        throw new ServeError("invalid_arguments", "invalid arguments: person and stage are required");
+      if (person === undefined) {
+        throw new ServeError("invalid_arguments", "invalid arguments: person is required");
       }
       assertSubjectAllowed(principal, person);
       const partitionKey =
         asString(args["partition_key"]) ?? asString(args["domain"]) ?? engine.config.defaultPartition;
-      const updated = engine.collaboration.updateConnectionProgress({
-        person_id: person,
-        partition_key: partitionKey,
-        stage,
-        historical_complete: args["historical_complete"] === true || stage === "complete",
-        ...(typeof args["resume_cursor"] === "string" ? { resume_cursor: args["resume_cursor"] } : {}),
-      });
+      if (isProgressWrite) {
+        if (principal.kind !== "owner") {
+          throw new ServeError(
+            "tool_not_granted",
+            "connection progress is driven by ingestion; agents cannot mutate it",
+          );
+        }
+        const stage = args["stage"];
+        if (stage !== "connecting" && stage !== "partial_backfill" && stage !== "complete") {
+          throw new ServeError("invalid_arguments", "invalid arguments: stage is required");
+        }
+        const updated = engine.collaboration.updateConnectionProgress({
+          person_id: person,
+          partition_key: partitionKey,
+          stage,
+          historical_complete: args["historical_complete"] === true || stage === "complete",
+          sensitivityCeiling: ceiling,
+          ...(typeof args["resume_cursor"] === "string" ? { resume_cursor: args["resume_cursor"] } : {}),
+        });
+        return {
+          schema: "kizuki.memt-collaboration/v1",
+          action: "progress",
+          progress: updated,
+        };
+      }
+      const isEvidenceAuthorized = createEvidenceAuthorizer(ctx, principal);
+      const stored = engine.collaboration.getConnectionProgress(
+        person,
+        partitionKey,
+        ceiling,
+        isEvidenceAuthorized,
+      );
+      const liveIngestion = deriveLiveIngestionProgress(ctx, principal, stored.high_info_indexed);
+      const progress =
+        liveIngestion !== undefined
+          ? {
+              ...stored,
+              stage: liveIngestion.stage,
+              historical_complete: false,
+              resume_cursor: liveIngestion.resume_cursor || stored.resume_cursor,
+            }
+          : stored;
       return {
         schema: "kizuki.memt-collaboration/v1",
         action: "progress",
-        progress: updated,
+        progress,
       };
     }
 
@@ -1135,6 +1529,144 @@ export function createMemtBridge(
     };
   };
 
+  const compactText = (value: string, maxChars: number): string => {
+    const clean = value.replace(/\s+/g, " ").trim();
+    if (clean.length <= maxChars) return clean;
+    return `${clean.slice(0, Math.max(16, maxChars - 1)).trimEnd()}...`;
+  };
+
+  const resolveContextPacketQueryAndPerson = (
+    principal: Principal,
+    args: Record<string, unknown>,
+  ): { rawQuery: string; personSubject: string | undefined } => {
+    const explicitPerson = Array.isArray(args["subjects"])
+      ? args["subjects"].find(
+          (s): s is string =>
+            typeof s === "string" &&
+            s.startsWith("person:") &&
+            (principal.kind === "owner" ||
+              principal.grant.subjects === null ||
+              principal.grant.subjects.includes(s)),
+        )
+      : undefined;
+    const scopedGrantPerson =
+      explicitPerson === undefined &&
+      principal.kind !== "owner" &&
+      principal.grant.subjects !== null &&
+      principal.grant.subjects.length === 1 &&
+      principal.grant.subjects[0]!.startsWith("person:")
+        ? principal.grant.subjects[0]
+        : undefined;
+    const personSubject = explicitPerson ?? scopedGrantPerson;
+    const baseQuery =
+      asString(args["query"]) ??
+      asString(args["task"]) ??
+      (Array.isArray(args["subjects"])
+        ? args["subjects"].filter((s): s is string => typeof s === "string").join(" ")
+        : "");
+    const rawQuery =
+      baseQuery.trim().length > 0
+        ? baseQuery
+        : personSubject !== undefined
+          ? (asString(args["purpose"]) ?? "session")
+          : "";
+    return { rawQuery, personSubject };
+  };
+
+  const gatherContextPacketEnrichment = (
+    principal: Principal,
+    args: Record<string, unknown>,
+  ): {
+    proceduralLines: readonly { full: string; compact: string }[];
+    collabLines: readonly string[];
+  } => {
+    const { rawQuery, personSubject } = resolveContextPacketQueryAndPerson(principal, args);
+    if (rawQuery.trim().length === 0) {
+      return { proceduralLines: [], collabLines: [] };
+    }
+    const ceiling = toMemtSensitivity(principal.grant.ceiling);
+    const redactor = createRedactor(principal, ctx.servingSecrets);
+    const engine = getEngine();
+
+    const hits = engine.experiences
+      .searchExperiences({
+        query: rawQuery,
+        sensitivityCeiling: ceiling,
+        outcomes: ["verified", "observed"],
+        limit: 6,
+      })
+      .filter((hit) => hit.score > 0 && hit.experience.confidence >= 0.65)
+      .slice(0, 3);
+
+    const proceduralLines = hits.map((hit) => {
+      const exp = hit.experience;
+      const domain = redactor.text(exp.domain);
+      const cond = redactor.text(exp.condition);
+      const rec = redactor.text(exp.recommendation);
+      return {
+        full: `- [${domain}] When: ${cond} -> Do: ${rec} (${exp.outcome}, conf=${exp.confidence.toFixed(2)})`,
+        compact: `- [${domain}] When: ${compactText(cond, 120)} -> Do: ${compactText(rec, 140)} (${exp.outcome}, conf=${exp.confidence.toFixed(2)})`,
+      };
+    });
+
+    const collabLines: string[] = [];
+    if (personSubject !== undefined) {
+      const isEvidenceAuthorized = createEvidenceAuthorizer(ctx, principal);
+      const baseProgress = engine.collaboration.getConnectionProgress(
+        personSubject,
+        engine.config.defaultPartition,
+        ceiling,
+        isEvidenceAuthorized,
+      );
+      const liveIngestion = deriveLiveIngestionProgress(ctx, principal, baseProgress.high_info_indexed);
+      const slice = engine.collaboration.compileSlice({
+        person_id: personSubject,
+        task: rawQuery,
+        partition_key: engine.config.defaultPartition,
+        sensitivityCeiling: ceiling,
+        allowedSubjects: principal.kind === "owner" ? null : principal.grant.subjects,
+        budgetTokens: 1200,
+        ...(liveIngestion !== undefined ? { ingestionProgress: liveIngestion } : {}),
+        isEvidenceAuthorized,
+      });
+      for (const ex of slice.brief.triggered_exceptions.slice(0, 2)) {
+        collabLines.push(
+          `- [exception:${ex.area}] ${compactText(redactor.text(ex.exception_note), 160)}`,
+        );
+      }
+      for (const rule of slice.brief.active_rules.slice(0, 2)) {
+        collabLines.push(
+          `- [${rule.area}/${rule.authority_level}] ${compactText(redactor.text(rule.guidance), 160)}`,
+        );
+      }
+      for (const crit of slice.rubric.slice(0, 2)) {
+        collabLines.push(
+          `- [rubric:${crit.requirement_level}] ${compactText(redactor.text(crit.criterion), 140)}`,
+        );
+      }
+    }
+
+    return { proceduralLines, collabLines };
+  };
+
+  const mayEnrichContextPacket = (args: Record<string, unknown>): boolean => {
+    if (!hasRegistryOrEngine()) return false;
+    const principal = resolvePrincipal(ctx.db, ctx.principal);
+    if (principal === null) return false;
+    if (
+      principal.kind !== "owner" &&
+      (!toolAllowed(principal.grant, "search") || !toolAllowed(principal.grant, "context_packet"))
+    ) {
+      return false;
+    }
+    try {
+      const { proceduralLines, collabLines } = gatherContextPacketEnrichment(principal, args);
+      return proceduralLines.length > 0 || collabLines.length > 0;
+    } catch {
+      return false;
+    }
+  };
+
   const injectContextPacketProceduralMemory = (
     envelope: Envelope<unknown, QuotedChunk | QuotedPageChunk> | EnvelopeV2,
     args: Record<string, unknown>,
@@ -1148,14 +1680,6 @@ export function createMemtBridge(
     ) {
       return envelope;
     }
-
-    const rawQuery =
-      asString(args["query"]) ??
-      asString(args["task"]) ??
-      (Array.isArray(args["subjects"])
-        ? args["subjects"].filter((s): s is string => typeof s === "string").join(" ")
-        : "");
-    if (rawQuery.trim().length === 0) return envelope;
 
     let currentMd: string;
     let usedTokens: number;
@@ -1188,68 +1712,57 @@ export function createMemtBridge(
     } else {
       const data = envelope.data as {
         packet_md?: string;
+        tokens_estimate?: number;
         tokens?: number;
         budget_tokens?: number;
+        delivery?: string;
       } | undefined;
+      const tok =
+        typeof data?.tokens_estimate === "number"
+          ? data.tokens_estimate
+          : typeof data?.tokens === "number"
+            ? data.tokens
+            : undefined;
       if (
         data === undefined ||
+        data.delivery === "unchanged" ||
         typeof data.packet_md !== "string" ||
-        typeof data.tokens !== "number" ||
+        tok === undefined ||
         typeof data.budget_tokens !== "number"
       ) {
         return envelope;
       }
       currentMd = data.packet_md;
-      usedTokens = data.tokens;
+      usedTokens = tok;
       budgetTokens = data.budget_tokens;
     }
 
     const remaining = budgetTokens - usedTokens;
     if (remaining < 24) return envelope;
 
-    const ceiling = toMemtSensitivity(principal.grant.ceiling);
-    const redactor = createRedactor(principal, ctx.servingSecrets);
-    const engine = getEngine();
-    const hits = engine.experiences
-      .searchExperiences({
-        query: rawQuery,
-        sensitivityCeiling: ceiling,
-        outcomes: ["verified", "observed"],
-        limit: 6,
-      })
-      .filter((hit) => hit.score > 0 && hit.experience.confidence >= 0.65);
-
-    const compactText = (value: string, maxChars: number): string => {
-      const clean = value.replace(/\s+/g, " ").trim();
-      if (clean.length <= maxChars) return clean;
-      return `${clean.slice(0, Math.max(16, maxChars - 1)).trimEnd()}...`;
-    };
+    const { proceduralLines, collabLines } = gatherContextPacketEnrichment(principal, args);
 
     let nextMd = currentMd;
     let nextTokens = usedTokens;
     let appendedAny = false;
 
-    if (hits.length > 0) {
+    if (proceduralLines.length > 0) {
       const header = "## Procedural Memory (MemT-1.0)";
-      const basePrefix = `${nextMd}\n\n${header}\n`;
+      const sectionBaseMd = nextMd;
+      const basePrefix = `${sectionBaseMd}\n\n${header}\n`;
       if (packetTokens(basePrefix) < budgetTokens) {
-        const lines: string[] = [];
-        for (const hit of hits) {
-          if (lines.length >= 3) break;
-          const exp = hit.experience;
-          const domain = redactor.text(exp.domain);
-          const cond = redactor.text(exp.condition);
-          const rec = redactor.text(exp.recommendation);
-          let line = `- [${domain}] When: ${cond} -> Do: ${rec} (${exp.outcome}, conf=${exp.confidence.toFixed(2)})`;
-          let candidateMd = `${nextMd}\n\n${header}\n${[...lines, line].join("\n")}`;
+        const accepted: string[] = [];
+        for (const item of proceduralLines) {
+          let candidateMd = `${sectionBaseMd}\n\n${header}\n${[...accepted, item.full].join("\n")}`;
           let candidateTokens = packetTokens(candidateMd);
+          let chosen = item.full;
           if (candidateTokens > budgetTokens) {
-            line = `- [${domain}] When: ${compactText(cond, 120)} -> Do: ${compactText(rec, 140)} (${exp.outcome}, conf=${exp.confidence.toFixed(2)})`;
-            candidateMd = `${nextMd}\n\n${header}\n${[...lines, line].join("\n")}`;
+            chosen = item.compact;
+            candidateMd = `${sectionBaseMd}\n\n${header}\n${[...accepted, chosen].join("\n")}`;
             candidateTokens = packetTokens(candidateMd);
             if (candidateTokens > budgetTokens) continue;
           }
-          lines.push(line);
+          accepted.push(chosen);
           nextMd = candidateMd;
           nextTokens = candidateTokens;
           appendedAny = true;
@@ -1257,63 +1770,18 @@ export function createMemtBridge(
       }
     }
 
-    const explicitPerson = Array.isArray(args["subjects"])
-      ? args["subjects"].find(
-          (s): s is string =>
-            typeof s === "string" &&
-            s.startsWith("person:") &&
-            (principal.kind === "owner" ||
-              principal.grant.subjects === null ||
-              principal.grant.subjects.includes(s)),
-        )
-      : undefined;
-    const scopedGrantPerson =
-      explicitPerson === undefined &&
-      principal.kind !== "owner" &&
-      principal.grant.subjects !== null &&
-      principal.grant.subjects.length === 1 &&
-      principal.grant.subjects[0]!.startsWith("person:")
-        ? principal.grant.subjects[0]
-        : undefined;
-    const personSubject = explicitPerson ?? scopedGrantPerson;
-
-    if (personSubject !== undefined && budgetTokens - nextTokens >= 32) {
-      const slice = engine.collaboration.compileSlice({
-        person_id: personSubject,
-        task: rawQuery,
-        partition_key: engine.config.defaultPartition,
-        sensitivityCeiling: ceiling,
-        allowedSubjects: principal.kind === "owner" ? null : principal.grant.subjects,
-        budgetTokens: Math.min(800, Math.max(100, budgetTokens - nextTokens)),
-      });
-      const collabLines: string[] = [];
-      for (const ex of slice.brief.triggered_exceptions.slice(0, 2)) {
-        collabLines.push(
-          `- [exception:${ex.area}] ${compactText(redactor.text(ex.exception_note), 160)}`,
-        );
-      }
-      for (const rule of slice.brief.active_rules.slice(0, 2)) {
-        collabLines.push(
-          `- [${rule.area}/${rule.authority_level}] ${compactText(redactor.text(rule.guidance), 160)}`,
-        );
-      }
-      for (const crit of slice.rubric.slice(0, 2)) {
-        collabLines.push(
-          `- [rubric:${crit.requirement_level}] ${compactText(redactor.text(crit.criterion), 140)}`,
-        );
-      }
-      if (collabLines.length > 0) {
-        const collabHeader = "## Collaboration Brief";
-        const accepted: string[] = [];
-        for (const line of collabLines) {
-          const candidateMd = `${nextMd}\n\n${collabHeader}\n${[...accepted, line].join("\n")}`;
-          const candidateTokens = packetTokens(candidateMd);
-          if (candidateTokens > budgetTokens) continue;
-          accepted.push(line);
-          nextMd = candidateMd;
-          nextTokens = candidateTokens;
-          appendedAny = true;
-        }
+    if (collabLines.length > 0 && budgetTokens - nextTokens >= 32) {
+      const collabHeader = "## Collaboration Brief";
+      const sectionBaseMd = nextMd;
+      const accepted: string[] = [];
+      for (const line of collabLines) {
+        const candidateMd = `${sectionBaseMd}\n\n${collabHeader}\n${[...accepted, line].join("\n")}`;
+        const candidateTokens = packetTokens(candidateMd);
+        if (candidateTokens > budgetTokens) continue;
+        accepted.push(line);
+        nextMd = candidateMd;
+        nextTokens = candidateTokens;
+        appendedAny = true;
       }
     }
 
@@ -1325,35 +1793,123 @@ export function createMemtBridge(
         schema: string;
         result: {
           status: string;
-          view?: unknown;
+          view?: { kind: "view"; token: string };
           reasons?: unknown;
           validUntil?: string;
-          data: Record<string, unknown>;
+          data: Record<string, unknown> & {
+            coverage?: { status?: string };
+          };
         };
       };
+      const finalContent: Record<string, unknown> & { coverage?: { status?: string } } = {
+        ...prevData.result.data,
+        packetMd: nextMd,
+        tokens: nextTokens,
+      };
+      if (prevData.result.status === "current") {
+        const finalView = computePacketViewV2(finalContent, v2.canon, v2.quoted);
+        const priorViewToken = extractPriorViewToken(args["priorView"]);
+        if (
+          finalContent.coverage?.status === "complete_for_query" &&
+          priorViewToken !== undefined &&
+          priorViewToken === finalView.token
+        ) {
+          return {
+            ...v2,
+            canon: [],
+            quoted: [],
+            data: {
+              ...prevData,
+              result: {
+                status: "unchanged",
+                view: finalView,
+                ...(prevData.result.validUntil !== undefined
+                  ? { validUntil: prevData.result.validUntil }
+                  : {}),
+              },
+            },
+          };
+        }
+        return {
+          ...v2,
+          data: {
+            ...prevData,
+            result: {
+              ...prevData.result,
+              view: finalView,
+              data: finalContent,
+            },
+          },
+        };
+      }
       return {
         ...v2,
         data: {
           ...prevData,
           result: {
             ...prevData.result,
-            data: {
-              ...prevData.result.data,
-              packetMd: nextMd,
-              tokens: nextTokens,
-            },
+            data: finalContent,
           },
         },
       };
     }
 
     const v1 = envelope as Envelope<Record<string, unknown>, QuotedChunk | QuotedPageChunk>;
+    const v1Data = v1.data as Record<string, unknown> & {
+      packet_md: string;
+      tokens_estimate?: number;
+      tokens?: number;
+      retrieval_degraded?: unknown[];
+      status?: string;
+      sections?: Record<string, number>;
+    };
+    const { header, hash: finalPacketHash } = hashPacketBodyV1(nextMd);
+    const caps = Array.isArray(args["capabilities"]) ? args["capabilities"] : [];
+    const canDelta = caps.includes("delta");
+    const retainPrefix = args["retain_prefix"] === true;
+    const priorHash = typeof args["prior_hash"] === "string" ? args["prior_hash"] : undefined;
+    const degradedEmpty =
+      !Array.isArray(v1Data.retrieval_degraded) || v1Data.retrieval_degraded.length === 0;
+    const unchangedMd = `${header}UNCHANGED\n`;
+    if (
+      canDelta &&
+      retainPrefix &&
+      priorHash !== undefined &&
+      priorHash === finalPacketHash &&
+      degradedEmpty &&
+      v1Data.status === "current" &&
+      packetTokens(unchangedMd) <= budgetTokens
+    ) {
+      return {
+        ...v1,
+        canon: [],
+        quoted: [],
+        data: {
+          ...v1Data,
+          packet_md: unchangedMd,
+          ...(typeof v1Data.tokens_estimate === "number"
+            ? { tokens_estimate: packetTokens(unchangedMd) }
+            : { tokens: packetTokens(unchangedMd) }),
+          delivery: "unchanged",
+          truncated: false,
+          packet_hash: finalPacketHash,
+          etag: finalPacketHash,
+          ...(v1Data.sections !== undefined
+            ? { sections: { canon: 0, graph: 0, timeline: 0, claims: 0 } }
+            : {}),
+        },
+      };
+    }
     return {
       ...v1,
       data: {
-        ...v1.data,
+        ...v1Data,
         packet_md: nextMd,
-        tokens: nextTokens,
+        ...(typeof v1Data.tokens_estimate === "number"
+          ? { tokens_estimate: nextTokens }
+          : { tokens: nextTokens }),
+        packet_hash: finalPacketHash,
+        etag: finalPacketHash,
       },
     };
   };
@@ -1364,6 +1920,7 @@ export function createMemtBridge(
     handleRecall,
     handleExperience,
     handleSnapshot,
+    mayEnrichContextPacket,
     injectContextPacketProceduralMemory,
     close: async () => {
       if (ownsEngine && ownedEngine !== null) {

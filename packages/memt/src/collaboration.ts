@@ -155,6 +155,7 @@ export interface UpdateConnectionProgressInput {
   readonly stage: CollaborationConnectionStage;
   readonly historical_complete: boolean;
   readonly resume_cursor?: string;
+  readonly sensitivityCeiling?: MemtSensitivity;
   readonly now?: string;
 }
 
@@ -199,6 +200,9 @@ export interface RecordCrossAgentHandoffInput {
   readonly supersedes_record_id?: string;
   readonly evidence_refs: readonly string[];
   readonly sensitivity: MemtSensitivity;
+  readonly sensitivityCeiling?: MemtSensitivity;
+  readonly callerAgentId?: string | null;
+  readonly allowedSubjects?: readonly string[] | null;
   readonly observed_passed?: boolean;
   readonly now?: string;
 }
@@ -312,6 +316,12 @@ export interface CompileCollaborationSliceInput {
   readonly maxRules?: number;
   readonly maxExamplesPerPolarity?: number;
   readonly maxRubricItems?: number;
+  readonly ingestionProgress?: {
+    readonly stage: CollaborationConnectionStage;
+    readonly historical_complete: boolean;
+    readonly resume_cursor?: string;
+  };
+  readonly isEvidenceAuthorized?: (evidenceRefs: readonly string[]) => boolean;
 }
 
 export interface CollaborationSlice {
@@ -577,7 +587,7 @@ function isTemporallyApplicable(
 
 function estimateTokens(value: unknown): number {
   const bytes = Buffer.byteLength(typeof value === "string" ? value : JSON.stringify(value), "utf8");
-  return Math.max(1, Math.ceil(bytes / 3.5));
+  return Math.max(1, Math.ceil(bytes / 4));
 }
 
 function parseStringArrayJson(raw: string): string[] {
@@ -880,6 +890,50 @@ function computeRecordTaskRelevance(
   return { relevant: true, score, scopeMatched: scopeMatched || universalScope, directLexicalOverlap };
 }
 
+function computeHandoffTaskRelevance(
+  handoff: CollaborationHandoffRecord,
+  taskNormalized: string,
+  taskKindNormalized: string,
+  taskTokens: Set<string>,
+  requestedAreas: ReadonlySet<CollaborationArea> | null,
+): { relevant: boolean; score: number } {
+  if (requestedAreas !== null && !requestedAreas.has(handoff.area)) {
+    return { relevant: false, score: 0 };
+  }
+
+  const handoffTaskNorm = normalizeText(handoff.task);
+  const handoffTaskTag = normalizeTag(handoff.task);
+  const exactTask =
+    (taskKindNormalized.length > 0 && handoffTaskTag === taskKindNormalized) ||
+    (handoffTaskNorm.length > 0 && handoffTaskNorm === taskNormalized) ||
+    (handoffTaskNorm.length >= 4 && taskNormalized.includes(handoffTaskNorm)) ||
+    (taskNormalized.length >= 4 && handoffTaskNorm.includes(taskNormalized));
+
+  const handoffTokens = extractTokens(
+    `${handoff.task} ${handoff.work_summary} ${handoff.correction_text}`,
+  );
+  let directHits = 0;
+  for (const tok of taskTokens) {
+    if (handoffTokens.has(tok)) directHits += 1;
+  }
+  const overlap = taskTokens.size > 0 ? directHits / taskTokens.size : 0;
+
+  const relevant =
+    exactTask ||
+    (taskTokens.size === 0) ||
+    (taskTokens.size === 1 && directHits >= 1) ||
+    (taskTokens.size >= 2 && (directHits >= 2 || (directHits >= 1 && overlap >= 0.4)));
+
+  if (!relevant) {
+    return { relevant: false, score: 0 };
+  }
+
+  let score = exactTask ? 3.0 : 0;
+  score += directHits * 0.8 + overlap * 2.0;
+  if (handoff.endorsed_by_owner) score += 0.5;
+  return { relevant: true, score };
+}
+
 export class CollaborationSliceStore {
   private readonly db: Database;
   private readonly ownsDb: boolean;
@@ -929,9 +983,18 @@ export class CollaborationSliceStore {
       throw new Error("evidence_refs must contain at least one provenance reference");
     }
 
-    const derivedRoots = evidenceRefs.map(deriveSourceRoot).filter((r) => r.length > 0);
-    const explicitRoots = (input.source_roots ?? []).map(deriveSourceRoot).filter((r) => r.length > 0);
-    const sourceRoots = mergeUniqueStrings(derivedRoots, explicitRoots);
+    const derivedRoots = mergeUniqueStrings(
+      [],
+      evidenceRefs.map(deriveSourceRoot).filter((r) => r.length > 0),
+    );
+    const explicitRoots = mergeUniqueStrings(
+      [],
+      (input.source_roots ?? []).map(deriveSourceRoot).filter((r) => r.length > 0),
+    );
+    if (explicitRoots.length > derivedRoots.length) {
+      throw new Error("source_roots cannot exceed distinct evidence roots");
+    }
+    const sourceRoots = explicitRoots.length > 0 ? explicitRoots : derivedRoots;
     const exceptions = normalizeExceptions(input.exceptions);
 
     const validFrom = input.valid_from === undefined || input.valid_from === null || input.valid_from.trim() === ""
@@ -988,10 +1051,32 @@ export class CollaborationSliceStore {
       isMemtSensitivity(existing.sensitivity) &&
       (dedupCeilingRank === null || MEMT_SENSITIVITY_ORDER[existing.sensitivity] <= dedupCeilingRank)
     ) {
-      const mergedEvidence = mergeUniqueStrings(parseStringArrayJson(existing.evidence_refs_json), evidenceRefs);
-      const mergedRoots = mergeUniqueStrings(parseStringArrayJson(existing.source_roots_json), sourceRoots);
-      const mergedScope = mergeUniqueStrings(parseStringArrayJson(existing.scope_json), scope);
-      const mergedExceptions = normalizeExceptions([...parseExceptionsJson(existing.exceptions_json), ...exceptions]);
+      const existingEvidence = parseStringArrayJson(existing.evidence_refs_json);
+      const existingRoots = parseStringArrayJson(existing.source_roots_json);
+      const existingDerivedRoots = new Set(
+        existingEvidence.map(deriveSourceRoot).filter((r) => r.length > 0),
+      );
+      const newDerivedRoots = derivedRoots.filter((r) => !existingDerivedRoots.has(r));
+      const mergedEvidence = mergeUniqueStrings(existingEvidence, evidenceRefs);
+      let mergedRoots = existingRoots;
+      if (newDerivedRoots.length > 0) {
+        const candidateNewRoots = sourceRoots.filter((r) => !existingRoots.includes(r));
+        mergedRoots = mergeUniqueStrings(
+          existingRoots,
+          candidateNewRoots.slice(0, newDerivedRoots.length),
+        );
+      }
+      // Never let a lower-authority proposal widen scope, add exceptions, or
+      // overwrite authoritative fields on an existing owner_instruction.
+      const preserveOwnerInstruction =
+        existing.authority_level === "owner_instruction" &&
+        authorityLevel !== "owner_instruction";
+      const mergedScope = preserveOwnerInstruction
+        ? parseStringArrayJson(existing.scope_json)
+        : mergeUniqueStrings(parseStringArrayJson(existing.scope_json), scope);
+      const mergedExceptions = preserveOwnerInstruction
+        ? parseExceptionsJson(existing.exceptions_json)
+        : normalizeExceptions([...parseExceptionsJson(existing.exceptions_json), ...exceptions]);
       const mergedAuthority: CollaborationAuthorityLevel =
         existing.authority_level === "owner_instruction" || authorityLevel === "owner_instruction"
           ? "owner_instruction"
@@ -1002,9 +1087,12 @@ export class CollaborationSliceStore {
         MEMT_SENSITIVITY_ORDER[existing.sensitivity] >= MEMT_SENSITIVITY_ORDER[input.sensitivity]
           ? existing.sensitivity
           : input.sensitivity;
-      const mergedTaint: "clean" | "quoted" =
-        existing.taint === "quoted" || taint === "quoted" ? "quoted" : "clean";
-      const hadNewIndependentRoot = mergedRoots.length > parseStringArrayJson(existing.source_roots_json).length;
+      const mergedTaint: "clean" | "quoted" = preserveOwnerInstruction
+        ? (existing.taint === "clean" ? "clean" : "quoted")
+        : existing.taint === "quoted" || taint === "quoted"
+          ? "quoted"
+          : "clean";
+      const hadNewIndependentRoot = mergedRoots.length > existingRoots.length;
       // B3 invariant: repeated copies from the SAME source root never boost confidence or promote a hypothesis.
       const mergedConfidence = hadNewIndependentRoot
         ? clampUnit(Math.max(existing.confidence, confidence) + 0.08, existing.confidence)
@@ -1015,9 +1103,19 @@ export class CollaborationSliceStore {
         mergedRoots,
         existing.epistemic_status === "contested",
       );
-      const mergedReason = reason.length > existing.reason.length ? reason : existing.reason;
-      const mergedVerification =
-        verification.length > existing.verification.length ? verification : existing.verification;
+      const mergedReason = preserveOwnerInstruction
+        ? existing.reason
+        : reason.length > existing.reason.length
+          ? reason
+          : existing.reason;
+      const mergedVerification = preserveOwnerInstruction
+        ? existing.verification
+        : verification.length > existing.verification.length
+          ? verification
+          : existing.verification;
+      const mergedValidFrom = preserveOwnerInstruction ? null : validFrom;
+      const mergedValidUntil = preserveOwnerInstruction ? null : validUntil;
+      const mergedConflictGroup = preserveOwnerInstruction ? null : conflictGroup;
 
       const tx = this.db.transaction(() => {
         this.db
@@ -1043,9 +1141,9 @@ export class CollaborationSliceStore {
             mergedEpistemic,
             mergedConfidence,
             mergedUncertainty,
-            validFrom,
-            validUntil,
-            conflictGroup,
+            mergedValidFrom,
+            mergedValidUntil,
+            mergedConflictGroup,
             now,
             existing.id,
           );
@@ -1117,6 +1215,14 @@ export class CollaborationSliceStore {
         const canon = canonicalSourceRef(ref);
         if (canon.length > 0) insertSource.run(id, canon);
       }
+      // Advance ingestion-driven progress from connecting -> partial_backfill once records land.
+      this.db
+        .query(
+          `UPDATE collaboration_progress
+           SET stage = 'partial_backfill', updated_at = ?
+           WHERE person_id = ? AND partition_key = ? AND stage = 'connecting'`,
+        )
+        .run(now, personId, partitionKey);
     });
     tx();
 
@@ -1152,6 +1258,10 @@ export class CollaborationSliceStore {
     const partitionKey = (input.partition_key ?? "default").trim();
     if (personId.length === 0) throw new Error("person_id must be non-empty");
     if (partitionKey.length === 0) throw new Error("partition_key must be non-empty");
+    const ceiling: MemtSensitivity = input.sensitivityCeiling ?? "public";
+    if (!isMemtSensitivity(ceiling)) {
+      throw new Error(`invalid sensitivityCeiling: ${String(ceiling)}`);
+    }
     const now = input.now ?? new Date().toISOString();
     const cursor = (input.resume_cursor ?? "").trim();
 
@@ -1167,13 +1277,14 @@ export class CollaborationSliceStore {
       )
       .run(personId, partitionKey, input.stage, input.historical_complete ? 1 : 0, cursor, now);
 
-    return this.getConnectionProgress(personId, partitionKey, "private");
+    return this.getConnectionProgress(personId, partitionKey, ceiling);
   }
 
   getConnectionProgress(
     personId: string,
     partitionKey: string,
     sensitivityCeiling: MemtSensitivity,
+    isEvidenceAuthorized?: (evidenceRefs: readonly string[]) => boolean,
   ): ConnectionProgressState {
     const row = this.db
       .query<{
@@ -1190,15 +1301,34 @@ export class CollaborationSliceStore {
 
     const allowedSens = allowedSensitivitiesForCeiling(sensitivityCeiling);
     const placeholders = allowedSens.map(() => "?").join(", ");
-    const highInfo = this.db
-      .query<{ cnt: number }, SQLQueryBindings[]>(
-        `SELECT COUNT(*) AS cnt FROM collaboration_records
-         WHERE person_id = ? AND partition_key = ?
-           AND sensitivity IN (${placeholders})
-           AND epistemic_status IN ('owner_instruction', 'corroborated')
-           AND superseded_by IS NULL`,
-      )
-      .get(personId, partitionKey, ...allowedSens)?.cnt ?? 0;
+    let highInfo = 0;
+    if (isEvidenceAuthorized === undefined) {
+      highInfo = this.db
+        .query<{ cnt: number }, SQLQueryBindings[]>(
+          `SELECT COUNT(*) AS cnt FROM collaboration_records
+           WHERE person_id = ? AND partition_key = ?
+             AND sensitivity IN (${placeholders})
+             AND epistemic_status IN ('owner_instruction', 'corroborated')
+             AND superseded_by IS NULL`,
+        )
+        .get(personId, partitionKey, ...allowedSens)?.cnt ?? 0;
+    } else {
+      const candidateRows = this.db
+        .query<{ evidence_refs_json: string }, SQLQueryBindings[]>(
+          `SELECT evidence_refs_json FROM collaboration_records
+           WHERE person_id = ? AND partition_key = ?
+             AND sensitivity IN (${placeholders})
+             AND epistemic_status IN ('owner_instruction', 'corroborated')
+             AND superseded_by IS NULL`,
+        )
+        .all(personId, partitionKey, ...allowedSens);
+      for (const recRow of candidateRows) {
+        const refs = parseStringArrayJson(recRow.evidence_refs_json);
+        if (refs.length > 0 && isEvidenceAuthorized(refs)) {
+          highInfo += 1;
+        }
+      }
+    }
 
     if (row === null) {
       return {
@@ -1236,20 +1366,40 @@ export class CollaborationSliceStore {
     if (personId.length === 0) throw new Error("person_id must be non-empty");
     if (partitionKey.length === 0) throw new Error("partition_key must be non-empty");
     if (agentId.length === 0) throw new Error("agent_id must be non-empty");
-    if (servedSliceHash.length === 0) throw new Error("served_slice_hash must be non-empty");
+    if (!/^[0-9a-f]{64}$/i.test(servedSliceHash)) {
+      throw new Error("served_slice_hash must be a valid 64-character hex slice digest");
+    }
     if (task.length === 0) throw new Error("task must be non-empty");
     if (workSummary.length === 0) throw new Error("work_summary must be non-empty");
     if (!isCollaborationArea(input.area)) throw new Error(`invalid area: ${String(input.area)}`);
     if (!isCollaborationHandoffKind(input.kind)) throw new Error(`invalid handoff kind: ${String(input.kind)}`);
     if (!isMemtSensitivity(input.sensitivity)) throw new Error(`invalid sensitivity: ${String(input.sensitivity)}`);
 
+    const effectiveCeiling: MemtSensitivity = input.sensitivityCeiling ?? input.sensitivity;
+    if (!isMemtSensitivity(effectiveCeiling)) {
+      throw new Error(`invalid sensitivityCeiling: ${String(effectiveCeiling)}`);
+    }
+    if (!withinSensitivityCeiling(input.sensitivity, effectiveCeiling)) {
+      throw new Error("requested sensitivity exceeds caller ceiling");
+    }
+    if (
+      input.allowedSubjects !== undefined &&
+      input.allowedSubjects !== null &&
+      !input.allowedSubjects.includes(personId)
+    ) {
+      throw new Error("subject outside caller grant");
+    }
+
     const evidenceRefs = mergeUniqueStrings([], input.evidence_refs);
     if (evidenceRefs.length === 0) {
       throw new Error("evidence_refs must contain at least one provenance reference");
     }
+    if (input.kind === "observed_outcome" && typeof input.observed_passed !== "boolean") {
+      throw new Error("observed_passed boolean is required for observed_outcome");
+    }
 
     // B6 idempotency: repeated delivery with the same idempotency key returns the original receipt
-    // without creating duplicate records or inflating corroboration counts.
+    // ONLY when authorized under the caller's live ceiling and identity.
     const existing = this.db
       .query<HandoffRow, [string, string, string]>(
         `SELECT * FROM collaboration_handoffs
@@ -1257,8 +1407,21 @@ export class CollaborationSliceStore {
       )
       .get(personId, partitionKey, idempotencyKey);
     if (existing !== null) {
-      const existingRec =
+      if (
+        !isMemtSensitivity(existing.sensitivity) ||
+        !withinSensitivityCeiling(existing.sensitivity, effectiveCeiling) ||
+        (input.callerAgentId !== undefined &&
+          input.callerAgentId !== null &&
+          existing.agent_id !== input.callerAgentId)
+      ) {
+        throw new Error("handoff replay denied for current caller");
+      }
+      const rawExistingRec =
         existing.created_record_id !== null ? this.getFacet(existing.created_record_id) : null;
+      const existingRec =
+        rawExistingRec !== null && withinSensitivityCeiling(rawExistingRec.sensitivity, effectiveCeiling)
+          ? rawExistingRec
+          : null;
       return {
         handoff: rowToHandoff(existing)!,
         idempotentReplay: true,
@@ -1286,69 +1449,82 @@ export class CollaborationSliceStore {
             : "observed_pass";
 
     let createdRecord: CollaborationRecord | null = null;
-    if (
-      (input.kind === "owner_correction" || input.kind === "owner_edit") &&
-      correctionText.length > 0
-    ) {
-      const supersededRow =
-        supersedesId !== null
-          ? this.db
-              .query<RecordRow, [string]>("SELECT * FROM collaboration_records WHERE id = ?")
-              .get(supersedesId)
-          : null;
-      const scope =
-        input.scope !== undefined && input.scope.length > 0
-          ? input.scope
-          : supersededRow !== null
-            ? parseStringArrayJson(supersededRow.scope_json)
-            : [normalizeTag(task) || "all"];
-      const condition =
-        input.condition !== undefined && input.condition.trim().length > 0
-          ? input.condition.trim()
-          : supersededRow !== null
-            ? supersededRow.condition
-            : task;
-      const exceptions =
-        input.exceptions !== undefined
-          ? input.exceptions
-          : supersededRow !== null
-            ? parseExceptionsJson(supersededRow.exceptions_json)
-            : [];
+    let ownedCreatedRecordId: string | null = null;
+    let authorizedSupersedesId: string | null = null;
 
-      const facetRes = this.recordFacet({
-        person_id: personId,
-        partition_key: partitionKey,
-        area: input.area,
-        kind: "rule",
-        condition,
-        guidance: correctionText,
-        reason: `Owner ${input.kind === "owner_edit" ? "edit" : "correction"} to ${agentId} work`,
-        scope,
-        exceptions,
-        evidence_refs: evidenceRefs,
-        sensitivity: input.sensitivity,
-        taint: "clean",
-        authority_level: "owner_instruction",
-        confidence: 0.96,
-        now,
-      });
-      createdRecord = facetRes.record;
-
-      if (
-        supersededRow !== null &&
-        supersededRow.person_id === personId &&
-        supersededRow.partition_key === partitionKey &&
-        withinSensitivityCeiling(supersededRow.sensitivity as MemtSensitivity, input.sensitivity)
-      ) {
-        this.db
-          .query(
-            "UPDATE collaboration_records SET superseded_by = ?, updated_at = ? WHERE id = ?",
-          )
-          .run(createdRecord.id, now, supersededRow.id);
-      }
-    }
-
+    // Commit facet creation/supersession and handoff receipt in one atomic transaction.
     const tx = this.db.transaction(() => {
+      if (
+        (input.kind === "owner_correction" || input.kind === "owner_edit") &&
+        correctionText.length > 0
+      ) {
+        const rawSuperseded =
+          supersedesId !== null
+            ? this.db
+                .query<RecordRow, [string]>("SELECT * FROM collaboration_records WHERE id = ?")
+                .get(supersedesId)
+            : null;
+        // Authorize predecessor BEFORE reading or inheriting any of its fields.
+        const authorizedSuperseded =
+          rawSuperseded !== null &&
+          rawSuperseded.person_id === personId &&
+          rawSuperseded.partition_key === partitionKey &&
+          isMemtSensitivity(rawSuperseded.sensitivity) &&
+          withinSensitivityCeiling(rawSuperseded.sensitivity, effectiveCeiling)
+            ? rawSuperseded
+            : null;
+        const scope =
+          input.scope !== undefined && input.scope.length > 0
+            ? input.scope
+            : authorizedSuperseded !== null
+              ? parseStringArrayJson(authorizedSuperseded.scope_json)
+              : [normalizeTag(task) || "all"];
+        const condition =
+          input.condition !== undefined && input.condition.trim().length > 0
+            ? input.condition.trim()
+            : authorizedSuperseded !== null
+              ? authorizedSuperseded.condition
+              : task;
+        const exceptions =
+          input.exceptions !== undefined
+            ? input.exceptions
+            : authorizedSuperseded !== null
+              ? parseExceptionsJson(authorizedSuperseded.exceptions_json)
+              : [];
+
+        const facetRes = this.recordFacet({
+          person_id: personId,
+          partition_key: partitionKey,
+          area: input.area,
+          kind: "rule",
+          condition,
+          guidance: correctionText,
+          reason: `Owner ${input.kind === "owner_edit" ? "edit" : "correction"} to ${agentId} work`,
+          scope,
+          exceptions,
+          evidence_refs: evidenceRefs,
+          sensitivity: input.sensitivity,
+          dedupSensitivityCeiling: effectiveCeiling,
+          taint: "clean",
+          authority_level: "owner_instruction",
+          confidence: 0.96,
+          now,
+        });
+        createdRecord = facetRes.record;
+        // Only attribute ownership of created_record_id when this handoff actually
+        // created the record; deduplicated merges must not let undo retract a pre-existing rule.
+        ownedCreatedRecordId = facetRes.deduplicated ? null : facetRes.record.id;
+
+        if (authorizedSuperseded !== null && authorizedSuperseded.id !== facetRes.record.id) {
+          authorizedSupersedesId = authorizedSuperseded.id;
+          this.db
+            .query(
+              "UPDATE collaboration_records SET superseded_by = ?, updated_at = ? WHERE id = ?",
+            )
+            .run(facetRes.record.id, now, authorizedSuperseded.id);
+        }
+      }
+
       this.db
         .query(
           `INSERT INTO collaboration_handoffs (
@@ -1372,8 +1548,8 @@ export class CollaborationSliceStore {
           workSummary,
           artifactRef,
           correctionText,
-          supersedesId,
-          createdRecord?.id ?? null,
+          authorizedSupersedesId,
+          ownedCreatedRecordId,
           JSON.stringify(evidenceRefs),
           input.sensitivity,
           now,
@@ -1399,12 +1575,14 @@ export class CollaborationSliceStore {
   }
 
   /**
-   * B6 undo: revert a cross-agent handoff correction without resurrecting purged evidence.
+   * B6 undo: revert a cross-agent handoff correction without resurrecting purged evidence
+   * or retracting records not created by this handoff.
    */
   undoHandoff(
     handoffId: string,
     sensitivityCeiling: MemtSensitivity,
     now: string = new Date().toISOString(),
+    allowedSubjects?: readonly string[] | null,
   ): UndoHandoffResult {
     const row = this.db
       .query<HandoffRow, [string]>("SELECT * FROM collaboration_handoffs WHERE id = ?")
@@ -1412,7 +1590,10 @@ export class CollaborationSliceStore {
     if (
       row === null ||
       !isMemtSensitivity(row.sensitivity) ||
-      !withinSensitivityCeiling(row.sensitivity, sensitivityCeiling)
+      !withinSensitivityCeiling(row.sensitivity, sensitivityCeiling) ||
+      (allowedSubjects !== undefined &&
+        allowedSubjects !== null &&
+        !allowedSubjects.includes(row.person_id))
     ) {
       return {
         undone: false,
@@ -1431,26 +1612,48 @@ export class CollaborationSliceStore {
         .run(now, handoffId);
 
       if (row.created_record_id !== null) {
-        const res = this.db
-          .query(
-            `UPDATE collaboration_records
-             SET epistemic_status = 'retracted', updated_at = ?
-             WHERE id = ?`,
-          )
-          .run(now, row.created_record_id);
-        if (res.changes > 0) retractedId = row.created_record_id;
+        const createdRec = this.db
+          .query<RecordRow, [string]>("SELECT * FROM collaboration_records WHERE id = ?")
+          .get(row.created_record_id);
+        if (
+          createdRec !== null &&
+          createdRec.person_id === row.person_id &&
+          createdRec.partition_key === row.partition_key &&
+          isMemtSensitivity(createdRec.sensitivity) &&
+          withinSensitivityCeiling(createdRec.sensitivity, sensitivityCeiling)
+        ) {
+          const res = this.db
+            .query(
+              `UPDATE collaboration_records
+               SET epistemic_status = 'retracted', updated_at = ?
+               WHERE id = ? AND epistemic_status != 'retracted'`,
+            )
+            .run(now, row.created_record_id);
+          if (res.changes > 0) retractedId = row.created_record_id;
+        }
       }
 
-      // Restore superseded record ONLY if it still exists (never resurrect purged evidence).
+      // Restore superseded record ONLY if it still exists and is authorized under the caller's grant.
       if (row.supersedes_record_id !== null && row.created_record_id !== null) {
-        const res = this.db
-          .query(
-            `UPDATE collaboration_records
-             SET superseded_by = NULL, updated_at = ?
-             WHERE id = ? AND superseded_by = ? AND epistemic_status != 'retracted'`,
-          )
-          .run(now, row.supersedes_record_id, row.created_record_id);
-        if (res.changes > 0) restoredId = row.supersedes_record_id;
+        const supersededRec = this.db
+          .query<RecordRow, [string]>("SELECT * FROM collaboration_records WHERE id = ?")
+          .get(row.supersedes_record_id);
+        if (
+          supersededRec !== null &&
+          supersededRec.person_id === row.person_id &&
+          supersededRec.partition_key === row.partition_key &&
+          isMemtSensitivity(supersededRec.sensitivity) &&
+          withinSensitivityCeiling(supersededRec.sensitivity, sensitivityCeiling)
+        ) {
+          const res = this.db
+            .query(
+              `UPDATE collaboration_records
+               SET superseded_by = NULL, updated_at = ?
+               WHERE id = ? AND superseded_by = ? AND epistemic_status != 'retracted'`,
+            )
+            .run(now, row.supersedes_record_id, row.created_record_id);
+          if (res.changes > 0) restoredId = row.supersedes_record_id;
+        }
       }
     });
     tx();
@@ -1562,8 +1765,13 @@ export class CollaborationSliceStore {
     const allowedSens = allowedSensitivitiesForCeiling(input.sensitivityCeiling);
     const sensPlaceholders = allowedSens.map(() => "?").join(", ");
 
-    const progress = subjectAllowed
-      ? this.getConnectionProgress(personId, partitionKey, input.sensitivityCeiling)
+    const storedProgress = subjectAllowed
+      ? this.getConnectionProgress(
+          personId,
+          partitionKey,
+          input.sensitivityCeiling,
+          input.isEvidenceAuthorized,
+        )
       : {
           person_id: personId,
           partition_key: partitionKey,
@@ -1573,6 +1781,17 @@ export class CollaborationSliceStore {
           high_info_indexed: 0,
           updated_at: "",
         };
+    const progress: ConnectionProgressState =
+      subjectAllowed &&
+      input.ingestionProgress !== undefined &&
+      !input.ingestionProgress.historical_complete
+        ? {
+            ...storedProgress,
+            stage: input.ingestionProgress.stage,
+            historical_complete: false,
+            resume_cursor: input.ingestionProgress.resume_cursor ?? storedProgress.resume_cursor,
+          }
+        : storedProgress;
 
     const permittedRows = subjectAllowed
       ? this.db
@@ -1593,6 +1812,9 @@ export class CollaborationSliceStore {
       if (rec === null) continue;
       if (!withinSensitivityCeiling(rec.sensitivity, input.sensitivityCeiling)) continue;
       if (!isTemporallyApplicable(rec.valid_from, rec.valid_until, asOfMs)) continue;
+      if (input.isEvidenceAuthorized !== undefined && !input.isEvidenceAuthorized(rec.evidence_refs)) {
+        continue;
+      }
       permittedRecords.push(rec);
     }
 
@@ -1652,6 +1874,7 @@ export class CollaborationSliceStore {
 
     const matched: ScoredRecord[] = [];
     for (const rec of permittedRecords) {
+      if (requestedAreas !== null && !requestedAreas.has(rec.area)) continue;
       const rel = computeRecordTaskRelevance(
         rec,
         taskNormalized,
@@ -1833,7 +2056,8 @@ export class CollaborationSliceStore {
       }
     }
 
-    // Recent non-reverted permitted handoffs for B6 cross-agent continuity
+    // Recent non-reverted permitted handoffs for B6 cross-agent continuity,
+    // filtered by area and task relevance BEFORE budget packing.
     const handoffRows = subjectAllowed
       ? this.db
           .query<HandoffRow, SQLQueryBindings[]>(
@@ -1842,14 +2066,36 @@ export class CollaborationSliceStore {
                AND sensitivity IN (${sensPlaceholders})
                AND reverted_at IS NULL
              ORDER BY created_at DESC, id ASC
-             LIMIT 6`,
+             LIMIT 64`,
           )
           .all(personId, partitionKey, ...allowedSens)
       : [];
-    const recentHandoffs = handoffRows
+    const candidateHandoffs = handoffRows
       .map(rowToHandoff)
       .filter((h): h is CollaborationHandoffRecord => h !== null)
-      .map((h) =>
+      .filter(
+        (h) => input.isEvidenceAuthorized === undefined || input.isEvidenceAuthorized(h.evidence_refs),
+      )
+      .map((h) => ({
+        handoff: h,
+        rel: computeHandoffTaskRelevance(
+          h,
+          taskNormalized,
+          taskKindNormalized,
+          taskTokens,
+          requestedAreas,
+        ),
+      }))
+      .filter((entry) => entry.rel.relevant)
+      .sort((a, b) => {
+        if (b.rel.score !== a.rel.score) return b.rel.score - a.rel.score;
+        if (b.handoff.created_at !== a.handoff.created_at) {
+          return b.handoff.created_at.localeCompare(a.handoff.created_at);
+        }
+        return a.handoff.id.localeCompare(b.handoff.id);
+      })
+      .slice(0, 6)
+      .map(({ handoff: h }) =>
         Object.freeze({
           id: h.id,
           agent_id: h.agent_id,
@@ -1862,82 +2108,164 @@ export class CollaborationSliceStore {
         }),
       );
 
-    // Budget packing (B5): prioritize triggered exceptions + active rules + rubric + examples
-    let truncated = false;
+    // Budget packing (B5): enforce budgetTokens on the COMPLETE response object.
+    // Prioritize triggered exceptions -> active rules -> rubric -> conflicts -> examples -> handoffs.
+    const candidateExceptions = triggeredExceptions;
+    const candidateConflicts = conflicts;
+    const packedExceptions: TriggeredExceptionItem[] = [];
     const activeRules: CompiledBriefRule[] = [];
+    const packedConflicts: CollaborationConflictItem[] = [];
     const positiveExamples: GroundedExampleItem[] = [];
     const negativeExamples: GroundedExampleItem[] = [];
     const rubricItems: RubricCriterionItem[] = [];
+    const recentHandoffs: CollaborationSlice["recent_handoffs"][number][] = [];
 
-    const buildSummary = (rules: readonly CompiledBriefRule[], exs: readonly TriggeredExceptionItem[]): string => {
+    const buildSummary = (
+      rules: readonly CompiledBriefRule[],
+      exs: readonly TriggeredExceptionItem[],
+      compact = false,
+    ): string => {
       if (rules.length === 0 && exs.length === 0) {
+        if (compact) return "";
         return progress.historical_complete
           ? `No permitted task-specific collaboration guidance recorded for ${personId} on "${task}".`
           : `Connection-time ingestion in progress for ${personId}; no task-specific guidance available yet for "${task}".`;
       }
       const parts: string[] = [];
-      for (const ex of exs.slice(0, 2)) {
+      for (const ex of exs.slice(0, compact ? 1 : 2)) {
         parts.push(`[Exception:${ex.area}] ${ex.exception_note}`);
       }
-      for (const r of rules.slice(0, 4)) {
+      for (const r of rules.slice(0, compact ? 1 : 4)) {
         parts.push(`[${r.area}] ${r.guidance}`);
       }
-      return parts.join(" | ");
+      const joined = parts.join(" | ");
+      return compact && joined.length > 160 ? `${joined.slice(0, 157)}...` : joined;
     };
 
-    const baseTokens = estimateTokens({
+    const progressPayload = Object.freeze({
+      stage: progress.stage,
+      historical_complete: progress.historical_complete,
+      resume_cursor: progress.resume_cursor,
+      high_info_indexed: progress.high_info_indexed,
+    });
+    const frozenAreas = Object.freeze(areasObj);
+
+    const buildResponseShape = (opts: {
+      refreshStatus: "current" | "refreshed" | "unchanged";
+      sliceHash: string;
+      estimatedTokens: number;
+      truncated: boolean;
+      summary: string;
+      exs: readonly TriggeredExceptionItem[];
+      rules: readonly CompiledBriefRule[];
+      confs: readonly CollaborationConflictItem[];
+      pos: readonly GroundedExampleItem[];
+      neg: readonly GroundedExampleItem[];
+      rubric: readonly RubricCriterionItem[];
+      handoffs: readonly CollaborationSlice["recent_handoffs"][number][];
+    }) => ({
+      schema: COLLABORATION_SLICE_SCHEMA,
       person_id: personId,
       partition_key: partitionKey,
       task,
       task_kind: taskKind,
-      areas: areasObj,
-      triggered_exceptions: triggeredExceptions,
-      conflicts,
-      insufficient_areas: insufficientAreas,
+      refresh_status: opts.refreshStatus,
+      slice_hash: opts.sliceHash,
+      sensitivity_ceiling: input.sensitivityCeiling,
+      grants_action_authority: false as const,
+      budget_tokens: budgetTokens,
+      estimated_tokens: opts.estimatedTokens,
+      truncated: opts.truncated,
+      progress: progressPayload,
+      areas: frozenAreas,
+      brief: {
+        summary: opts.summary,
+        active_rules: opts.rules,
+        triggered_exceptions: opts.exs,
+        conflicts: opts.confs,
+        insufficient_areas: insufficientAreas,
+      },
+      examples: {
+        positive: opts.pos,
+        negative: opts.neg,
+      },
+      rubric: opts.rubric,
+      recent_handoffs: opts.handoffs,
+      host_contract: HOST_CONTRACT,
     });
-    let usedTokens = baseTokens;
 
-    for (const r of candidateRules) {
-      const cost = estimateTokens(r);
-      if (usedTokens + cost > budgetTokens && activeRules.length > 0) {
-        truncated = true;
-        continue;
+    const PLACEHOLDER_HASH = "0".repeat(64);
+    const measureCandidate = (
+      exs: readonly TriggeredExceptionItem[],
+      rules: readonly CompiledBriefRule[],
+      confs: readonly CollaborationConflictItem[],
+      pos: readonly GroundedExampleItem[],
+      neg: readonly GroundedExampleItem[],
+      rubric: readonly RubricCriterionItem[],
+      handoffs: readonly CollaborationSlice["recent_handoffs"][number][],
+      compactSummary = false,
+    ): number =>
+      estimateTokens(
+        buildResponseShape({
+          refreshStatus: "refreshed",
+          sliceHash: PLACEHOLDER_HASH,
+          estimatedTokens: budgetTokens,
+          truncated: false,
+          summary: buildSummary(rules, exs, compactSummary),
+          exs,
+          rules,
+          confs,
+          pos,
+          neg,
+          rubric,
+          handoffs,
+        }),
+      );
+
+    let compactSummary = false;
+    let minimalTokens = measureCandidate([], [], [], [], [], [], [], false);
+    if (minimalTokens > budgetTokens) {
+      const compactMinimal = measureCandidate([], [], [], [], [], [], [], true);
+      if (compactMinimal <= budgetTokens) {
+        compactSummary = true;
+        minimalTokens = compactMinimal;
+      } else {
+        throw new Error(
+          `budget_tokens (${budgetTokens}) is below the minimum required for the mandatory slice envelope (${compactMinimal})`,
+        );
       }
-      activeRules.push(r);
-      usedTokens += cost;
     }
 
-    for (const c of candidateRubric) {
-      const cost = estimateTokens(c);
-      if (usedTokens + cost > budgetTokens && rubricItems.length > 0) {
-        truncated = true;
-        continue;
+    let truncated = compactSummary;
+    const packCandidates = <T>(candidates: readonly T[], target: T[]): void => {
+      for (const item of candidates) {
+        target.push(item);
+        const tokens = measureCandidate(
+          packedExceptions,
+          activeRules,
+          packedConflicts,
+          positiveExamples,
+          negativeExamples,
+          rubricItems,
+          recentHandoffs,
+          compactSummary,
+        );
+        if (tokens > budgetTokens) {
+          target.pop();
+          truncated = true;
+        }
       }
-      rubricItems.push(c);
-      usedTokens += cost;
-    }
+    };
 
-    for (const ex of candidatePositive) {
-      const cost = estimateTokens(ex);
-      if (usedTokens + cost > budgetTokens) {
-        truncated = true;
-        continue;
-      }
-      positiveExamples.push(ex);
-      usedTokens += cost;
-    }
+    packCandidates(candidateExceptions, packedExceptions);
+    packCandidates(candidateRules, activeRules);
+    packCandidates(candidateRubric, rubricItems);
+    packCandidates(candidateConflicts, packedConflicts);
+    packCandidates(candidatePositive, positiveExamples);
+    packCandidates(candidateNegative, negativeExamples);
+    packCandidates(candidateHandoffs, recentHandoffs);
 
-    for (const ex of candidateNegative) {
-      const cost = estimateTokens(ex);
-      if (usedTokens + cost > budgetTokens) {
-        truncated = true;
-        continue;
-      }
-      negativeExamples.push(ex);
-      usedTokens += cost;
-    }
-
-    const summary = buildSummary(activeRules, triggeredExceptions);
+    const summary = buildSummary(activeRules, packedExceptions, compactSummary);
 
     // Deterministic canonical slice hash from ONLY authorized content (strict noninterference!)
     const hashPayload = {
@@ -1947,18 +2275,13 @@ export class CollaborationSliceStore {
       task,
       task_kind: taskKind,
       sensitivity_ceiling: input.sensitivityCeiling,
-      progress: {
-        stage: progress.stage,
-        historical_complete: progress.historical_complete,
-        resume_cursor: progress.resume_cursor,
-        high_info_indexed: progress.high_info_indexed,
-      },
-      areas: areasObj,
+      progress: progressPayload,
+      areas: frozenAreas,
       brief: {
         summary,
         active_rules: activeRules,
-        triggered_exceptions: triggeredExceptions,
-        conflicts,
+        triggered_exceptions: packedExceptions,
+        conflicts: packedConflicts,
         insufficient_areas: insufficientAreas,
       },
       examples: {
@@ -1981,6 +2304,41 @@ export class CollaborationSliceStore {
           ? "unchanged"
           : "refreshed";
 
+    let finalEstimatedTokens = estimateTokens(
+      buildResponseShape({
+        refreshStatus,
+        sliceHash,
+        estimatedTokens: budgetTokens,
+        truncated,
+        summary,
+        exs: packedExceptions,
+        rules: activeRules,
+        confs: packedConflicts,
+        pos: positiveExamples,
+        neg: negativeExamples,
+        rubric: rubricItems,
+        handoffs: recentHandoffs,
+      }),
+    );
+    // Converge exact serialized token count of the complete response (at most 1 digit shift).
+    const converged = estimateTokens(
+      buildResponseShape({
+        refreshStatus,
+        sliceHash,
+        estimatedTokens: finalEstimatedTokens,
+        truncated,
+        summary,
+        exs: packedExceptions,
+        rules: activeRules,
+        confs: packedConflicts,
+        pos: positiveExamples,
+        neg: negativeExamples,
+        rubric: rubricItems,
+        handoffs: recentHandoffs,
+      }),
+    );
+    finalEstimatedTokens = converged;
+
     return Object.freeze({
       schema: COLLABORATION_SLICE_SCHEMA,
       person_id: personId,
@@ -1992,20 +2350,15 @@ export class CollaborationSliceStore {
       sensitivity_ceiling: input.sensitivityCeiling,
       grants_action_authority: false,
       budget_tokens: budgetTokens,
-      estimated_tokens: usedTokens,
+      estimated_tokens: finalEstimatedTokens,
       truncated,
-      progress: Object.freeze({
-        stage: progress.stage,
-        historical_complete: progress.historical_complete,
-        resume_cursor: progress.resume_cursor,
-        high_info_indexed: progress.high_info_indexed,
-      }),
-      areas: Object.freeze(areasObj),
+      progress: progressPayload,
+      areas: frozenAreas,
       brief: Object.freeze({
         summary,
         active_rules: Object.freeze(activeRules),
-        triggered_exceptions: Object.freeze(triggeredExceptions),
-        conflicts: Object.freeze(conflicts),
+        triggered_exceptions: Object.freeze(packedExceptions),
+        conflicts: Object.freeze(packedConflicts),
         insufficient_areas: Object.freeze(insufficientAreas),
       }),
       examples: Object.freeze({
