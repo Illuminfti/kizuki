@@ -1,3 +1,4 @@
+import { Database } from 'bun:sqlite';
 import { setAttentionDisposition } from "@kizuki/core/world";
 import { basename, join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
@@ -6,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { ServeError, SourceGrantError, UndoError, WorldViewError, CanonRecoveryError, getCanonReceipt, inspectCanonRecovery, OWNER, getClaimsEpoch, sourcePolicyEpoch, getCheckpoint, inspectCheckpoints, initAgents, inspectSourceGrant, installServeService, queryServeService, readServeIntent, readVaultId, listCanonReceipts, listConnections, loadConfiguredRetrieval, loadEmbeddingSelection, resumeSourceRevocation, revokeSourceGrant, runBackfill, runSync, runRail, serveSearch, setSourceGrant, undoReceipt, withDeadline } from '@kizuki/core';
 import type { Checkpoint, Connector, SourceGrantPolicy, ServeContext } from '@kizuki/core';
 import { activeWorldOps, worldOpInputKeys, serveWorldView } from '@kizuki/core/world';
-import { loadMemtConfig } from '@kizuki/memt';
+import { ExperienceBank, SnapshotCustodyRegistry, allowedSensitivitiesForCeiling, loadMemtConfig, isMemtSensitivity, EXPERIENCE_OUTCOMES, type ExperienceOutcome, type ExperienceRecord, type MemtSensitivity } from '@kizuki/memt';
 import { createGmailConnector, inspectGmailState, assertSameGmailIdentity } from '@kizuki/connector-gmail';
 import { createGoogleCalendarConnector, inspectGoogleCalendarState, assertSameGoogleCalendarIdentity } from '@kizuki/connector-google-calendar';
 import { inspectXApiState } from '@kizuki/connectors';
@@ -26,7 +27,7 @@ import { readModelSelection, readModelSettings, saveModelSettings, testModelSett
 import { enrollAppAgentSetup, revokeAppAgent } from './agents';
 import { inspectOwnerPageCorrectionTargets, inspectOwnerCorrectionPageCount, listAgents, serveCorrect, type Grant } from '@kizuki/core';
 import type { CliIo } from '../commands';
-import { APP_API_PREFIX, type AppCatalogEntry, type AppError, type AppLocalCapabilities, type AppOperation, type AppRoute, type AppSource, type AppServiceStatus, type AppModelStatus, type AppModelTest, type AppWorldCorrectionTarget } from './protocol';
+import { APP_API_PREFIX, type AppCatalogEntry, type AppError, type AppLocalCapabilities, type AppMemtExperienceItem, type AppMemtExperiencesResponse, type AppMemtStatus, type AppOperation, type AppRoute, type AppSource, type AppServiceStatus, type AppModelStatus, type AppModelTest, type AppWorldCorrectionTarget } from './protocol';
 export interface AppHostDeps {
     gmail?: GmailFactory;
     calendar?: GoogleCalendarFactory;
@@ -42,7 +43,7 @@ class AppOperationFailure extends AppFailure {
 }
 const ROUTES: Record<Exclude<AppRoute, 'world_view'>, readonly string[]> = {
     attention_disposition: ['cue', 'action', 'until'],
-    status: [], catalog: [], initialize: ['path', 'no_service'], service_status: [], install_service: [], sources: [], enroll: ['provider', 'path', 'fields', 'calendar_id', 'source_key', 'new_source'],
+    status: [], catalog: [], initialize: ['path', 'no_service'], service_status: [], install_service: [], memt_status: [], memt_experiences: ['query', 'domain', 'outcome', 'ceiling', 'limit'], sources: [], enroll: ['provider', 'path', 'fields', 'calendar_id', 'source_key', 'new_source'],
     consent: ['source_key', 'expected_revision', 'operation_id', 'policy'], capture: ['source_key', 'mode'], query: ['text', 'limit'], activity: ['limit'], undo: ['receipt_id', 'cascade'], operation: ['id'],
     revoke: ['source_key', 'expected_revision', 'operation_id'], resume_revocation: ['source_key', 'operation_id'],
     model_status: [], model_save: ['expected_revision', 'selection', 'credential'], model_test: ['expected_revision'],
@@ -137,6 +138,190 @@ function inspectLocalCapabilities(vaultPath: string, env: Record<string, string 
         else memt = 'off';
     } catch { memt = 'unavailable'; }
     return { retrieval, embedding, memt, ...(memtModel !== null ? { memt_model: memtModel } : {}) };
+}
+function optionalFilterText(value: unknown, max: number): string {
+    if (value === undefined) return '';
+    if (typeof value !== 'string' || value.length > max || /[\x00-\x1f\x7f]/.test(value)) throw new AppFailure('invalid_request');
+    return value.trim();
+}
+function parseMemtCitations(raw: string): string[] {
+    if (raw === '[]' || raw.length === 0) return [];
+    try {
+        const parsed: unknown = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed.filter((item): item is string => typeof item === 'string');
+    } catch { /* Treat malformed citation JSON as empty rather than crashing read inspection. */ }
+    return [];
+}
+interface MemtExperienceSqlRow {
+    id: string;
+    domain: string;
+    scope_key: string;
+    sensitivity: string;
+    condition: string;
+    recommendation: string;
+    verification: string;
+    outcome: string;
+    citations_json: string;
+    confidence: number;
+    use_count: number;
+    internalized_in_snapshot: string | null;
+    has_embedding: number;
+    updated_at: string;
+}
+function projectMemtExperience(record: ExperienceRecord, score?: number): AppMemtExperienceItem {
+    return {
+        id: record.id,
+        domain: record.domain,
+        scope_key: record.scope_key,
+        sensitivity: record.sensitivity,
+        condition: record.condition,
+        recommendation: record.recommendation,
+        verification: record.verification,
+        outcome: record.outcome,
+        confidence: record.confidence,
+        use_count: record.use_count,
+        citations: [...record.citations],
+        internalized_in_snapshot: record.internalized_in_snapshot,
+        has_embedding: record.has_embedding,
+        updated_at: record.updated_at,
+        ...(score !== undefined && Number.isFinite(score) ? { score } : {}),
+    };
+}
+/** Strictly read-only, zero-network MemT status projection; never creates registry.sqlite or discloses paths/URLs/keys. */
+function inspectAppMemtStatus(vaultPath: string, env: Record<string, string | undefined>): AppMemtStatus {
+    const checked_at = new Date().toISOString();
+    const emptyExperiences = { total: 0, verified: 0, observed: 0, failed: 0, uninternalized: 0 };
+    const emptySnapshots = { total: 0, clean: 0, stale: 0, purged_invalidated: 0, partitions: [] };
+    let config: ReturnType<typeof loadMemtConfig>;
+    try { config = loadMemtConfig(vaultPath, env); }
+    catch {
+        return {
+            mode: 'unavailable', enabled: false, gpu_configured: false, api_key_configured: false,
+            registry_present: false, model: null, default_partition: 'default', checked_at,
+            experiences: emptyExperiences, snapshots: emptySnapshots,
+        };
+    }
+    const registryPresent = existsSync(config.registryPath);
+    const gpuConfigured = config.enabled && config.url !== null;
+    const mode: AppMemtStatus['mode'] = !config.enabled ? 'off' : gpuConfigured ? 'gpu_configured' : registryPresent ? 'local_hybrid' : 'off';
+    if (!registryPresent) {
+        return {
+            mode, enabled: config.enabled, gpu_configured: gpuConfigured, api_key_configured: config.apiKey !== null,
+            registry_present: false, model: config.model, default_partition: config.defaultPartition, checked_at,
+            experiences: emptyExperiences, snapshots: emptySnapshots,
+        };
+    }
+    let db: Database | null = null;
+    try {
+        db = new Database(config.registryPath, { readonly: true });
+        const bank = new ExperienceBank({ db });
+        const custody = new SnapshotCustodyRegistry({ db });
+        const exp = bank.countExperiences();
+        const snap = custody.countSnapshots();
+        const partitions = custody.listSnapshots().slice(0, 64).map(row => ({
+            partition_key: row.partition_key,
+            sensitivity_ceiling: row.sensitivity_ceiling,
+            snapshot_name: row.snapshot_name,
+            event_watermark: row.event_watermark,
+            taint_state: row.taint_state,
+            source_count: row.source_ids.length,
+            updated_at: row.updated_at,
+        }));
+        return {
+            mode, enabled: config.enabled, gpu_configured: gpuConfigured, api_key_configured: config.apiKey !== null,
+            registry_present: true, model: config.model, default_partition: config.defaultPartition, checked_at,
+            experiences: { total: exp.total, verified: exp.verified, observed: exp.observed, failed: exp.failed, uninternalized: exp.uninternalized },
+            snapshots: { total: snap.total, clean: snap.clean, stale: snap.stale, purged_invalidated: snap.purgedInvalidated, partitions },
+        };
+    } catch {
+        return {
+            mode: 'unavailable', enabled: config.enabled, gpu_configured: gpuConfigured, api_key_configured: config.apiKey !== null,
+            registry_present: true, model: config.model, default_partition: config.defaultPartition, checked_at,
+            experiences: emptyExperiences, snapshots: emptySnapshots,
+        };
+    } finally { db?.close(); }
+}
+/** Strictly read-only, zero-network MemT experience list and search; never creates registry.sqlite. */
+function inspectAppMemtExperiences(
+    vaultPath: string,
+    env: Record<string, string | undefined>,
+    input: { query: string; domain: string; outcome: 'all' | ExperienceOutcome; ceiling: MemtSensitivity; limit: number },
+): AppMemtExperiencesResponse {
+    let config: ReturnType<typeof loadMemtConfig>;
+    try { config = loadMemtConfig(vaultPath, env); }
+    catch { throw new AppFailure('unavailable'); }
+    const mode: 'list' | 'search' = input.query.length > 0 ? 'search' : 'list';
+    if (!existsSync(config.registryPath)) {
+        return { experiences: [], domains: [], truncated: false, mode };
+    }
+    const outcomes: readonly ExperienceOutcome[] = input.outcome === 'all' ? EXPERIENCE_OUTCOMES : [input.outcome];
+    let db: Database | null = null;
+    try {
+        db = new Database(config.registryPath, { readonly: true });
+        const allowed = allowedSensitivitiesForCeiling(input.ceiling);
+        const domains = db.query<{ domain: string }, string[]>(
+            `SELECT DISTINCT domain FROM experiences WHERE sensitivity IN (${allowed.map(() => '?').join(', ')}) ORDER BY domain ASC LIMIT 64`,
+        ).all(...allowed).map(row => row.domain);
+        if (mode === 'search') {
+            const bank = new ExperienceBank({ db });
+            const hits = bank.searchExperiences({
+                query: input.query,
+                sensitivityCeiling: input.ceiling,
+                ...(input.domain ? { domain: input.domain } : {}),
+                outcomes,
+                limit: input.limit + 1,
+            });
+            return {
+                experiences: hits.slice(0, input.limit).map(hit => projectMemtExperience(hit.experience, hit.score)),
+                domains,
+                truncated: hits.length > input.limit,
+                mode,
+            };
+        }
+        const clauses: string[] = [
+            `e.sensitivity IN (${allowed.map(() => '?').join(', ')})`,
+            `e.outcome IN (${outcomes.map(() => '?').join(', ')})`,
+        ];
+        const params: (string | number)[] = [...allowed, ...outcomes];
+        if (input.domain) {
+            clauses.push('e.domain = ?');
+            params.push(input.domain);
+        }
+        const rows = db.query<MemtExperienceSqlRow, (string | number)[]>(
+            `SELECT e.id, e.domain, e.scope_key, e.sensitivity, e.condition, e.recommendation,
+                    e.verification, e.outcome, e.citations_json, e.confidence, e.use_count,
+                    e.internalized_in_snapshot,
+                    (e.embedding IS NOT NULL AND length(e.embedding) > 0) AS has_embedding,
+                    e.updated_at
+             FROM experiences e
+             WHERE ${clauses.join(' AND ')}
+             ORDER BY e.updated_at DESC
+             LIMIT ?`,
+        ).all(...params, input.limit + 1);
+        return {
+            experiences: rows.slice(0, input.limit).map(row => ({
+                id: row.id,
+                domain: row.domain,
+                scope_key: row.scope_key,
+                sensitivity: isMemtSensitivity(row.sensitivity) ? row.sensitivity : 'private',
+                condition: row.condition,
+                recommendation: row.recommendation,
+                verification: row.verification,
+                outcome: row.outcome as ExperienceOutcome,
+                confidence: row.confidence,
+                use_count: row.use_count,
+                citations: parseMemtCitations(row.citations_json),
+                internalized_in_snapshot: row.internalized_in_snapshot,
+                has_embedding: row.has_embedding !== 0,
+                updated_at: row.updated_at,
+            })),
+            domains,
+            truncated: rows.length > input.limit,
+            mode,
+        };
+    } catch {
+        throw new AppFailure('unavailable');
+    } finally { db?.close(); }
 }
 const fullFields = ['text', 'subjects', 'metadata', 'attachments'];
 export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { noService?: boolean } = {}) {
@@ -359,6 +544,27 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
                 catch { throw new AppFailure('service_unavailable'); }
                 return { message: 'Background setup finished. Check Settings for the observed service state.' };
             });
+        }
+        if (route === 'memt_status') {
+            return readContext(async ctx => inspectAppMemtStatus(ctx.vaultPath, baseIo.env));
+        }
+        if (route === 'memt_experiences') {
+            const query = optionalFilterText(input.query, 500);
+            const domain = optionalFilterText(input.domain, 128);
+            const rawOutcome = input.outcome === undefined ? 'all' : input.outcome;
+            if (typeof rawOutcome !== 'string' || (rawOutcome !== 'all' && !(EXPERIENCE_OUTCOMES as readonly string[]).includes(rawOutcome))) {
+                throw new AppFailure('invalid_request');
+            }
+            const rawCeiling = input.ceiling === undefined ? 'private' : input.ceiling;
+            if (!isMemtSensitivity(rawCeiling)) throw new AppFailure('invalid_request');
+            const count = limit(input.limit);
+            return readContext(async ctx => inspectAppMemtExperiences(ctx.vaultPath, baseIo.env, {
+                query,
+                domain,
+                outcome: rawOutcome as 'all' | ExperienceOutcome,
+                ceiling: rawCeiling,
+                limit: count,
+            }));
         }
         if (route === 'operation') {
             const id = string(input.id, 128);
