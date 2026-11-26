@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { COMMANDS } from "../packages/cli/src/commands/index";
 import { printRootHelp } from "../packages/cli/src/help";
-import { evaluateRelease, gates, parseAcceptanceArgs, releaseDecision, writeAcceptanceReport } from "./go-no-go";
+import { evaluateEndStateDiagnostics, evaluateRelease, gates, parseAcceptanceArgs, releaseDecision, writeAcceptanceReport } from "./go-no-go";
 import {
   CAPABILITY_PROOF_FILE, CHECKOUT_LIMITS, CONNECTORS, CONNECTOR_PRODUCER, CONNECTOR_PRODUCER_FILES, EVIDENCE_LIMITS, EVALUATOR_ROOT, EvidenceError, JOURNEYS, JOURNEY_PRODUCER, JOURNEY_PRODUCER_FILES,
   P0_DISPOSITION_PRODUCER, REQUIRED_CHECKS_PRODUCER, REQUIRED_CONTEXTS, SURFACE_DOC_FILES, SURFACE_GATE, SURFACE_OBSERVED_FILES, SURFACE_PRODUCER, SURFACE_PRODUCER_FILES, TARGETS,
@@ -1568,4 +1568,15 @@ test.each(["telegram", "whoop"])("a file-import connector receipt cannot satisfy
   const result = evaluateRelease("1.0", f.indexPath);
   expect(gate(result, `connector.${id}`)).toMatchObject({ status: "UNVERIFIABLE", reason: "connector-producer-not-landed", evidence_sha256: null });
   expect(result.decision).toBe("NO-GO");
+});
+
+test("end-state diagnostics inspect #1065, scale-10x, and 24h soak without granting release credit", () => {
+  const report = evaluateEndStateDiagnostics();
+  expect(report.schema).toBe("kizuki.endstate-proof/v1");
+  expect(report.release_credit).toBe(false);
+  expect(report.verdict).toBe("INCOMPLETE");
+  expect(report.golden_1065.files.every(file => file.present)).toBe(true);
+  expect(report.golden_1065.stages).toHaveLength(14);
+  expect(report.soak_24h.required_window_ms).toBe(86_400_000);
+  expect(report.soak_24h.certified_24h).toBe(false);
 });

@@ -11,6 +11,7 @@ import {
   absolute, consumeNativeAttestationReceipt, consumeSurfaceReceipt, digest, exact, gateReceiptMappingError, hash, inspectOptionalVerifier, parseGateReceipts, parents, read, reject, surfaceProducerActive, text,
 } from "./release-evidence";
 import type { GateReceiptReference } from "./release-evidence";
+import { evaluateEndStateProof, type EndStateProofInput, type EndStateProofReport } from "./bench/endstate-proof";
 
 type Profile = "rc" | "1.0";
 type Status = "PASS" | "FAIL" | "MISSING" | "UNVERIFIABLE" | "NOT_IMPLEMENTED";
@@ -246,6 +247,12 @@ export function writeAcceptanceReport(path: string, report: ReturnType<typeof ev
   } catch { reject("published-report-durability-unconfirmed"); }
   if (cleanupFailed) reject("published-report-cleanup-failed");
 }
+/** Diagnostic-only evaluator for #1065 golden journey, 10x scale benchmark, and 24h soak.
+ * Never grants release GO credit and never mutates the closed acceptance gate inventory. */
+export function evaluateEndStateDiagnostics(input: Omit<EndStateProofInput, "root"> = {}): EndStateProofReport {
+  return evaluateEndStateProof({ ...input, root: EVALUATOR_ROOT });
+}
+
 if (import.meta.main) {
   try {
     const args = parseAcceptanceArgs(Bun.argv.slice(2)), report = evaluateRelease(args.profile, args.evidence);
