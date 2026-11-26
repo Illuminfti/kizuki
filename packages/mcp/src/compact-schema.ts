@@ -23,7 +23,12 @@ export function compactToolSchema(schema: Record<string, unknown>, options: { om
     for (const key of ARRAYS) {
       if (Array.isArray(node[key])) node[key] = node[key].map((child) => compact(child));
     }
-    if (!root && node["$schema"] === draft) delete node["$schema"];
+    if (
+      node["$schema"] === "http://json-schema.org/draft-07/schema#" ||
+      (!root && node["$schema"] === draft)
+    ) {
+      delete node["$schema"];
+    }
     // Tool-level prose carries the explanation. Repeating generated field
     // titles and descriptions in every listing spends the bounded MCP
     // discovery budget without affecting validation or defaults.
@@ -77,15 +82,15 @@ function shareRepeatedSchemas(schema: Record<string, unknown>): Record<string, u
   const eligible = (value: Record<string, unknown>) => !/"(?:\$[^"\n]*|definitions)":/.test(JSON.stringify(value));
   visit(schema, (value, root) => {
     const key = JSON.stringify(value);
-    if (!root && key.length >= 70 && eligible(value)) counts.set(key, { count: (counts.get(key)?.count ?? 0) + 1, value });
+    if (!root && key.length >= 42 && eligible(value)) counts.set(key, { count: (counts.get(key)?.count ?? 0) + 1, value });
     return value;
   }, true);
-  const chosen = [...counts].filter(([key, row]) => row.count > 1 && (key.length - 29) * row.count > key.length + 12);
+  const chosen = [...counts].filter(([key, row]) => row.count > 1 && (key.length - 26) * row.count > key.length + 5);
   const existing = object(schema.definitions) ? schema.definitions : {};
   const definitions: Record<string, unknown> = { ...existing };
   const names = new Map<string, string>();
   for (const [key] of chosen) {
-    let name = `S${names.size}`;
+    let name = names.size.toString(36);
     while (Object.hasOwn(definitions, name)) name += "_";
     names.set(key, name); definitions[name] = {};
   }

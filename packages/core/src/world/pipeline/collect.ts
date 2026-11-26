@@ -1,4 +1,4 @@
-import { personStatements } from "../collectors/person";
+import { typedKindStatements } from "../collectors/typed-kinds";
 import { createRedactor } from "../../serving/redact";
 import type { Database } from "bun:sqlite";
 import {
@@ -12,10 +12,9 @@ import { authorizedClaimSql } from "../policy-sql";
 import { knownPermittedAndUnheldSql, knownValidSql } from "../known/cutoff";
 import { recordWorldDependencies } from "../dependencies";
 import { eligibleWorldClaim, type Eligible } from "./eligible";
-import { claimVisibleSql, WorldProjectionBudgetError, type ReadFrame } from "./frame";
+import { claimVisibleSql, MAX_CARD_RELATIONS, WorldProjectionBudgetError, type ReadFrame } from "./frame";
 import { group, type Cluster, type Grouper } from "./group";
 
-const MAX_RELATIONS = 128;
 const DISCOVERY_SCAN = 256;
 /** The existing discovery wire grammar's label bound per match. */
 const MAX_MATCH_LABELS = 256;
@@ -98,7 +97,7 @@ const claimsAboutMembers: Collector = (frame, cluster) => {
     WHERE discriminator='assertion' AND ${claimVisibleSql(frame, "base")} AND ${claim.sql} AND ${time.sql} AND
     ((subject_kind=? AND subject_id=? AND coalesce(json_extract(payload,'$.subject.namespace'),'')=?) OR (json_extract(payload,'$.object.ref.kind')=? AND json_extract(payload,'$.object.ref.id')=? AND coalesce(json_extract(payload,'$.object.ref.namespace'),'')=?))
     AND ${admitted.sql}
-    ORDER BY CASE WHEN c.predicate='world.kind' THEN 0 WHEN c.predicate IN (SELECT value FROM json_each(?)) THEN 1 ELSE 2 END,c.claim_id LIMIT ${MAX_RELATIONS + 1}`);
+    ORDER BY CASE WHEN c.predicate='world.kind' THEN 0 WHEN c.predicate IN (SELECT value FROM json_each(?)) THEN 1 ELSE 2 END,c.claim_id LIMIT ${MAX_CARD_RELATIONS + 1}`);
   const labelPredicates = activeWorldRegistry().kinds.map((kind) => kind.labelPredicate);
   const labels = JSON.stringify(labelPredicates);
   const requested = bindingOf(frame.ctx.db, cluster.anchor);
@@ -135,7 +134,7 @@ const claimsAboutMembers: Collector = (frame, cluster) => {
 /** Ordered. A workstream adds one line under its marker. */
 export const COLLECTORS: readonly Collector[] = [
   claimsAboutMembers,
-  personStatements,
+  typedKindStatements,
   // slot: ident
 ];
 
@@ -159,16 +158,25 @@ export function collectCard(
 ): CardCollection | null {
   const anchor = anchorOf(frame.ctx.db, cluster.anchor);
   if (anchor === null) return null;
-  const candidates = [
-    ...new Set(collectors.flatMap((collect) => collect(frame, cluster, kind))),
-  ];
+  const previousOverflow = frame.collectorOverflow;
+  frame.collectorOverflow = false;
+  let candidates: string[];
+  let collectorOverflow = false;
+  try {
+    candidates = [
+      ...new Set(collectors.flatMap((collect) => collect(frame, cluster, kind))),
+    ];
+    collectorOverflow = frame.collectorOverflow;
+  } finally {
+    frame.collectorOverflow = previousOverflow;
+  }
   frame.stats.rowsExamined += candidates.length;
   const items: Eligible[] = [];
-  let overflow = false;
+  let overflow = collectorOverflow;
   for (const claimId of candidates) {
     const item = verifyClaim(frame, claimId);
     if (item === null) continue;
-    if (items.length === MAX_RELATIONS) {
+    if (items.length === MAX_CARD_RELATIONS) {
       overflow = true;
       break;
     }
@@ -275,7 +283,7 @@ export function scanMatches(
       AND c.polarity='positive' AND json_extract(c.payload,'$.perspective.mode')='asserted'
       AND ${claimVisibleSql(frame, "base")} AND ${claim.sql} AND ${time.sql}
       AND ${admitted.sql}
-      ORDER BY CASE c.predicate WHEN 'world.kind' THEN 0 ELSE 1 END,c.claim_id LIMIT ${MAX_RELATIONS + 1}`,
+      ORDER BY CASE c.predicate WHEN 'world.kind' THEN 0 ELSE 1 END,c.claim_id LIMIT ${MAX_CARD_RELATIONS + 1}`,
   );
   const aliasCandidates = wanted.length === 0 ? null : ctx.db.query<{ claim_id: string }, (string | number)[]>(
     `SELECT c.claim_id ${joins}
@@ -285,7 +293,7 @@ export function scanMatches(
       AND (json_extract(c.payload,'$.perspective.holder') IS NOT NULL OR json_extract(c.payload,'$.perspective.speaker') IS NOT NULL)
       AND ${claimVisibleSql(frame, "base")} AND ${claim.sql} AND ${time.sql}
       AND ${admitted.sql}
-      ORDER BY c.claim_id LIMIT ${MAX_RELATIONS + 1}`,
+      ORDER BY c.claim_id LIMIT ${MAX_CARD_RELATIONS + 1}`,
   );
   const cache = new Map<string, { labels: string[]; searchAliases: string[]; overflow: boolean } | null>();
   const matchOf = (handle: string) => {
@@ -294,10 +302,10 @@ export function scanMatches(
     const aliasRows = aliasCandidates?.all(handle, kind.labelPredicate, ...claim.bindings, ...time.bindings,
       ...admitted.bindings) ?? [];
     frame.stats.rowsExamined += rows.length + aliasRows.length;
-    if (aliasRows.length > MAX_RELATIONS) throw new WorldProjectionBudgetError();
+    if (aliasRows.length > MAX_CARD_RELATIONS) throw new WorldProjectionBudgetError();
     const labels: string[] = [], searchAliases: string[] = [];
     let classified = false;
-    for (const row of rows.slice(0, MAX_RELATIONS)) {
+    for (const row of rows.slice(0, MAX_CARD_RELATIONS)) {
       const item = verifyClaim(frame, row.claim_id);
       if (item === null) continue;
       const semantic = item.semantic;
@@ -308,7 +316,7 @@ export function scanMatches(
       if (semantic.predicate === kind.labelPredicate && semantic.perspective.mode === "asserted" &&
           semantic.object.kind === "literal") labels.push(semantic.object.value);
     }
-    for (const row of aliasRows.slice(0, MAX_RELATIONS)) {
+    for (const row of aliasRows.slice(0, MAX_CARD_RELATIONS)) {
       const item = verifyClaim(frame, row.claim_id);
       if (item === null) continue;
       const semantic = item.semantic;
@@ -320,13 +328,13 @@ export function scanMatches(
     if (classified && related !== null) {
       const links = ctx.db.query<{ claim_id: string }, (string | number)[]>(
         `SELECT c.claim_id FROM semantic_bindings b JOIN claim_v2_semantics c JOIN claims base USING(claim_id)
-          WHERE b.handle_id=? AND ${related.sql} ORDER BY c.claim_id LIMIT ${MAX_RELATIONS + 1}`,
+          WHERE b.handle_id=? AND ${related.sql} ORDER BY c.claim_id LIMIT ${MAX_CARD_RELATIONS + 1}`,
       ).all(handle, ...related.bindings);
       frame.stats.rowsExamined += links.length;
-      if (links.length > MAX_RELATIONS) throw new WorldProjectionBudgetError();
+      if (links.length > MAX_CARD_RELATIONS) throw new WorldProjectionBudgetError();
       classified = links.some(link => verifyClaim(frame, link.claim_id) !== null);
     }
-    const match = classified ? { labels, searchAliases, overflow: rows.length > MAX_RELATIONS } : null;
+    const match = classified ? { labels, searchAliases, overflow: rows.length > MAX_CARD_RELATIONS } : null;
     cache.set(handle, match);
     return match;
   };

@@ -13,7 +13,7 @@ export const COMMITMENT_VOCABULARY: WorldVocabularyModule = {
     worldPredicate({ predicate: "commitment.debtor", subject: "commitment", objects: ["raw_subject"] }),
     worldPredicate({ predicate: "commitment.creditor", subject: "commitment", objects: ["raw_subject"] }),
     worldPredicate({ predicate: "commitment.due", subject: "commitment", objects: ["literal"] }),
-    worldPredicate({ predicate: "commitment.status", subject: "commitment", objects: ["vocabulary"], values: ["commitment/open","commitment/claimed_done","commitment/done","commitment/dropped"] }),
+    worldPredicate({ predicate: "commitment.status", subject: "commitment", objects: ["vocabulary"], values: ["commitment/open","commitment/claimed_done","commitment/done","commitment/dropped"], conflictCardinality: "single" }),
     worldPredicate({ predicate: "commitment.deliverable", subject: "commitment", objects: ["literal","raw_subject"] }),
   ],
 };

@@ -20,7 +20,8 @@ export type ReadBudget = {
   /** Reset at the start of each projection. Only reused inside its transaction. */
   verifiedClaims?: WeakMap<Database, Map<string, Eligible | null>>;
 };
-export const WORLD_CLAIM_VERIFICATION_LIMIT = 129; // 128 candidates plus an overflow sentinel.
+export const MAX_CARD_RELATIONS = 128;
+export const WORLD_CLAIM_VERIFICATION_LIMIT = MAX_CARD_RELATIONS + 1; // 128 candidates plus an overflow sentinel.
 const READ_BYTE_LIMIT = 2 * 1024 * 1024;
 
 export function chargeBytes(budget: ReadBudget, bytes: number): void {
@@ -49,6 +50,8 @@ export interface ReadFrame {
   readonly stats: ReadStats;
   /** A traversed member may have a retained baseline even when the anchor has full history. */
   historyBaseline: boolean;
+  /** Set when a bounded collector hits its SQL candidate cap before card assembly finishes. */
+  collectorOverflow: boolean;
   readonly dependencies?: WorldDependencies | undefined;
 }
 
@@ -69,6 +72,7 @@ export function newReadFrame(
     budget: ctx.worldReadBudget ?? { bytes: 0 },
     stats: newReadStats(),
     historyBaseline: false,
+    collectorOverflow: false,
     dependencies,
   };
   sink?.push(frame);
