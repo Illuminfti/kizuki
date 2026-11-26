@@ -1,5 +1,7 @@
 import { compareRfc3339 } from "../../agents/time";
 import { rawSubjectRefKey } from "../../contracts/claim-v2";
+import { isSingleValuedConflictSpec } from "../../contracts/world-kinds";
+import { activeWorldRegistry } from "../../contracts/world-vocabulary";
 import { sourceCoverage } from "../coverage";
 import type { Enricher } from "../pipeline/enrich";
 import type { Relation } from "../../contracts/concept-card";
@@ -12,7 +14,15 @@ export function validOverlap(a: Relation["valid"], b: Relation["valid"]): boolea
     (a.until === null || compareRfc3339(b.from, "from", a.until, "until") < 0);
 }
 
-const SINGLE = new Set(["concept.definition", "learning.assistance"]);
+/**
+ * Whether `predicate` is declared single-valued for read-time conflict detection
+ * in the active world vocabulary specs (`conflictCardinality: "single"`) or the
+ * legacy predicate registry.
+ */
+export function isSingleValuedWorldPredicate(predicate: string): boolean {
+  return isSingleValuedConflictSpec(activeWorldRegistry().spec(predicate)) || isSingleValuedPredicate(predicate);
+}
+
 export const conflictEnricher: Enricher = (frame, body) => {
   const complete = !body.overflow && body.gaps.length === 0 && sourceCoverage(frame.ctx).length === 0;
   return { ...body, claims: body.claims.map((claim) => {
@@ -24,7 +34,7 @@ export const conflictEnricher: Enricher = (frame, body) => {
       const sameObject = JSON.stringify(a.object) === JSON.stringify(b.object);
       const negatesSameValue = a.polarity !== b.polarity && sameObject;
       const competingValues = a.polarity === "positive" && b.polarity === "positive" &&
-        (SINGLE.has(a.predicate) || isSingleValuedPredicate(a.predicate)) && !sameObject;
+        isSingleValuedWorldPredicate(a.predicate) && !sameObject;
       if (!negatesSameValue && !competingValues) continue;
       const overlap = validOverlap(a.valid, b.valid);
       // Claim-v2 unknown validity conservatively overlaps a matching conflict scope.

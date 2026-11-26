@@ -17,7 +17,7 @@ export const CONCEPT_VOCABULARY: WorldVocabularyModule = {
   },
   predicates: [
     concept("concept.label", ["literal"]),
-    concept("concept.definition", ["literal"]),
+    worldPredicate({ predicate: "concept.definition", subject: "concept", objects: ["literal"], conflictCardinality: "single" }),
     concept("concept.requires", ["concept"]),
     concept("concept.example", ["literal", "raw_subject"]),
     concept("concept.counterexample", ["literal", "raw_subject"]),
