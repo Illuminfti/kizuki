@@ -5,7 +5,7 @@ const SESSION_KEY = 'kizuki.app.session';
 const main = document.getElementById('main');
 const dialog = document.getElementById('dialog');
 const notice = document.getElementById('notification');
-const state = { view: 'memory', status: null, service: null, serviceStatus: 'idle', disconnectReason: 'none', model: null, modelError: false, agents: null, agentsError: false, sources: [], catalog: [], receipts: [], activityStatus: 'idle', hits: null, query: '', degraded: [], busy: false, operation: null, dismissedCaptureId: null, setupError: null, world: null, worldError: false, worldKind: 'concepts', worldQuery: '', worldRef: null, worldDetailKind: null, worldCard: null, worldLoading: false, worldAtlasFocus: null, worldAtlasPanel: 'home' };
+const state = { view: 'memory', status: null, service: null, serviceStatus: 'idle', disconnectReason: 'none', model: null, modelError: false, agents: null, agentsError: false, sources: [], catalog: [], receipts: [], activityStatus: 'idle', hits: null, query: '', degraded: [], busy: false, operation: null, dismissedCaptureId: null, setupError: null, world: null, worldError: false, worldKind: 'concepts', worldQuery: '', worldRef: null, worldDetailKind: null, worldCard: null, worldLoading: false, worldAtlasFocus: null, worldAtlasPanel: 'home', memtStatus: null, memtExperiences: null, memtDomains: [], memtQuery: '', memtDomain: '', memtOutcome: 'all', memtCeiling: 'private', memtMode: 'list', memtTruncated: false, memtLoading: false, memtError: false };
 let bearer = null;
 let noticeTimer;
 let dialogCleanup = null;
@@ -21,9 +21,11 @@ let serviceSequence = 0;
 let modelSequence = 0;
 let agentsSequence = 0;
 let worldSequence = 0;
+let memtSequence = 0;
 let privateViewValid = true;
 const icons = {
   memory: ['M7 3.5h10a2 2 0 0 1 2 2v15l-7-3-7 3v-15a2 2 0 0 1 2-2Z', 'M9 8h6M9 11.5h4'],
+  memt: ['M4 7.5 12 4l8 3.5L12 11 4 7.5Z', 'M4 12l8 3.5 8-3.5M4 16.5 12 20l8-3.5'],
   sources: ['M5 4h4v4H5zM15 16h4v4h-4zM4 16h5v4H4z', 'M7 8v3a3 3 0 0 0 3 3h4a3 3 0 0 1 3 3M7 14v2M15 4h5v5h-5zM15 7h-3a5 5 0 0 0-5 5'],
   activity: ['M3 12h4l3-8 4 16 3-8h4'],
   agents: ['M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM16 10a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5ZM3.5 20a4.5 4.5 0 0 1 9 0M13 20a3.5 3.5 0 0 1 7 0'],
@@ -113,16 +115,17 @@ function sourceLabel(source) {
 }
 function staleResponse() { return Object.assign(new Error('Response superseded.'), { code: 'stale_response' }); }
 function invalidatePrivateView() {
-  privacyGeneration++; refreshSequence++; searchSequence++; activitySequence++; serviceSequence++; modelSequence++; agentsSequence++; worldSequence++;
+  privacyGeneration++; refreshSequence++; searchSequence++; activitySequence++; serviceSequence++; modelSequence++; agentsSequence++; worldSequence++; memtSequence++;
   privateViewValid = false;
   state.busy = false; state.hits = null; state.query = ''; state.degraded = []; state.sources = []; state.receipts = []; state.activityStatus = 'idle'; state.service = null; state.serviceStatus = 'idle'; state.model = null; state.modelError = false; state.agents = null; state.agentsError = false; state.operation = null; state.world = null; state.worldError = false; state.worldRef = null; state.worldDetailKind = null; state.worldCard = null; state.worldQuery = ''; state.worldLoading = false; state.worldAtlasFocus = null; state.worldAtlasPanel = 'home'; state.worldRequest = null;
+  state.memtStatus = null; state.memtExperiences = null; state.memtDomains = []; state.memtQuery = ''; state.memtDomain = ''; state.memtOutcome = 'all'; state.memtCeiling = 'private'; state.memtMode = 'list'; state.memtTruncated = false; state.memtLoading = false; state.memtError = false;
   clearDialogTransient();
   if (dialog.open) closeDialog();
   dialog.replaceChildren();
   clearTimeout(noticeTimer); notice.textContent = ''; notice.hidden = true;
   main.replaceChildren();
 }
-function safeCount(value) { return Number.isSafeInteger(value) && value >= 0 ? value.toLocaleString() : '—'; }
+function safeCount(value) { return Number.isSafeInteger(value) && value >= 0 ? value.toLocaleString() : '-'; }
 function humanError(code) {
   if (code === 'recovery_pending') return 'Recovery remains pending. Run kizuki recover --json in a terminal. Inspect any unknown external operation before repeating this change.';
   if (code === 'service_unavailable') return 'Your workspace is saved, but background activity needs attention. Open Settings to check it and retry.';
@@ -167,14 +170,15 @@ function disconnect(reason = 'none') {
 function renderDisconnected(reason = state.disconnectReason) {
   const title = reason === 'expired' ? 'Session ended' : reason === 'manual' ? 'Tab disconnected' : 'Open Kizuki to continue';
   const detail = reason === 'expired'
-    ? 'This local app session is no longer active — for example, after restarting kizuki app. Close this tab and run kizuki app on this device to open a fresh session.'
+    ? 'This local app session is no longer active (for example, after restarting kizuki app). Close this tab and run kizuki app on this device to open a fresh session.'
     : reason === 'manual'
       ? 'This tab’s local session was cleared. Run kizuki app on this device when you want to reconnect.'
       : 'This private workspace opens from the Kizuki app on your device. Close this tab and open the app again to reconnect.';
   main.replaceChildren(el('section', { class: 'empty-state', role: reason === 'expired' ? 'alert' : undefined }, icon('lock'), el('h2', {}, title), el('p', {}, detail)));
 }
+const navDestinations = [['memory', 'Memory'], ['world', 'World'], ['memt', 'MemT'], ['sources', 'Sources'], ['activity', 'Activity'], ['agents', 'Agents'], ['settings', 'Settings']];
 function navigate(view, focus = true) {
-  if (!['memory', 'sources', 'activity', 'agents', 'world', 'settings'].includes(view)) return;
+  if (!['memory', 'world', 'memt', 'sources', 'activity', 'agents', 'settings'].includes(view)) return;
   if (state.operation?.kind === 'capture' && state.operation.state === 'succeeded') state.dismissedCaptureId = state.operation.id ?? 'completed-capture';
   if (dialog.open) closeDialog();
   state.view = view;
@@ -184,13 +188,17 @@ function navigate(view, focus = true) {
   if (view === 'settings' && state.status?.vault.ready) loadService();
   if (view === 'agents' && state.status?.vault.ready) loadAgents();
   if (view === 'world' && state.status?.vault.ready) loadWorld();
+  if (view === 'memt' && state.status?.vault.ready) loadMemt();
   if (['settings', 'sources'].includes(view) && state.status?.vault.ready) loadModel();
 }
 function renderNavigation() {
-  document.getElementById('navigation').replaceChildren(...[['memory', 'Memory'], ['sources', 'Sources'], ['activity', 'Activity'], ['agents', 'Agents'], ['world', 'World'], ['settings', 'Settings']].map(([id, title]) => el('a', { class: 'nav-link', href: `#${id}`, 'aria-current': state.view === id ? 'page' : undefined, onclick: event => { event.preventDefault(); navigate(id); } }, icon(id), title)));
-  const label = state.view.charAt(0).toUpperCase() + state.view.slice(1);
+  const links = navDestinations.map(([id, title]) => el('a', { class: 'nav-link', href: `#${id}`, 'aria-current': state.view === id ? 'page' : undefined, onclick: event => { event.preventDefault(); navigate(id); } }, icon(id), title));
+  document.getElementById('navigation').replaceChildren(...links);
+  const activeLink = links.find(link => link.getAttribute('aria-current') === 'page');
+  if (typeof activeLink?.scrollIntoView === 'function') activeLink.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+  const label = navDestinations.find(([id]) => id === state.view)?.[1] || (state.view.charAt(0).toUpperCase() + state.view.slice(1));
   document.getElementById('view-label').textContent = label;
-  document.title = `${label} — Kizuki`;
+  document.title = `${label} | Kizuki`;
   const refreshButton = document.getElementById('refresh');
   if (refreshButton) refreshButton.disabled = !bearer;
 }
@@ -598,7 +606,7 @@ async function modelSettings() {
   if (!model) { loading.append(el('p', { class: 'form-error', role: 'alert' }, 'The saved settings could not be read. Close this panel and retry; existing settings have not been replaced.')); focusDialog(loading); return; }
   const content = openDialog('Model settings', 'Choose how Kizuki organises memory pages. Saving does not contact the model or let it use any source.', 'settings');
   const form = el('form');
-  const kind = el('select', { id: 'model-kind' }, el('option', { value: 'none' }, 'Off — capture and search only'), el('option', { value: 'openai_compatible' }, 'OpenAI-compatible model'));
+  const kind = el('select', { id: 'model-kind' }, el('option', { value: 'none' }, 'Off (capture and search only)'), el('option', { value: 'openai_compatible' }, 'OpenAI-compatible model'));
   kind.value = model.selection.kind;
   form.append(el('div', { class: 'form-field' }, el('label', { for: 'model-kind' }, 'Model connection'), kind));
   const base = field(form, 'Base URL', 'model-url', 'https://your-provider.example/v1', 'url');
@@ -711,53 +719,107 @@ function agentMemorySummary(grant) {
   const labels = { public: 'Public memory', personal: 'Public and personal memory', private: 'Private memory' };
   return labels[grant?.ceiling] || `${grant?.ceiling || 'Unknown'} memory`;
 }
+const agentWizardPresets = [
+  { id: 'minimal', title: 'Minimal reader', detail: 'Public memory · search & pages · 60/min', ceiling: 'public', tools: ['search', 'get_page'], rate: 60 },
+  { id: 'world', title: 'Research & World', detail: 'Personal memory · search, context & world · 60/min', ceiling: 'personal', tools: ['search', 'get_page', 'query_entities', 'timeline', 'context_packet', 'world_view'], rate: 60 },
+  { id: 'full', title: 'Full read-only', detail: 'Private memory · all 8 read tools · 120/min', ceiling: 'private', tools: agentReadTools.map(([id]) => id), rate: 120 },
+];
+function wizardSteps(active) {
+  const steps = [['1', 'Scope & tools'], ['2', 'Review grant'], ['3', 'Connect MCP']];
+  return el('ol', { class: 'wizard-steps', 'aria-label': 'Agent setup steps' }, ...steps.map(([num, label], index) => {
+    const step = index + 1;
+    const stateClass = step < active ? ' is-done' : step === active ? ' is-active' : '';
+    return el('li', { class: `wizard-step${stateClass}`, 'aria-current': step === active ? 'step' : undefined }, el('span', { class: 'wizard-step-num' }, num), el('span', {}, label));
+  }));
+}
 function renderAgents() {
-  const section = el('section', { class: 'agents-page', 'aria-labelledby': 'agents-title' }, heading('Agent access.', 'Give each assistant its own access to your memory.', button('Set up an agent', agentEnrollment, 'primary')));
+  const section = el('section', { class: 'agents-page', 'aria-labelledby': 'agents-title' }, heading('Agent access.', 'Give each assistant its own access to your memory.', button('Set up an agent', () => agentEnrollment(), 'primary')));
   section.append(el('div', { class: 'status-note' }, icon('lock'), el('p', {}, 'Each assistant gets separate permissions. You can revoke access at any time. Create access, copy its configuration to the assistant, then ask it to search an allowed source.')));
   if (!state.agents) section.append(empty(state.agentsError ? 'Agent access could not be checked.' : 'Checking agent access.', state.agentsError ? 'Refresh before relying on enrolled or revoked state.' : 'This local workspace is reading its enrolled access records.', button('Refresh agents', loadAgents, 'primary')));
-  else if (!state.agents.length) section.append(empty('No agent access enrolled.', 'Set up a distinct read-only identity for an assistant. Its grant is separate from owner access and it can be revoked later.', button('Set up an agent', agentEnrollment, 'primary')));
+  else if (!state.agents.length) section.append(empty('No agent access enrolled.', 'Set up a distinct read-only identity for an assistant. Its grant is separate from owner access and it can be revoked later.', button('Set up an agent', () => agentEnrollment(), 'primary')));
   else {
+    const activeCount = state.agents.filter(agent => agent.revoked_at === null).length;
+    const revokedCount = state.agents.length - activeCount;
+    section.append(el('div', { class: 'metric-grid metric-grid-3', 'aria-label': 'Agent access summary' },
+      el('div', { class: 'metric-card' }, el('span', { class: 'metric-label' }, 'Active agents'), el('strong', { class: 'metric-value' }, safeCount(activeCount)), el('span', { class: 'metric-sub' }, 'Scoped MCP identities')),
+      el('div', { class: 'metric-card' }, el('span', { class: 'metric-label' }, 'Revoked'), el('strong', { class: 'metric-value' }, safeCount(revokedCount)), el('span', { class: 'metric-sub' }, 'Names retained, access blocked')),
+      el('div', { class: 'metric-card' }, el('span', { class: 'metric-label' }, 'Default posture'), el('strong', { class: 'metric-value metric-value-sm' }, 'Read-only'), el('span', { class: 'metric-sub' }, 'No canon writes from clients'))));
     const list = el('div', { class: 'agent-list' });
     for (const agent of state.agents) {
       const revoked = agent.revoked_at !== null;
       const summary = agent.grant ? `${agentMemorySummary(agent.grant)} · ${agentToolSummary(agent.grant)}` : 'Current grant details are unavailable.';
-      list.append(el('article', { class: 'agent-card' }, el('div', { class: 'agent-card-top' }, el('div', {}, el('h2', {}, agent.name), el('p', {}, summary)), el('span', { class: `badge${revoked ? '' : ' badge-active'}` }, revoked ? 'Access revoked' : 'Access enabled')), el('details', { class: 'result-details' }, el('summary', {}, 'View exact grant'), grantSummary(agent.grant)), !revoked && button('Revoke access', () => agentRevoke(agent), 'danger')));
+      const pills = agent.grant ? el('div', { class: 'chip-row' }, el('span', { class: 'badge' }, agent.grant.ceiling), el('span', { class: 'badge' }, `${safeCount(agent.grant.rate_limit_per_minute)}/min`), agent.grant.tools.includes('world_view') && el('span', { class: 'badge badge-active' }, 'World read'), agent.grant.relay_owner_corrections && el('span', { class: 'badge' }, 'Correction relay')) : null;
+      list.append(el('article', { class: 'agent-card' }, el('div', { class: 'agent-card-top' }, el('div', {}, el('h2', {}, agent.name), el('p', {}, summary), pills), el('span', { class: `badge${revoked ? '' : ' badge-active'}` }, revoked ? 'Access revoked' : 'Access enabled')), el('details', { class: 'result-details' }, el('summary', {}, 'View exact grant'), grantSummary(agent.grant)), !revoked && button('Revoke access', () => agentRevoke(agent), 'danger')));
     }
     section.append(list);
   }
   return section;
 }
-function agentEnrollment() {
+function agentEnrollment(draft = null) {
   const content = openDialog('Set up a read-only agent', 'Choose the information this assistant may read. It will have its own identity, separate from your owner access.', 'lock');
+  content.append(wizardSteps(1));
   const form = el('form'); content.append(form);
+  const presetButtons = [];
+  const presetBox = el('div', { class: 'wizard-presets', role: 'group', 'aria-label': 'Role presets' });
+  form.append(el('div', { class: 'form-field' }, el('label', {}, 'Quick role preset'), presetBox));
   const name = field(form, 'Agent name', 'agent-name', 'research-helper'); name.setAttribute('maxlength', '64');
-  const ceiling = el('select', { id: 'agent-ceiling' }, ...[['public', 'Public only'], ['personal', 'Public and personal'], ['private', 'Public, personal and private']].map(([value, label]) => el('option', { value }, label))); ceiling.value = 'public';
+  if (draft?.name) name.value = draft.name;
+  const ceiling = el('select', { id: 'agent-ceiling' }, ...[['public', 'Public only'], ['personal', 'Public and personal'], ['private', 'Public, personal and private']].map(([value, label]) => el('option', { value }, label))); ceiling.value = draft?.ceiling || 'public';
   form.append(el('div', { class: 'form-field' }, el('label', { for: 'agent-ceiling' }, 'Sensitivity ceiling'), ceiling), el('p', { class: 'model-note' }, 'Imported sources are private by default. A public-only agent may see no source information. A higher ceiling still respects your source permissions.'));
-  const choices = el('fieldset', { class: 'field-choices' }, el('legend', {}, 'Read tools'));
-  const tools = agentReadTools.map(([id, label]) => { const check = el('input', { type: 'checkbox', id: `agent-tool-${id}`, value: id, checked: ['search', 'get_page'].includes(id) }); check.value = id; choices.append(el('label', { class: 'check-row', for: `agent-tool-${id}` }, check, label)); return check; }); form.append(choices);
-  const scopeFields = el('details', { class: 'result-details' }, el('summary', {}, 'Narrow by type, subject or time (optional)')); form.append(scopeFields);
-  const types = field(scopeFields, 'Record types (optional)', 'agent-types', 'person, fact');
-  const subjects = field(scopeFields, 'Subjects (optional)', 'agent-subjects', 'person:ada');
+  const choices = el('fieldset', { class: 'field-choices field-choices-grid' }, el('legend', {}, 'Read tools'));
+  const initialTools = draft?.tools || ['search', 'get_page'];
+  const tools = agentReadTools.map(([id, label]) => { const check = el('input', { type: 'checkbox', id: `agent-tool-${id}`, value: id, checked: initialTools.includes(id) }); check.value = id; choices.append(el('label', { class: 'check-row', for: `agent-tool-${id}` }, check, label)); return check; }); form.append(choices);
+  const scopeFields = el('details', { class: 'result-details', open: !!(draft?.types || draft?.subjects || draft?.since || draft?.until) }, el('summary', {}, 'Narrow by type, subject or time (optional)')); form.append(scopeFields);
+  const types = field(scopeFields, 'Record types (optional)', 'agent-types', 'person, fact'); if (draft?.types) types.value = draft.types;
+  const subjects = field(scopeFields, 'Subjects (optional)', 'agent-subjects', 'person:ada'); if (draft?.subjects) subjects.value = draft.subjects;
   scopeFields.append(el('p', { class: 'model-note' }, 'Use exact type or subject IDs, separated by commas. Leave a field blank to include all within the sensitivity ceiling.'));
-  const since = field(scopeFields, 'From (your local time, optional)', 'agent-since', '', 'datetime-local');
-  const until = field(scopeFields, 'Until (your local time, optional)', 'agent-until', '', 'datetime-local');
-  const rate = field(form, 'Requests per minute', 'agent-rate', '60', 'number'); rate.value = '60'; rate.setAttribute('min', '1'); rate.setAttribute('max', '1000'); rate.setAttribute('step', '1');
-  const relay = el('input', { type: 'checkbox', id: 'agent-relay' }); relay.checked = false;
+  const since = field(scopeFields, 'From (your local time, optional)', 'agent-since', '', 'datetime-local'); if (draft?.since) since.value = draft.since;
+  const until = field(scopeFields, 'Until (your local time, optional)', 'agent-until', '', 'datetime-local'); if (draft?.until) until.value = draft.until;
+  const rate = field(form, 'Requests per minute', 'agent-rate', '60', 'number'); rate.value = String(draft?.rate ?? 60); rate.setAttribute('min', '1'); rate.setAttribute('max', '1000'); rate.setAttribute('step', '1');
+  const relay = el('input', { type: 'checkbox', id: 'agent-relay' }); relay.checked = draft?.relay === true;
   form.append(el('label', { class: 'check-row', for: 'agent-relay' }, relay, 'Let this agent see and relay my corrections'), el('p', { class: 'model-note' }, 'Off by default. On: its concept and situation views include the corrections you made yourself, and a correction it relays would count as yours. Off: your own corrections are left out of what it reads. This setup grants read tools only, so the agent cannot submit corrections either way.'));
+  const liveSummary = el('p', { class: 'wizard-live-summary', role: 'status' });
+  form.append(liveSummary);
+  const syncSummary = () => {
+    const chosen = tools.filter(check => check.checked).map(check => check.value);
+    const matching = agentWizardPresets.find(preset => preset.ceiling === ceiling.value && String(preset.rate) === String(rate.value) && preset.tools.length === chosen.length && preset.tools.every(item => chosen.includes(item)));
+    for (const [preset, btn] of presetButtons) {
+      const selected = matching?.id === preset.id;
+      btn.setAttribute('aria-pressed', selected ? 'true' : 'false');
+      btn.className = `preset-card${selected ? ' is-selected' : ''}`;
+    }
+    liveSummary.textContent = `Draft scope: ${ceiling.value} ceiling · ${chosen.length} read ${chosen.length === 1 ? 'tool' : 'tools'} · ${rate.value || '60'}/min · correction relay ${relay.checked ? 'on' : 'off'}`;
+  };
+  for (const preset of agentWizardPresets) {
+    const btn = el('button', { type: 'button', class: 'preset-card', 'aria-pressed': 'false', onclick: () => {
+      ceiling.value = preset.ceiling;
+      for (const check of tools) check.checked = preset.tools.includes(check.value);
+      rate.value = String(preset.rate);
+      syncSummary();
+    } }, el('strong', {}, preset.title), el('span', {}, preset.detail));
+    presetButtons.push([preset, btn]);
+    presetBox.append(btn);
+  }
+  for (const control of [ceiling, rate, relay, ...tools]) {
+    control.addEventListener('change', syncSummary);
+    control.addEventListener('input', syncSummary);
+  }
+  syncSummary();
   const errorLine = el('p', { class: 'form-error', role: 'alert' });
   form.append(errorLine, el('div', { class: 'form-actions' }, button('Cancel', closeDialog), el('button', { type: 'submit', class: 'button button-primary' }, 'Review access')));
   form.addEventListener('submit', event => {
     event.preventDefault();
-    if (!/^[a-z0-9][a-z0-9-]{1,63}$/.test(name.value.trim())) { errorLine.textContent = 'Use 2–64 lowercase letters, numbers or hyphens, starting with a letter or number.'; name.focus(); return; }
+    if (!/^[a-z0-9][a-z0-9-]{1,63}$/.test(name.value.trim())) { errorLine.textContent = 'Use 2-64 lowercase letters, numbers or hyphens, starting with a letter or number.'; name.focus(); return; }
     const limit = Number(rate.value);
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) { errorLine.textContent = 'Choose between 1 and 1,000 requests per minute.'; rate.focus(); return; }
     const scope = input => input.value.trim() ? input.value.split(',').map(value => value.trim()).filter(Boolean) : null;
     let start = null, end = null;
     try { start = since.value ? new Date(since.value).toISOString() : null; end = until.value ? new Date(until.value).toISOString() : null; } catch { errorLine.textContent = 'Enter a valid start and end time, or leave them blank.'; return; }
     if (start && end && start > end) { errorLine.textContent = 'The start time must be before the end time.'; since.focus(); return; }
-    const request = { name: name.value.trim(), operation_id: crypto.randomUUID(), grant: { ceiling: ceiling.value, types: scope(types), subjects: scope(subjects), since: start, until: end, tools: tools.filter(check => check.checked).map(check => check.value), rate_limit_per_minute: limit, relay_owner_corrections: relay.checked } };
+    const currentDraft = { name: name.value.trim(), ceiling: ceiling.value, tools: tools.filter(check => check.checked).map(check => check.value), types: types.value, subjects: subjects.value, since: since.value, until: until.value, rate: limit, relay: relay.checked };
+    const request = { name: currentDraft.name, operation_id: crypto.randomUUID(), grant: { ceiling: ceiling.value, types: scope(types), subjects: scope(subjects), since: start, until: end, tools: currentDraft.tools, rate_limit_per_minute: limit, relay_owner_corrections: relay.checked } };
     const review = openDialog('Review this agent’s access', request.name, 'lock');
-    review.append(grantSummary(request.grant), el('p', { class: 'dialog-description' }, 'Only these permissions will be granted. The next step creates a private credential file on this device; its secret value will not appear in the browser.'), el('div', { class: 'form-actions' }, button('Cancel', closeDialog), button('Create agent', () => launchOperation('agent_enroll', request, 'Creating agent access', async (operation, present) => { await loadAgents(); if (present()) showAgentResult(operation); }), 'primary')));
+    review.append(wizardSteps(2), grantSummary(request.grant), el('p', { class: 'dialog-description' }, 'Only these permissions will be granted. The next step creates a private credential file on this device; its secret value will not appear in the browser.'), el('div', { class: 'form-actions' }, button('Back to edit', () => agentEnrollment(currentDraft)), button('Cancel', closeDialog), button('Create agent', () => launchOperation('agent_enroll', request, 'Creating agent access', async (operation, present) => { await loadAgents(); if (present()) showAgentResult(operation); }), 'primary')));
     focusDialog(review);
   });
   focusDialog(content);
@@ -773,15 +835,39 @@ function showAgentResult(operation) {
   if (!bearer || !privateViewValid || state.operation?.id !== operation.id || !operation.result?.agent) return;
   const { receipt, mcp } = operation.result.agent;
   const content = openDialog('Agent access result', receipt.name, 'lock');
+  if (receipt.authority === 'active') content.append(wizardSteps(3));
   content.append(el('p', { class: 'dialog-description' }, `Access: ${receipt.authority}. Enrollment: ${receipt.status}. Credential file: ${receipt.credential}.`));
   const config = receipt.authority === 'active' && receipt.credential === 'ready' ? agentLaunchConfig(mcp) : null;
   if (config) {
-    const serialized = JSON.stringify(config, null, 2);
-    const text = el('textarea', { class: 'launch-config', readonly: '', rows: '8', 'aria-label': 'Agent MCP launch configuration', spellcheck: 'false' }); text.value = serialized;
-    content.append(el('p', { class: 'dialog-description' }, 'Add this launch configuration to your assistant’s MCP settings on this device. It refers to a private file; it contains no secret token. Kizuki has not changed another app’s settings.'), text, button('Copy launch configuration', async () => {
-      try { await navigator.clipboard.writeText(serialized); if (dialog.contains(content) && privateViewValid) message('Launch configuration copied. Add it to your assistant’s MCP settings.'); }
-      catch { if (dialog.contains(content) && privateViewValid) { text.focus(); text.select(); message('Select and copy the launch configuration from this field.'); } }
-    }));
+    const formats = {
+      raw: JSON.stringify(config, null, 2),
+      mcpServers: JSON.stringify({ mcpServers: { [receipt.name]: config } }, null, 2),
+    };
+    let activeFormat = 'raw';
+    const text = el('textarea', { class: 'launch-config', readonly: '', rows: '8', 'aria-label': 'Agent MCP launch configuration', spellcheck: 'false' }); text.value = formats.raw;
+    const rawBtn = button('Raw MCP JSON', () => setFormat('raw'), 'primary', { 'aria-pressed': 'true' });
+    const serversBtn = button('Claude / Cursor mcpServers', () => setFormat('mcpServers'), 'secondary', { 'aria-pressed': 'false' });
+    const setFormat = mode => {
+      activeFormat = mode;
+      text.value = formats[mode];
+      rawBtn.className = `button button-${mode === 'raw' ? 'primary' : 'secondary'}`;
+      serversBtn.className = `button button-${mode === 'mcpServers' ? 'primary' : 'secondary'}`;
+      rawBtn.setAttribute('aria-pressed', mode === 'raw' ? 'true' : 'false');
+      serversBtn.setAttribute('aria-pressed', mode === 'mcpServers' ? 'true' : 'false');
+    };
+    content.append(
+      el('p', { class: 'dialog-description' }, 'Add this launch configuration to your assistant’s MCP settings on this device. It refers to a private file; it contains no secret token. Kizuki has not changed another app’s settings.'),
+      el('div', { class: 'world-tabs wizard-format-tabs', role: 'group', 'aria-label': 'MCP configuration format' }, rawBtn, serversBtn),
+      text,
+      button('Copy launch configuration', async () => {
+        const value = formats[activeFormat];
+        try { await navigator.clipboard.writeText(value); if (dialog.contains(content) && privateViewValid) message('Launch configuration copied. Add it to your assistant’s MCP settings.'); }
+        catch { if (dialog.contains(content) && privateViewValid) { text.focus(); text.select(); message('Select and copy the launch configuration from this field.'); } }
+      }),
+      el('ol', { class: 'wizard-checklist' },
+        el('li', {}, 'Paste the copied JSON into your local MCP client configuration.'),
+        el('li', {}, 'Reload your assistant and ask it to search an allowed source to confirm access.')),
+    );
   } else if (receipt.authority === 'active') content.append(el('p', { class: 'form-error', role: 'alert' }, 'A usable scoped launch configuration was not returned. No owner access will be substituted.'));
   if (receipt.grant) content.append(grantSummary(receipt.grant));
   content.append(el('div', { class: 'form-actions' }, button('Done', closeDialog, 'primary')));
@@ -806,7 +892,7 @@ function renderSettings() {
   return el('section', {}, heading('Workspace settings.', 'Model setup, local custody and background activity for this device.'), renderModelSettings(), el('section', { class: 'settings-group', 'aria-labelledby': 'workspace-settings-title' }, el('h2', { id: 'workspace-settings-title' }, 'Workspace and service'), el('div', { class: 'settings-list' },
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Workspace'), el('p', {}, 'Your memory stays in a local folder you control.')), el('span', { class: 'settings-value' }, state.status?.vault.name || 'Not created')),
     el('div', { class: 'settings-row', 'aria-busy': serviceLoading ? 'true' : undefined }, el('div', {}, el('h3', {}, 'Background activity'), el('p', { role: state.serviceStatus === 'unavailable' ? 'alert' : undefined }, serviceText), state.service && el('small', {}, `Checked ${dateText(state.service.checked_at)}`)), el('div', { class: 'form-actions' }, button('Refresh', loadService, 'secondary', { disabled: serviceLoading }), state.service && state.service.state !== 'active' && state.service.kind !== 'none' && !state.service.other_workspace && button('Enable background activity', () => launchOperation('install_service', {}, 'Setting up background activity', async (_operation, present) => { await refresh(); if (present()) await loadService(); }), 'primary'))),
-    caps && el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Local search and memory'), el('p', {}, 'Read-only configuration status on this device. No network probes are made from this view.')), el('span', { class: 'settings-value' }, localCapabilitiesSummary(caps))),
+    caps && el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Local search and memory'), el('p', {}, 'Read-only configuration status on this device. No network probes are made from this view.')), el('div', { class: 'settings-inline-actions' }, el('span', { class: 'settings-value' }, localCapabilitiesSummary(caps)), button('Inspect MemT', () => navigate('memt')))),
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Source privacy'), el('p', {}, 'Each source has its own permission. Imported content stays on this device unless you separately allow a model to use it.')), button('Manage sources', () => navigate('sources'))),
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'Agent access'), el('p', {}, 'Set up, inspect or revoke separate assistant permissions.')), button('Manage agents', () => navigate('agents'))),
     el('div', { class: 'settings-row' }, el('div', {}, el('h3', {}, 'App session'), el('p', {}, 'This tab remembers only its local app capability. Search results and source content are not stored in browser storage.')), button('Disconnect tab', () => disconnect('manual'))),
@@ -867,9 +953,14 @@ function worldViewActions(section, result, knowledge) {
   const ref = knowledge.node.ref, of = { operation: knowledge.kind, [knowledge.kind === 'artifact_version' ? 'artifact' : knowledge.kind]: ref };
   const typedSituation = result.data?.schema === 'kizuki.situation-card/v2';
   const comparison = typedSituation ? { ...of, card: 'kizuki.situation-card/v2' } : of;
-  section.append(button(typedSituation ? 'Share base situation' : 'Share a resume handle', () => loadWorld(ref, { operation: 'share', of }), 'secondary'));
-  if (result.view?.kind === 'view') { state.worldAtlasFocus = { focus: { operation: knowledge.kind, ref, ...(result.data?.schema === "kizuki.situation-card/v2" ? { card: "kizuki.situation-card/v2" } : {}) }, baselineView: result.view }; section.append(button('Changes in Atlas', () => loadAtlas('changed'), 'secondary'), button('Corrections and impact', () => loadAtlas('corrections'), 'secondary')); }
-  if (result.view?.kind === 'view') section.append(button('Check for changes', () => loadWorld(ref, { operation: 'diff', of: comparison, priorView: result.view }), 'secondary'));
+  const bar = el('div', { class: 'world-actions-bar', role: 'group', 'aria-label': 'Item actions' });
+  bar.append(button(typedSituation ? 'Share base situation' : 'Share a resume handle', () => loadWorld(ref, { operation: 'share', of }), 'secondary'));
+  if (result.view?.kind === 'view') {
+    state.worldAtlasFocus = { focus: { operation: knowledge.kind, ref, ...(result.data?.schema === "kizuki.situation-card/v2" ? { card: "kizuki.situation-card/v2" } : {}) }, baselineView: result.view };
+    bar.append(button('Changes in Atlas', () => loadAtlas('changed'), 'secondary'), button('Corrections and impact', () => loadAtlas('corrections'), 'secondary'));
+    bar.append(button('Check for changes', () => loadWorld(ref, { operation: 'diff', of: comparison, priorView: result.view }), 'secondary'));
+  }
+  section.append(bar);
 }
 function worldUseful(data) {
   const usefulness = data?.taskUsefulness;
@@ -909,15 +1000,40 @@ function loadAtlas(panel = state.worldAtlasPanel) {
   state.worldAtlasPanel = panel;
   return loadWorld(null, { operation: 'atlas', panel, ...(['home', 'changed', 'corrections'].includes(panel) && state.worldAtlasFocus ? state.worldAtlasFocus : {}) });
 }
+function atlasStatusTone(status) {
+  return status === 'ready' ? 'badge badge-active' : status === 'partial' ? 'badge badge-warn' : 'badge';
+}
+function atlasStatusLabel(status) {
+  return ({ ready: 'Current', partial: 'Incomplete', empty: 'Empty', unavailable: 'Unavailable' })[status] || 'Status';
+}
 function worldAtlas(data) {
-  return el('div', { class: 'result-list', 'aria-label': 'Atlas panels' }, ...data.panels.map(panel => {
+  const multi = Array.isArray(data.panels) && data.panels.length > 1;
+  return el('div', { class: `atlas-grid${multi ? ' atlas-grid-multi' : ''}`, 'aria-label': 'Atlas panels' }, ...data.panels.map(panel => {
     const reason = { not_landed: 'This view is not available in this version.', baseline_required: 'Open an item first to keep a view for comparison.', baseline_unusable: 'The previous view is no longer available. Open the item again.', budget: 'This view exceeds the current read limit.', storage: 'This view cannot be read right now.', history: 'This historical view is not available.' }[panel.reason];
-    return el('article', { class: 'result-item', 'aria-label': panel.title }, el('h2', {}, panel.title),
-      el('p', { role: 'status' }, panel.status === 'empty' ? 'No matching information in this view.' : panel.status === 'partial' ? 'This view is incomplete.' : panel.status === 'unavailable' ? reason || 'This view is unavailable.' : 'Current view'), worldCoverage(panel.coverage),
-      ...panel.entries.map(entry => el('section', {}, el('h3', {}, entry.title), ...entry.facts.map(fact => el('p', {}, `${fact.label}: ${fact.value}`)), ...entry.relations.map(worldRelation), entry.ref && entry.operation ? button('Open item', () => loadWorld(entry.ref, { operation: entry.operation, [entry.operation === 'artifact_version' ? 'artifact' : entry.operation]: entry.ref }), 'quiet') : null)),
-      panel.change ? el('div', {}, el('p', {}, 'Visible differences; these changes are not necessarily caused by corrections.'),
-        ...panel.change.added.map(ref => el('p', {}, `Added statement: ${ref.token}`)), ...panel.change.removed.map(ref => el('p', {}, `Removed statement: ${ref.token}`)), ...panel.change.changed.map(item => el('p', {}, `Changed statement: ${item.claim.token}; ${item.fields.join(', ')}`)), panel.change.truncated ? el('p', {}, 'More changes may exist beyond this bounded view.') : null) : null,
-      panel.nextView && state.worldAtlasFocus ? button('Keep this comparison', () => { state.worldAtlasFocus = { ...state.worldAtlasFocus, baselineView: panel.nextView }; loadAtlas(panel.panel); }, 'secondary') : null);
+    const statusText = panel.status === 'empty' ? 'No matching information in this view.' : panel.status === 'partial' ? 'This view is incomplete.' : panel.status === 'unavailable' ? reason || 'This view is unavailable.' : 'Current view';
+    const entries = Array.isArray(panel.entries) ? panel.entries : [];
+    return el('article', { class: 'atlas-panel-card', 'aria-label': panel.title },
+      el('div', { class: 'atlas-panel-head' },
+        el('div', {}, el('h2', {}, panel.title), el('p', { class: 'atlas-panel-status', role: 'status' }, statusText)),
+        el('div', { class: 'chip-row' }, el('span', { class: atlasStatusTone(panel.status) }, atlasStatusLabel(panel.status)), entries.length > 0 && el('span', { class: 'badge' }, `${safeCount(entries.length)} ${entries.length === 1 ? 'item' : 'items'}`))),
+      worldCoverage(panel.coverage),
+      entries.length > 0 ? el('div', { class: 'atlas-entry-list' }, ...entries.map(entry => el('section', { class: 'atlas-entry' },
+        el('div', { class: 'atlas-entry-head' },
+          el('h3', {}, entry.title),
+          entry.ref && entry.operation ? button('Open item', () => loadWorld(entry.ref, { operation: entry.operation, [entry.operation === 'artifact_version' ? 'artifact' : entry.operation]: entry.ref }), 'quiet') : null),
+        entry.facts.length > 0 ? el('dl', { class: 'atlas-facts' }, ...entry.facts.map(fact => el('div', {}, el('dt', {}, fact.label), el('dd', {}, fact.value)))) : null,
+        ...entry.relations.map(worldRelation)))) : null,
+      panel.change ? el('div', { class: 'atlas-diff-block' },
+        el('p', { class: 'model-note' }, 'Visible differences; these changes are not necessarily caused by corrections.'),
+        el('div', { class: 'atlas-diff-counts' },
+          el('div', {}, el('span', {}, 'Added'), el('strong', {}, safeCount(panel.change.added.length))),
+          el('div', {}, el('span', {}, 'Removed'), el('strong', {}, safeCount(panel.change.removed.length))),
+          el('div', {}, el('span', {}, 'Changed'), el('strong', {}, safeCount(panel.change.changed.length)))),
+        ...panel.change.added.map(ref => el('p', { class: 'atlas-diff-line' }, `Added statement: ${ref.token}`)),
+        ...panel.change.removed.map(ref => el('p', { class: 'atlas-diff-line' }, `Removed statement: ${ref.token}`)),
+        ...panel.change.changed.map(item => el('p', { class: 'atlas-diff-line' }, `Changed statement: ${item.claim.token}; ${item.fields.join(', ')}`)),
+        panel.change.truncated ? el('p', { class: 'model-note' }, 'More changes may exist beyond this bounded view.') : null) : null,
+      panel.nextView && state.worldAtlasFocus ? el('div', { class: 'atlas-panel-actions' }, button('Keep this comparison', () => { state.worldAtlasFocus = { ...state.worldAtlasFocus, baselineView: panel.nextView }; loadAtlas(panel.panel); }, 'secondary')) : null);
   }));
 }
 function worldSituationV2(data) {
@@ -969,14 +1085,40 @@ async function changeAttention(cue, action) {
 }
 function renderWorld() {
   const kind = state.worldKind, field = el('input', { id: 'world-query', type: 'search', placeholder: `Find ${kind}…`, 'aria-label': `Find ${kind}`, autocomplete: 'off' }); field.value = state.worldQuery; if (kind === 'outcomes') { field.setAttribute('placeholder', 'Outcome subject'); field.setAttribute('aria-label', 'Outcome subject'); }
+  const currentResult = state.world && state.world.status !== 'not_found' ? (state.world.result || state.world) : null;
+  const currentKnowledge = currentResult?.data ? worldKnowledgeNode(currentResult.data) : null;
+  if (currentKnowledge?.node.ref && currentResult?.view?.kind === 'view') {
+    state.worldAtlasFocus = { focus: { operation: currentKnowledge.kind, ref: currentKnowledge.node.ref, ...(currentResult.data?.schema === 'kizuki.situation-card/v2' ? { card: 'kizuki.situation-card/v2' } : {}) }, baselineView: currentResult.view };
+  }
   const choose = value => { state.worldKind = value; state.worldDetailKind = null; state.worldCard = null; loadWorld(null); };
   const form = el('form', { class: 'search-form', onsubmit: event => { event.preventDefault(); state.worldQuery = field.value; loadWorld(null); } }, icon('search'), field, el('button', { class: 'button button-primary', type: 'submit' }, 'Find'));
-  const section = el('section', { 'aria-busy': state.worldLoading ? 'true' : 'false' }, heading('Your world.', 'Ideas, situations and practical knowledge connected to the information you save.'), el('div', { class: 'world-tabs', role: 'group', 'aria-label': 'World type' }, button('Attention', () => choose('attention'), state.worldKind === 'attention' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'attention' }), button('Concepts', () => choose('concepts'), state.worldKind === 'concepts' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'concepts' }), button('Situations', () => choose('situations'), state.worldKind === 'situations' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'situations' }), button('Procedures', () => choose('procedures'), state.worldKind === 'procedures' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'procedures' }), button('Artifacts', () => choose('artifacts'), state.worldKind === 'artifacts' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'artifacts' }), button('Outcomes', () => choose('outcomes'), state.worldKind === 'outcomes' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'outcomes' })), kind === 'attention' ? null : form, el('p', { class: 'search-hint' }, 'Kizuki uses your configured model to organise sources you allow it to read. You can always search saved sources without a model.'));
-  section.append(el('nav', { class: 'world-tabs', 'aria-label': 'Atlas views' }, ...Object.entries(atlasPanelLabels).map(([panel, label]) => button(label, () => loadAtlas(panel), 'secondary', { 'aria-pressed': state.world?.operation === 'atlas' && state.worldAtlasPanel === panel }))));
+  const atlasActive = state.world?.operation === 'atlas' || state.worldRequest?.operation === 'atlas';
+  const atlasBar = el('div', { class: 'atlas-explorer-bar' },
+    el('div', { class: 'atlas-explorer-head' },
+      el('div', { class: 'atlas-explorer-title' }, el('h2', {}, 'World Atlas'), el('span', { class: 'atlas-explorer-sub' }, 'Live panels from the shared world reader')),
+      state.worldAtlasFocus
+        ? el('div', { class: 'atlas-focus-pill' }, el('span', { class: 'badge badge-active' }, `Pinned baseline: ${state.worldAtlasFocus.focus.operation.replaceAll('_', ' ')}`), button('Clear focus', () => { state.worldAtlasFocus = null; if (atlasActive) loadAtlas(); else render(); }, 'quiet'))
+        : el('span', { class: 'badge' }, 'Open an item to pin a diff baseline')),
+    el('nav', { class: 'world-tabs atlas-nav', 'aria-label': 'Atlas views' }, ...Object.entries(atlasPanelLabels).map(([panel, label]) => {
+      const pressed = atlasActive && state.worldAtlasPanel === panel;
+      return button(label, () => loadAtlas(panel), pressed ? 'primary' : 'secondary', { 'aria-pressed': pressed });
+    })));
   const resumeField = el('input', { type: 'text', placeholder: 'Resume handle', 'aria-label': 'Resume handle', maxlength: '43', autocomplete: 'off' });
-  section.append(el('form', { class: 'search-form', onsubmit: event => { event.preventDefault(); const handle = resumeField.value.trim(); if (!handle) { resumeField.focus(); message('Enter a resume handle to open a shared view.'); return; } loadWorld(null, { operation: 'resume', handle }); } }, resumeField, el('button', { class: 'button button-secondary', type: 'submit' }, 'Resume')));
+  const resumeForm = el('form', { class: 'search-form search-form-compact', onsubmit: event => { event.preventDefault(); const handle = resumeField.value.trim(); if (!handle) { resumeField.focus(); message('Enter a resume handle to open a shared view.'); return; } loadWorld(null, { operation: 'resume', handle }); } }, resumeField, el('button', { class: 'button button-secondary', type: 'submit' }, 'Resume'));
   const taskField = el('input', { id: 'world-task', type: 'text', placeholder: 'What are you working on?', 'aria-label': 'Task for world slice', maxlength: '512', autocomplete: 'off' });
-  section.append(el('form', { id: 'world-slice-form', class: 'search-form', onsubmit: event => { event.preventDefault(); if (!taskField.value.trim()) { taskField.focus(); message('Describe what you are working on to prepare a task view.'); return; } loadWorld(null, { operation: 'slice', task: taskField.value, budgetTokens: 2000 }); } }, taskField, el('button', { class: 'button button-secondary', type: 'submit' }, 'Prepare task view')));
+  const sliceForm = el('form', { id: 'world-slice-form', class: 'search-form search-form-compact', onsubmit: event => { event.preventDefault(); if (!taskField.value.trim()) { taskField.focus(); message('Describe what you are working on to prepare a task view.'); return; } loadWorld(null, { operation: 'slice', task: taskField.value, budgetTokens: 2000 }); } }, taskField, el('button', { class: 'button button-secondary', type: 'submit' }, 'Prepare task view'));
+  const controls = el('div', { class: 'world-controls' },
+    el('div', { class: 'world-tabs', role: 'group', 'aria-label': 'World type' },
+      button('Attention', () => choose('attention'), !atlasActive && state.worldKind === 'attention' ? 'primary' : 'secondary', { 'aria-pressed': !atlasActive && state.worldKind === 'attention' }),
+      button('Concepts', () => choose('concepts'), !atlasActive && state.worldKind === 'concepts' ? 'primary' : 'secondary', { 'aria-pressed': !atlasActive && state.worldKind === 'concepts' }),
+      button('Situations', () => choose('situations'), !atlasActive && state.worldKind === 'situations' ? 'primary' : 'secondary', { 'aria-pressed': !atlasActive && state.worldKind === 'situations' }),
+      button('Procedures', () => choose('procedures'), !atlasActive && state.worldKind === 'procedures' ? 'primary' : 'secondary', { 'aria-pressed': !atlasActive && state.worldKind === 'procedures' }),
+      button('Artifacts', () => choose('artifacts'), !atlasActive && state.worldKind === 'artifacts' ? 'primary' : 'secondary', { 'aria-pressed': !atlasActive && state.worldKind === 'artifacts' }),
+      button('Outcomes', () => choose('outcomes'), !atlasActive && state.worldKind === 'outcomes' ? 'primary' : 'secondary', { 'aria-pressed': !atlasActive && state.worldKind === 'outcomes' })),
+    kind === 'attention' ? null : form,
+    el('div', { class: 'world-tools-grid' }, sliceForm, resumeForm),
+    el('p', { class: 'search-hint' }, 'Kizuki uses your configured model to organise sources you allow it to read. You can always search saved sources without a model.'));
+  const section = el('section', { class: 'world-page', 'aria-busy': state.worldLoading ? 'true' : 'false' }, heading('Your world.', 'Ideas, situations and practical knowledge connected to the information you save.'), atlasBar, controls);
   const retry = () => ['observation', 'evidence'].includes(state.worldRequest?.operation) ? loadWorld(state.worldRef, state.worldRequest) : state.worldAtlasPanel && state.worldRequest?.operation === 'atlas' ? loadAtlas() : loadWorld();
   const noMatches = () => empty(`No ${kind} found.`, state.worldQuery ? 'Try another name, or search your saved sources.' : 'Connect a source and set up a model to start building your world. If you have already done this, check processing in Activity.', el('div', { class: 'empty-actions' }, button('Search memory', () => navigate('memory'), 'primary'), button('Model settings', () => navigate('settings'))));
   if (state.worldRef) section.append(button(`Back to ${kind}`, () => loadWorld(null), 'quiet'));
@@ -1088,12 +1230,177 @@ function renderOperation() {
   const detail = (operation.kind === 'correct' || operation.error?.code === 'recovery_pending') && operation.result ? operation.result.message : operation.result?.agent ? `Access: ${operation.result.agent.receipt.authority}. Enrollment: ${operation.result.agent.receipt.status}.` : operation.kind === 'run_pass' && !running && !operation.error ? runSummary(operation) : operation.kind === 'model_test' && !operation.error ? 'This test uses a made-up prompt. It does not use your imported information or grant source permission.' : running ? 'Your source checkpoint keeps progress recoverable. You can continue using the app.' : operation.error ? humanError(operation.error.code) : operation.kind === 'capture' && operation.counts ? `${safeCount(operation.counts.stored)} saved this time. Check Sources for the latest history and any problems.` : 'Check Sources or Activity for the current state.';
   return el('div', { class: 'job-status', role: 'status' }, icon(running ? 'clock' : operation.state === 'succeeded' ? 'check' : 'info'), el('div', {}, el('h3', {}, title), el('p', {}, detail), operation.kind === 'correct' && operation.result?.recovery_pending === undefined && Number.isSafeInteger(operation.result?.rewritten_pages) && el('p', {}, `${safeCount(operation.result.rewritten_pages)} memory ${operation.result.rewritten_pages === 1 ? 'page' : 'pages'} rewritten.`), operation.kind === 'correct' && operation.result?.receipt_id && el('details', { class: 'result-details' }, el('summary', {}, 'Correction receipt'), el('code', {}, operation.result.receipt_id)), operation.result?.run?.run_id && el('details', { class: 'result-details' }, el('summary', {}, 'Run receipt'), el('code', {}, operation.result.run.run_id)), operation.result?.agent && button('Agent setup details', () => showAgentResult(operation))));
 }
+function memtModeLabel(mode) {
+  return ({ off: 'Off', local_hybrid: 'Local hybrid', gpu_configured: 'GPU configured', unavailable: 'Needs attention' })[mode] || 'Unknown';
+}
+function memtOutcomeLabel(outcome) {
+  return ({ verified: 'Verified', observed: 'Observed', failed: 'Failed', superseded: 'Superseded' })[outcome] || 'Recorded';
+}
+function memtTaintLabel(taint) {
+  return ({ clean: 'Clean', stale: 'Stale', purged_invalidated: 'Purged / invalidated' })[taint] || 'Unknown';
+}
+async function loadMemt(options = {}) {
+  if (!bearer || !privateViewValid) return;
+  const includeStatus = options.includeStatus !== false;
+  const sequence = ++memtSequence, session = bearer, generation = privacyGeneration, epoch = state.status?.visibility_epoch;
+  const current = () => sequence === memtSequence && session === bearer && generation === privacyGeneration && epoch === state.status?.visibility_epoch && privateViewValid;
+  state.memtLoading = true; state.memtError = false;
+  if (state.view === 'memt') render();
+  const payload = {
+    ...(state.memtQuery.trim() ? { query: state.memtQuery.trim() } : {}),
+    ...(state.memtDomain ? { domain: state.memtDomain } : {}),
+    outcome: state.memtOutcome || 'all',
+    ceiling: state.memtCeiling || 'private',
+    limit: 25,
+  };
+  try {
+    const [statusData, expData] = await Promise.all([
+      includeStatus || !state.memtStatus ? api('memt_status') : Promise.resolve(state.memtStatus),
+      api('memt_experiences', payload),
+    ]);
+    if (!current()) return;
+    state.memtStatus = statusData;
+    state.memtExperiences = Array.isArray(expData.experiences) ? expData.experiences : [];
+    state.memtDomains = Array.isArray(expData.domains) ? expData.domains : [];
+    state.memtTruncated = expData.truncated === true;
+    state.memtMode = expData.mode === 'search' ? 'search' : 'list';
+    state.memtError = false;
+  } catch (error) {
+    if (!current() || error?.code === 'stale_response') return;
+    state.memtError = true;
+    state.memtExperiences = null;
+    if (includeStatus) state.memtStatus = null;
+  } finally {
+    if (current()) { state.memtLoading = false; if (state.view === 'memt') render(); }
+  }
+}
+function renderMemt() {
+  const section = el('section', { class: 'memt-page', 'aria-busy': state.memtLoading ? 'true' : 'false' },
+    heading('MemT inspector.', 'Read-only procedural experience bank and snapshot custody state on this device.', button('Refresh MemT', () => loadMemt({ includeStatus: true }), 'secondary', { disabled: state.memtLoading })));
+  if (state.memtLoading && !state.memtStatus && state.memtExperiences === null) {
+    section.append(el('p', { class: 'search-hint', role: 'status', 'aria-live': 'polite' }, 'Loading MemT status and experience bank…'));
+    return section;
+  }
+  if (state.memtError) {
+    section.append(el('div', { role: 'alert' }, empty('MemT inspector is unavailable.', 'Local MemT status could not be checked. Retry before relying on this view.', button('Retry MemT', () => loadMemt({ includeStatus: true }), 'primary'))));
+    return section;
+  }
+  const statusData = state.memtStatus;
+  if (!statusData) {
+    section.append(empty('Inspect MemT procedural memory.', 'Load local experience counts, snapshot custody partitions, and procedural entries without touching disk or network.', button('Load MemT', () => loadMemt({ includeStatus: true }), 'primary')));
+    return section;
+  }
+  const expStats = statusData.experiences || { total: 0, verified: 0, observed: 0, failed: 0, uninternalized: 0 };
+  const snapStats = statusData.snapshots || { total: 0, clean: 0, stale: 0, purged_invalidated: 0, partitions: [] };
+  const modeTone = statusData.mode === 'local_hybrid' || statusData.mode === 'gpu_configured' ? 'badge badge-active' : statusData.mode === 'unavailable' ? 'badge badge-danger' : 'badge';
+  section.append(el('div', { class: 'metric-grid', 'aria-label': 'MemT status metrics' },
+    el('div', { class: 'metric-card' },
+      el('div', { class: 'metric-head' }, el('span', { class: 'metric-label' }, 'Mode'), el('span', { class: modeTone }, memtModeLabel(statusData.mode))),
+      el('strong', { class: 'metric-value metric-value-sm' }, statusData.model || (statusData.registry_present ? 'Local SQLite bank' : 'Not initialized')),
+      el('span', { class: 'metric-sub' }, statusData.gpu_configured ? `GPU configured · partition ${statusData.default_partition}` : 'Zero network probes · read-only')),
+    el('div', { class: 'metric-card' },
+      el('span', { class: 'metric-label' }, 'Experiences'),
+      el('strong', { class: 'metric-value' }, safeCount(expStats.total)),
+      el('span', { class: 'metric-sub' }, `${safeCount(expStats.verified)} verified · ${safeCount(expStats.observed)} observed · ${safeCount(expStats.failed)} failed`)),
+    el('div', { class: 'metric-card' },
+      el('span', { class: 'metric-label' }, 'Pending sync'),
+      el('strong', { class: 'metric-value' }, safeCount(expStats.uninternalized)),
+      el('span', { class: 'metric-sub' }, expStats.uninternalized > 0 ? 'Eligible for snapshot internalization' : 'No uninternalized entries')),
+    el('div', { class: 'metric-card' },
+      el('span', { class: 'metric-label' }, 'Snapshots'),
+      el('strong', { class: 'metric-value' }, safeCount(snapStats.total)),
+      el('span', { class: 'metric-sub' }, `${safeCount(snapStats.clean)} clean · ${safeCount(snapStats.stale)} stale · ${safeCount(snapStats.purged_invalidated)} invalidated`))));
+
+  const partitions = Array.isArray(snapStats.partitions) ? snapStats.partitions : [];
+  const snapSection = el('section', { class: 'memt-section', 'aria-labelledby': 'memt-snapshots-title' },
+    el('div', { class: 'section-header' }, el('h2', { id: 'memt-snapshots-title' }, 'Snapshot custody'), el('span', {}, `${safeCount(partitions.length)} ${partitions.length === 1 ? 'partition' : 'partitions'}`)));
+  if (!partitions.length) {
+    snapSection.append(el('div', { class: 'status-note memt-compact-note' }, icon('info'), el('p', {}, 'No snapshot partitions are registered in this vault yet. Run kizuki memt sync or kizuki memt snapshot verify in a terminal to manage snapshots.')));
+  } else {
+    const snapList = el('div', { class: 'memt-snapshot-list' });
+    for (const part of partitions) {
+      const taintClass = part.taint_state === 'clean' ? 'badge badge-active' : part.taint_state === 'purged_invalidated' ? 'badge badge-danger' : 'badge badge-warn';
+      snapList.append(el('article', { class: 'memt-snapshot-row' },
+        el('div', { class: 'memt-snapshot-main' },
+          el('div', { class: 'chip-row' }, el('strong', {}, part.partition_key), el('span', { class: taintClass }, memtTaintLabel(part.taint_state)), el('span', { class: 'badge' }, part.sensitivity_ceiling)),
+          el('p', { class: 'model-note' }, 'Snapshot: ', el('code', {}, part.snapshot_name), ` · ${safeCount(part.source_count)} ${part.source_count === 1 ? 'source' : 'sources'}`)),
+        el('div', { class: 'memt-snapshot-meta' }, el('small', {}, `Updated ${dateText(part.updated_at)}`), el('small', {}, `Watermark ${part.event_watermark}`))));
+    }
+    snapSection.append(snapList);
+  }
+  section.append(snapSection);
+
+  const queryInput = el('input', { id: 'memt-query', type: 'search', placeholder: 'Search procedural conditions, recommendations, or scope…', 'aria-label': 'Search MemT experiences', autocomplete: 'off', maxlength: '500' });
+  queryInput.value = state.memtQuery;
+  const hasFilters = Boolean(state.memtQuery.trim() || state.memtDomain || state.memtOutcome !== 'all' || state.memtCeiling !== 'private');
+  const searchForm = el('form', { id: 'memt-search-form', class: 'search-form', onsubmit: event => { event.preventDefault(); state.memtQuery = queryInput.value; loadMemt({ includeStatus: false }); } },
+    icon('search'), queryInput, el('button', { class: 'button button-primary', type: 'submit', disabled: state.memtLoading }, 'Search'),
+    hasFilters && button('Clear', () => { state.memtQuery = ''; state.memtDomain = ''; state.memtOutcome = 'all'; state.memtCeiling = 'private'; loadMemt({ includeStatus: false }); }));
+  const outcomeBar = el('div', { class: 'world-tabs memt-filter-pills', role: 'group', 'aria-label': 'Filter by outcome' }, ...[['all', 'All'], ['verified', 'Verified'], ['observed', 'Observed'], ['failed', 'Failed'], ['superseded', 'Superseded']].map(([value, label]) =>
+    button(label, () => { state.memtOutcome = value; loadMemt({ includeStatus: false }); }, state.memtOutcome === value ? 'primary' : 'secondary', { 'aria-pressed': state.memtOutcome === value })));
+  const domainSelect = el('select', { id: 'memt-domain', 'aria-label': 'Filter by domain' },
+    el('option', { value: '' }, 'All domains'),
+    ...state.memtDomains.map(domain => el('option', { value: domain }, domain)));
+  domainSelect.value = state.memtDomain;
+  domainSelect.addEventListener('change', () => { state.memtDomain = domainSelect.value; loadMemt({ includeStatus: false }); });
+  const ceilingSelect = el('select', { id: 'memt-ceiling', 'aria-label': 'Sensitivity ceiling' },
+    ...[['private', 'Private (all)'], ['personal', 'Personal & below'], ['work', 'Work & public'], ['public', 'Public only']].map(([value, label]) => el('option', { value }, label)));
+  ceilingSelect.value = state.memtCeiling;
+  ceilingSelect.addEventListener('change', () => { state.memtCeiling = ceilingSelect.value; loadMemt({ includeStatus: false }); });
+
+  const expItems = Array.isArray(state.memtExperiences) ? state.memtExperiences : [];
+  const expSection = el('section', { class: 'memt-section', 'aria-labelledby': 'memt-experiences-title' },
+    el('div', { class: 'section-header' }, el('h2', { id: 'memt-experiences-title' }, 'Experience bank'), el('span', {}, `${safeCount(expItems.length)}${state.memtTruncated ? '+' : ''} ${state.memtMode === 'search' ? 'matches' : expItems.length === 1 ? 'entry' : 'entries'}`)),
+    searchForm,
+    el('div', { class: 'memt-filter-row' }, outcomeBar, el('div', { class: 'memt-selects' }, domainSelect, ceilingSelect)));
+
+  if (state.memtLoading) {
+    expSection.append(el('p', { class: 'search-hint', role: 'status', 'aria-live': 'polite' }, 'Updating experience inspector…'));
+  } else if (!expItems.length) {
+    expSection.append(empty(
+      statusData.registry_present ? 'No matching procedural experiences.' : 'No MemT experience bank on disk yet.',
+      statusData.registry_present
+        ? 'Adjust the search query, outcome, domain, or sensitivity ceiling to inspect stored procedural entries.'
+        : 'MemT stays strictly read-only until an experience is recorded with kizuki memt experience add or MCP memt_experience.',
+      hasFilters ? button('Reset filters', () => { state.memtQuery = ''; state.memtDomain = ''; state.memtOutcome = 'all'; state.memtCeiling = 'private'; loadMemt({ includeStatus: false }); }, 'primary') : null));
+  } else {
+    const list = el('div', { class: 'memt-exp-list' });
+    for (const item of expItems) {
+      const outcomeClass = item.outcome === 'verified' ? 'badge badge-active' : item.outcome === 'failed' ? 'badge badge-danger' : item.outcome === 'observed' ? 'badge badge-warn' : 'badge';
+      const confidencePct = Number.isFinite(item.confidence) ? `${Math.round(item.confidence * 100)}% confidence` : 'Confidence unknown';
+      list.append(el('article', { class: 'memt-exp-card' },
+        el('div', { class: 'result-meta' },
+          el('span', { class: outcomeClass }, memtOutcomeLabel(item.outcome)),
+          el('span', { class: 'badge' }, item.domain),
+          el('code', { class: 'scope-chip' }, item.scope_key),
+          el('span', { class: 'badge' }, item.sensitivity),
+          el('span', {}, confidencePct),
+          el('span', {}, `${safeCount(item.use_count)} ${item.use_count === 1 ? 'use' : 'uses'}`),
+          el('span', { class: 'badge' }, item.internalized_in_snapshot ? 'Internalized' : 'Local bank'),
+          item.has_embedding && el('span', { class: 'badge' }, 'Embedded'),
+          Number.isFinite(item.score) && el('span', {}, `score ${item.score.toFixed(3)}`)),
+        el('div', { class: 'memt-exp-body' },
+          el('div', { class: 'memt-exp-field' }, el('span', { class: 'memt-field-tag' }, 'When'), el('p', { class: 'result-text' }, item.condition)),
+          el('div', { class: 'memt-exp-field' }, el('span', { class: 'memt-field-tag' }, 'Recommendation'), el('p', { class: 'result-text' }, item.recommendation))),
+        el('details', { class: 'result-details' },
+          el('summary', {}, 'Verification & provenance'),
+          item.verification ? el('p', { class: 'result-text' }, item.verification) : el('p', {}, 'No verification note recorded.'),
+          el('p', {}, 'ID: ', el('code', {}, item.id), ` · Updated ${dateText(item.updated_at)}`),
+          item.internalized_in_snapshot ? el('p', {}, 'Snapshot: ', el('code', {}, item.internalized_in_snapshot)) : null,
+          ...(item.citations.length ? [el('p', {}, 'Citations:'), ...item.citations.map(ref => el('p', {}, el('code', {}, ref)))] : [el('p', {}, 'No citations recorded.')]))));
+    }
+    expSection.append(list);
+    if (state.memtTruncated) expSection.append(el('p', { class: 'search-hint' }, 'Showing the first 25 matching entries. Narrow your query or domain to inspect more.'));
+  }
+  section.append(expSection, el('div', { class: 'status-note' }, icon('lock'), el('p', {}, `Checked ${dateText(statusData.checked_at)}. Local read-only inspection only; MemT entries remain subject to sensitivity ceilings and purge custody.`)));
+  return section;
+}
 function render() {
   renderNavigation();
   if (!bearer) { renderDisconnected(); return; }
   if (!privateViewValid) { main.replaceChildren(empty('Refreshing your workspace.', 'Checking current permissions before showing saved information.')); return; }
   if (!state.status) return;
-  const content = !state.status.vault.ready ? renderWelcome() : state.view === 'memory' ? renderMemory() : state.view === 'sources' ? renderSources() : state.view === 'activity' ? renderActivity() : state.view === 'agents' ? renderAgents() : state.view === 'world' ? renderWorld() : renderSettings();
+  const content = !state.status.vault.ready ? renderWelcome() : state.view === 'memory' ? renderMemory() : state.view === 'sources' ? renderSources() : state.view === 'activity' ? renderActivity() : state.view === 'agents' ? renderAgents() : state.view === 'world' ? renderWorld() : state.view === 'memt' ? renderMemt() : renderSettings();
   const operation = renderOperation(); if (operation) content.prepend(operation);
   main.replaceChildren(content);
 }
@@ -1126,6 +1433,7 @@ async function refresh() {
     if (status.vault.ready && ['settings', 'sources'].includes(state.view)) void loadModel();
     if (status.vault.ready && state.view === 'agents') void loadAgents();
     if (status.vault.ready && state.view === 'world') void loadWorld();
+    if (status.vault.ready && state.view === 'memt') void loadMemt();
   } catch (error) { if (bearer && sequence === refreshSequence && error.code !== 'stale_response') { invalidatePrivateView(); main.replaceChildren(empty('Let’s reconnect.', error.message, button('Try again', refresh, 'primary'))); } }
 }
 function initializeFailureMessage(code) {
@@ -1263,6 +1571,7 @@ async function checkVisibility() {
       invalidatePrivateView();
       await refresh();
       if (state.view === 'activity') await loadActivity();
+      if (state.view === 'memt') await loadMemt();
       if (bearer && privateViewValid) message('Your memory view was refreshed to match current permissions.');
     } else { reconcileOperation(current.operations); updateOperationBanner(); }
   } catch (error) { if (bearer && error.code !== 'stale_response') { invalidatePrivateView(); main.replaceChildren(empty('Let’s reconnect.', 'Kizuki could not confirm current permissions. Refresh before viewing saved information.', button('Refresh', refresh, 'primary'))); } }

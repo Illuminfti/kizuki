@@ -9,7 +9,7 @@ export interface Terminal {
   draw(frame: string[]): void;
   onKeys(handler: (keys: Key[]) => void): () => void;
   onResize(handler: () => void): () => void;
-  /** stdin ended, a fatal signal, or a crash — same cleanup path as quit. */
+  /** stdin ended, a fatal signal, or a crash; same cleanup path as quit. */
   onClose(handler: (reason: CloseReason, error?: unknown) => void): () => void;
   enter(): void;
   leave(): void;
