@@ -45,7 +45,7 @@ export function collectEndpointStatements(
     )
     .all(...selected.bindings, ...valid.bindings);
   if (rows.length > MAX_CARD_RELATIONS) frame.collectorOverflow = true;
-  return rows.map((row) => row.claim_id);
+  return rows.slice(0, MAX_CARD_RELATIONS).map((row) => row.claim_id);
 }
 
 /** Attributed statements and explicit context are person relations, not a consensus. */
