@@ -5,6 +5,9 @@ import { revokeSourceGrant } from "../../src/ledger/source-grants";
 import { serveWorldView } from "@kizuki/core/world";
 import { TYPED_EXTRACTION_KINDS } from "../../src/world/collectors";
 import { readWorldKindCoverage } from "../../src/world/coverage";
+import { newReadFrame } from "../../src/world/pipeline/frame";
+import { readWorldMatches } from "../../src/world/pipeline/read";
+import { worldNamespace } from "../../src/world/references";
 import { hiddenScene, observe } from "../helpers/noninterference";
 import { worldSeed } from "../helpers/world-seed";
 import { cardFixture } from "./card-fixture";
@@ -102,19 +105,44 @@ test("a hidden conflicting status on question or framework cannot alter a narrow
     await observe(reader, readQ);
     const beforeQ = await observe(reader, readQ);
 
+    let fRef!: { readonly kind: "object"; readonly token: string };
+    f.db.transaction(() => {
+      const ns = worldNamespace(f.db, reader.principal);
+      const fPage = readWorldMatches(newReadFrame(reader, ns, { kind: "all" }), "framework", "Privacy Framework", null, 10);
+      if (fPage.matches.length !== 1) throw new Error("framework not discovered for reader");
+      fRef = fPage.matches[0]!.ref;
+    }).immediate();
+    const fInput = { operation: "framework", framework: fRef, valid: { kind: "all" }, knownAt: { kind: "current" } };
+    const readF = { name: "framework card", run: (ctx: typeof reader) => serveWorldView(ctx, fInput) };
+    await observe(reader, readF);
+    const beforeF = await observe(reader, readF);
+
     // Add a private conflicting question.status and framework.lifecycle.
     await f.write("question.status", { kind: "vocabulary", ref: { kind: "vocabulary", id: "question/abandoned" } }, { subject: "question:priv", floor: "private" });
     await f.write("framework.lifecycle", { kind: "vocabulary", ref: { kind: "vocabulary", id: "framework/rejected" } }, { subject: "framework:priv", floor: "private" });
 
     expect(await observe(reader, readQ)).toEqual(beforeQ);
+    expect(await observe(reader, readF)).toEqual(beforeF);
 
-    // Owner sees the conflict on the question card.
+    // Owner sees the conflict on both the question card and the framework card.
     const ownerQFound = serveWorldView(f.ctx, { operation: "find_questions", label: "private", valid: { kind: "all" }, knownAt: { kind: "current" } }).data;
     if (!("result" in ownerQFound) || !("data" in ownerQFound.result) || !("matches" in ownerQFound.result.data)) throw new Error("owner question missing");
     const ownerQ = serveWorldView(f.ctx, { operation: "question", question: ownerQFound.result.data.matches[0]!.ref, valid: { kind: "all" }, knownAt: { kind: "current" } }).data;
     if (!("result" in ownerQ) || !("data" in ownerQ.result) || ownerQ.result.data.schema !== "kizuki.question-card/v1") throw new Error("owner question card missing");
     expect(ownerQ.result.data.statusEvidence).toHaveLength(2);
     expect(ownerQ.result.data.statusEvidence.every((r) => r.conflict === "present")).toBe(true);
+
+    let ownerFRef!: { readonly kind: "object"; readonly token: string };
+    f.db.transaction(() => {
+      const ns = worldNamespace(f.db, f.ctx.principal);
+      const ownerFPage = readWorldMatches(newReadFrame(f.ctx, ns, { kind: "all" }), "framework", "Privacy Framework", null, 10);
+      if (ownerFPage.matches.length !== 1) throw new Error("owner framework missing");
+      ownerFRef = ownerFPage.matches[0]!.ref;
+    }).immediate();
+    const ownerF = serveWorldView(f.ctx, { operation: "framework", framework: ownerFRef, valid: { kind: "all" }, knownAt: { kind: "current" } }).data;
+    if (!("result" in ownerF) || !("data" in ownerF.result) || ownerF.result.data.schema !== "kizuki.framework-card/v1") throw new Error("owner framework card missing");
+    expect(ownerF.result.data.lifecycle).toHaveLength(2);
+    expect(ownerF.result.data.lifecycle.every((r) => r.conflict === "present")).toBe(true);
   } finally {
     f.dispose();
     setSystemTime();

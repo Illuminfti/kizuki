@@ -112,20 +112,19 @@ const claimsAboutMembers: Collector = (frame, cluster) => {
   const rows = cluster.members.flatMap((handle) => {
     const anchor = anchorOf(frame.ctx.db, handle);
     if (anchor === null) return [];
-    const found = candidates.all(
-      ...claim.bindings,
-      ...time.bindings,
-      anchor.kind,
-      anchor.id,
-      rawSubjectNamespace(anchor),
-      anchor.kind,
-      anchor.id,
-      rawSubjectNamespace(anchor),
-      ...admitted.bindings,
-      labels,
-    );
-    if (found.length > MAX_RELATIONS) frame.collectorOverflow = true;
-    return found;
+    return candidates
+      .all(
+        ...claim.bindings,
+        ...time.bindings,
+        anchor.kind,
+        anchor.id,
+        rawSubjectNamespace(anchor),
+        anchor.kind,
+        anchor.id,
+        rawSubjectNamespace(anchor),
+        ...admitted.bindings,
+        labels,
+      );
   });
   // Apply the shared claim limit only after merging member candidates. Member
   // order cannot hide the anchor or change which remaining claims are served.

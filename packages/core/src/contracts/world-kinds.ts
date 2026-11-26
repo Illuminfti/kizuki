@@ -58,11 +58,23 @@ export interface WorldPredicateInput {
   readonly objects: readonly WorldObjectKind[];
   readonly values?: readonly string[];
   readonly polarity?: readonly WorldPolarity[];
+  /**
+   * Read-time conflict cardinality. Stored claims remain multi-valued (`cardinality: "multi"`),
+   * while `"single"` marks positive overlapping assertions with distinct objects as mutually exclusive.
+   */
+  readonly conflictCardinality?: "single" | "multi";
+}
+
+const SINGLE_VALUED_CONFLICT_SPECS = new WeakSet<WorldVocabularySpec>();
+
+/** Whether a world vocabulary spec treats distinct positive overlapping values as conflicting. */
+export function isSingleValuedConflictSpec(spec: WorldVocabularySpec | undefined): boolean {
+  return spec !== undefined && SINGLE_VALUED_CONFLICT_SPECS.has(spec);
 }
 
 /** One frozen row, multi-valued and polarity-preserving unless the caller narrows it. */
 export function worldPredicate(input: WorldPredicateInput): WorldVocabularySpec {
-  return Object.freeze({
+  const spec = Object.freeze({
     predicate: input.predicate,
     subject: input.subject,
     objects: Object.freeze([...input.objects]),
@@ -71,6 +83,8 @@ export function worldPredicate(input: WorldPredicateInput): WorldVocabularySpec 
     max_literal_chars: input.objects.includes("literal") ? LITERAL_MAX_CHARS : null,
     vocabulary_values: input.values === undefined ? null : Object.freeze([...input.values]),
   });
+  if (input.conflictCardinality === "single") SINGLE_VALUED_CONFLICT_SPECS.add(spec);
+  return spec;
 }
 
 export interface WorldRegistry {

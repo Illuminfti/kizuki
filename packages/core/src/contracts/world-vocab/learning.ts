@@ -16,6 +16,7 @@ export const LEARNING_VOCABULARY: WorldVocabularyModule = {
       subject: "task_context",
       objects: ["vocabulary"],
       values: ["learning/assisted", "learning/unassisted"],
+      conflictCardinality: "single",
     }),
   ],
 };

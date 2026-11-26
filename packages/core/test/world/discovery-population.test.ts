@@ -25,8 +25,8 @@ import {
   typedKindStatements,
 } from "../../src/world/collectors";
 import {
-  SINGLE_VALUED_WORLD_PREDICATES,
   conflictEnricher,
+  isSingleValuedWorldPredicate,
   kindQualificationEnricher,
   procedureEnricher,
 } from "../../src/world/enrich";
@@ -498,15 +498,43 @@ test("registered COLLECTORS gather context claims across all 7 kinds, enforce hi
       expect(collected.overflow).toBe(true);
       expect(frame.collectorOverflow).toBe(false);
     }).immediate();
+    // Concept member collection only reports overflow when >MAX_CARD_RELATIONS claims pass verification;
+    // ineligible SQL rows dropped by verifyClaim must not cause false overflow on concept cards.
+    const conceptNoOverflow = "topic:no-false-overflow";
+    await f.write("world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/concept" } }, { subject: conceptNoOverflow });
+    await f.write("concept.label", { kind: "literal", value: "No False Overflow" }, { subject: conceptNoOverflow });
+    const conceptExampleIds: string[] = [];
+    for (let i = 0; i < MAX_CARD_RELATIONS - 1; i += 1) {
+      const res = await f.write("concept.example", { kind: "literal", value: `Example ${i}` }, { subject: conceptNoOverflow });
+      if (res.stored.outcome !== "stored" && res.stored.outcome !== "duplicate") throw new Error("concept example failed");
+      conceptExampleIds.push(res.stored.claim.claim_id);
+    }
+    // 129 raw SQL rows total (kind + label + 127 examples), with 2 examples tampered so 127 claims pass verification.
+    for (const badId of conceptExampleIds.slice(0, 2)) {
+      f.db.query("UPDATE claim_v2_support SET admission=json_set(admission,'$.semantic.polarity','negative') WHERE claim_id=?").run(badId);
+    }
+    const conceptHandle = f.db.query<{ handle_id: string }, [string]>("SELECT handle_id FROM semantic_bindings WHERE raw_id=?").get(conceptNoOverflow)!.handle_id;
+    f.db.transaction(() => {
+      const ns = worldNamespace(f.db, OWNER);
+      const frame = newReadFrame(f.ctx, ns, { kind: "all" });
+      const collected = collectCard(frame, { anchor: conceptHandle, members: [conceptHandle], resolution: "distinct" }, WORLD_REGISTRY.kind("concept")!, COLLECTORS)!;
+      expect(collected.items).toHaveLength(MAX_CARD_RELATIONS - 1);
+      expect(collected.overflow).toBe(false);
+    }).immediate();
   } finally {
     f.dispose();
   }
 });
 
 test("registered ENRICHERS detect overlapping status conflicts, allow non-overlapping status history, and guard person grounding", async () => {
-  expect([...SINGLE_VALUED_WORLD_PREDICATES]).toEqual(expect.arrayContaining([
+  for (const predicate of [
     "concept.definition", "learning.assistance", "question.status", "commitment.status", "decision.status", "framework.lifecycle",
-  ]));
+  ]) {
+    expect(isSingleValuedWorldPredicate(predicate)).toBe(true);
+  }
+  for (const predicate of ["person.role", "question.candidate_answer", "concept.example"]) {
+    expect(isSingleValuedWorldPredicate(predicate)).toBe(false);
+  }
 
   const f = await cardFixture();
   try {

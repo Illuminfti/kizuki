@@ -12,7 +12,7 @@ export const QUESTION_VOCABULARY: WorldVocabularyModule = {
   },
   predicates: [
     worldPredicate({ predicate: "question.text", subject: "question", objects: ["literal"] }),
-    worldPredicate({ predicate: "question.status", subject: "question", objects: ["vocabulary"], values: QUESTION_STATUSES.map(status => `question/${status}`) }),
+    worldPredicate({ predicate: "question.status", subject: "question", objects: ["vocabulary"], values: QUESTION_STATUSES.map(status => `question/${status}`), conflictCardinality: "single" }),
     worldPredicate({ predicate: "question.candidate_answer", subject: "question", objects: ["literal", "raw_subject"] }),
     worldPredicate({ predicate: "question.motivates", subject: "question", objects: ["raw_subject"] }),
     worldPredicate({ predicate: "gap.kind", subject: "question", objects: ["vocabulary"], values: GAP_KINDS.map(kind => `gap/${kind}`) }),
