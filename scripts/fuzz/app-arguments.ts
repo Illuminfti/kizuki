@@ -35,7 +35,8 @@ const CURRENT = { knownAt: { kind: "current" } };
 export function appEnvelopes(world: AppWorld): Record<AppRoute, Envelope[]> {
   const operation_id = () => world.operation();
   return {
-    status: [], catalog: [], service_status: [], install_service: [], sources: [], model_status: [], run_pass: [], agents: [],
+    status: [], catalog: [], service_status: [], install_service: [], memt_status: [], sources: [], model_status: [], run_pass: [], agents: [],
+    memt_experiences: [{ query: "synthetic", domain: "ops", outcome: "verified", ceiling: "private", limit: 5 }],
     initialize: [{ no_service: false }],
     enroll: [
       { provider: "gmail", fields: ["text", "subjects"], source_key: UNENROLLED, new_source: false },

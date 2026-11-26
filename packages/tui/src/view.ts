@@ -46,7 +46,7 @@ function rule(width: number, p: Paint): string {
 }
 
 function shortHash(hash: string | null): string {
-  if (hash === null) return "—";
+  if (hash === null) return "-";
   return hash.slice(0, 8);
 }
 
@@ -188,7 +188,7 @@ function receiptDetails(item: AuditItem, width: number, p: Paint): string[] {
     p.dim(truncate(`${receipt.writer} · ${receipt.producer} · ${created}`, width)),
     metaLine("receipt", truncate(sanitize(receipt.receipt_id), width - 8), p),
     metaLine("page", truncate(sanitize(receipt.page_path), width - 5), p),
-    ...wrap(`before ${receipt.before_hash ?? "—"}`, width).map((line) => p.dim(line)),
+    ...wrap(`before ${receipt.before_hash ?? "-"}`, width).map((line) => p.dim(line)),
     ...wrap(`after  ${receipt.after_hash}`, width).map((line) => p.dim(line)),
     metaLine("authority", truncate(sanitize(receipt.authority), width - 10), p),
     metaLine("model", truncate(sanitize(receipt.model_ref ?? "none"), width - 6), p),
@@ -253,7 +253,7 @@ function footer(state: AuditState, cols: number, p: Paint): string {
   if (mode.name === "confirm") {
     return (
       truncate(
-        `undo ${mode.receiptId} ${shortHash(mode.afterHash)} — type yes then enter: ${sanitize(mode.text)}`,
+        `undo ${mode.receiptId} ${shortHash(mode.afterHash)}: type yes then enter: ${sanitize(mode.text)}`,
         cols - 1,
       ) + cursor
     );
