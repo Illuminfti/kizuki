@@ -1750,3 +1750,148 @@ test('Memory guides users when no active sources remain and empty search/world s
   expect(f.requests).toHaveLength(0);
   expect(f.notice.textContent).toContain('Describe what you are working on');
 });
+
+test('MemT inspector loads status, snapshots and experiences, filters safely, escapes hostile text, and clears on privacy invalidation', async () => {
+  const f = fixture();
+  const hostile = '<img src=x onerror=globalThis.memtPwned=true>';
+  f.evaluate(`navigate('memt')`);
+  expect(f.main.textContent).toContain('Loading MemT');
+  expect(f.requests.map(r => r.route).sort()).toEqual(['memt_experiences', 'memt_status']);
+  f.reply('memt_status', {
+    mode: 'local_hybrid', enabled: true, gpu_configured: false, api_key_configured: false,
+    registry_present: true, model: 'memt-nano', default_partition: 'default', checked_at: '2026-11-25T12:00:00Z',
+    experiences: { total: 2, verified: 1, observed: 1, failed: 0, uninternalized: 1 },
+    snapshots: {
+      total: 2, clean: 1, stale: 0, purged_invalidated: 1,
+      partitions: [
+        { partition_key: 'default', sensitivity_ceiling: 'work', snapshot_name: 'snap-clean.safetensors', event_watermark: '2026-11-25T10:00:00Z', taint_state: 'clean', source_count: 3, updated_at: '2026-11-25T10:00:00Z' },
+        { partition_key: hostile, sensitivity_ceiling: 'private', snapshot_name: 'snap-invalid.safetensors', event_watermark: '2026-11-25T11:00:00Z', taint_state: 'purged_invalidated', source_count: 1, updated_at: '2026-11-25T11:00:00Z' },
+      ],
+    },
+  });
+  f.reply('memt_experiences', {
+    mode: 'list', truncated: false, domains: ['deploy', hostile],
+    experiences: [
+      {
+        id: 'exp-1', domain: 'deploy', scope_key: 'release', sensitivity: 'public',
+        condition: `When ${hostile} appears`, recommendation: 'Verify rollback first',
+        verification: 'Checked locally', outcome: 'verified', confidence: 0.92, use_count: 4,
+        citations: ['event:syn-1'], internalized_in_snapshot: null, has_embedding: true, updated_at: '2026-11-25T10:00:00Z',
+      },
+    ],
+  });
+  await tick();
+  expect(f.main.textContent).toContain('Local hybrid');
+  expect(f.main.textContent).toContain('Purged / invalidated');
+  expect(f.main.textContent).toContain('Verify rollback first');
+  expect(f.main.textContent).toContain('92% confidence');
+  expect(f.main.textContent).toContain(hostile);
+  expect(f.main.querySelector('img')).toBeNull();
+  expect(f.evaluate('globalThis.memtPwned')).toBeUndefined();
+  expect(f.storageWrites).toHaveLength(0);
+
+  const queryInput = f.main.querySelector('#memt-query')!;
+  queryInput.value = 'rollback';
+  const searching = f.main.querySelector('#memt-search-form')!.fire('submit', { preventDefault() {} });
+  await tick();
+  expect(f.requests[0]!.route).toBe('memt_experiences');
+  expect(f.requests[0]!.payload).toMatchObject({ query: 'rollback', outcome: 'all', ceiling: 'private' });
+  f.evaluate('invalidatePrivateView()');
+  f.reply('memt_experiences', { mode: 'search', truncated: false, domains: [], experiences: [{ id: 'late', domain: 'secret', scope_key: 'x', sensitivity: 'private', condition: 'LEAKED_AFTER_LOGOUT', recommendation: 'no', verification: '', outcome: 'observed', confidence: 0.5, use_count: 0, citations: [], internalized_in_snapshot: null, has_embedding: false, updated_at: '2026-11-25T10:00:00Z' }] });
+  await searching; await tick();
+  expect(f.evaluate('state.memtStatus')).toBeNull();
+  expect(f.evaluate('state.memtExperiences')).toBeNull();
+  expect(f.main.textContent).not.toContain('LEAKED_AFTER_LOGOUT');
+});
+
+test('World Atlas explorer shows pinned baseline status, allows clearing focus, and renders structured diff counts', async () => {
+  const f = fixture();
+  openPinnedWorld(f);
+  expect(f.main.textContent).toContain('Pinned baseline: concept');
+  const clearBtn = findAction(f.main, 'Clear focus');
+  expect(clearBtn).toBeTruthy();
+
+  const atlasBtn = findAction(f.main, 'Changes in Atlas')!;
+  const opening = atlasBtn.fire('click'); await tick();
+  expect(f.requests[0]!.payload).toMatchObject({ operation: 'atlas', panel: 'changed', baselineView: { kind: 'view', token: 'V'.repeat(42) + 'A' } });
+  f.reply('world_view', {
+    schema: 'kizuki.world-view/v1', operation: 'atlas',
+    result: {
+      status: 'current',
+      data: {
+        schema: 'kizuki.atlas/v1', panel: 'changed',
+        panels: [{
+          panel: 'changed', title: 'What changed', status: 'ready', reason: null,
+          entries: [{ ref: { kind: 'object', token: 'A'.repeat(43) }, operation: 'concept', title: 'Synthetic concept', facts: [{ label: 'Status', value: 'Active' }], relations: [] }],
+          change: { added: [{ kind: 'claim', token: 'C'.repeat(43) }], removed: [], changed: [{ claim: { kind: 'claim', token: 'D'.repeat(43) }, fields: ['assessments'] }], truncated: false },
+          nextView: { kind: 'view', token: 'N'.repeat(43) },
+          coverage: { status: 'complete_for_query', gaps: [] },
+        }],
+      },
+    },
+  });
+  await opening; await tick();
+  expect(f.main.textContent).toContain('What changed');
+  expect(f.main.textContent).toContain('Added1');
+  expect(f.main.textContent).toContain('Changed1');
+  expect(f.main.textContent).toContain('Keep this comparison');
+
+  const cleared = findAction(f.main, 'Clear focus')!.fire('click'); await tick();
+  expect(f.evaluate('state.worldAtlasFocus')).toBeNull();
+  expect(f.requests[0]!.payload).toMatchObject({ operation: 'atlas', panel: 'changed' });
+  expect(f.requests[0]!.payload).not.toHaveProperty('baselineView');
+  f.reply('world_view', { schema: 'kizuki.world-view/v1', operation: 'atlas', result: { status: 'current', data: { schema: 'kizuki.atlas/v1', panel: 'changed', panels: [] } } });
+  await cleared;
+});
+
+test('Agent setup wizard applies presets while keeping correction relay off, preserves draft on Back to edit, and toggles validated MCP client snippets', async () => {
+  const f = fixture();
+  f.evaluate('agentEnrollment()');
+  expect(f.dialog.textContent).toContain('Scope & tools');
+  expect(f.dialog.textContent).toContain('Review grant');
+  expect(f.dialog.textContent).toContain('Connect MCP');
+
+  const worldPreset = findAction(f.dialog, 'Research & WorldPersonal memory · search, context & world · 60/min');
+  expect(worldPreset).toBeTruthy();
+  await worldPreset.fire('click');
+  expect(f.dialog.querySelector('#agent-ceiling')!.value).toBe('personal');
+  expect(f.dialog.querySelector('#agent-tool-world_view')!.checked).toBe(true);
+  expect(f.dialog.querySelector('#agent-relay')!.checked).toBe(false);
+
+  f.dialog.querySelector('#agent-name')!.value = 'wizard-helper';
+  await f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} });
+  expect(f.dialog.textContent).toContain('Review this agent’s access');
+  expect(f.dialog.textContent).toContain('Read world knowledge');
+  expect(f.dialog.textContent).toContain('Owner correction relayOff');
+
+  await findAction(f.dialog, 'Back to edit').fire('click');
+  expect(f.dialog.querySelector('#agent-name')!.value).toBe('wizard-helper');
+  expect(f.dialog.querySelector('#agent-ceiling')!.value).toBe('personal');
+  expect(f.dialog.querySelector('#agent-tool-world_view')!.checked).toBe(true);
+
+  await f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} });
+  const enroll = findAction(f.dialog, 'Create agent').fire('click'); await tick();
+  const grant = f.requests[0]!.payload.grant;
+  expect(grant).toMatchObject({ ceiling: 'personal', relay_owner_corrections: false });
+  expect(grant.tools).toContain('world_view');
+  f.reply('agent_enroll', { operation_id: 'wizard-op' }); await tick();
+  const mcpConfig = { command: '/opt/kizuki-mcp', args: ['--vault', '/local/kizuki', '--token-ref', 'file:/local/private/wizard.json'] };
+  f.reply('operation', { id: 'wizard-op', kind: 'agent_enroll', state: 'succeeded', result: { agent: { receipt: { name: 'wizard-helper', status: 'completed', authority: 'active', credential: 'ready', grant }, mcp: mcpConfig } } }); await tick();
+  f.reply('agents', { agents: [] }); await enroll;
+
+  const rawValue = f.dialog.querySelector('textarea')!.value;
+  expect(JSON.parse(rawValue)).toEqual(mcpConfig);
+  await findAction(f.dialog, 'Claude / Cursor mcpServers').fire('click');
+  const wrappedValue = f.dialog.querySelector('textarea')!.value;
+  expect(JSON.parse(wrappedValue)).toEqual({ mcpServers: { 'wizard-helper': mcpConfig } });
+  await findAction(f.dialog, 'Copy launch configuration').fire('click');
+  expect(f.clipboardWrites.at(-1)).toBe(wrappedValue);
+  expect(f.storageWrites).toHaveLength(0);
+});
+
+import { appAssets } from '../src/app/assets';
+test('shipped Local App HTML, CSS and client JS contain zero em-dashes', () => {
+  for (const [assetPath, asset] of Object.entries(appAssets)) {
+    expect(asset.body.includes('\u2014'), `em-dash found in ${assetPath}`).toBe(false);
+  }
+});
