@@ -33,10 +33,10 @@ function freshEnv(root: string): Record<string, string> {
   };
 }
 
-function runFreshCli(env: Record<string, string>, ...args: string[]): CliResult {
-  const result = Bun.spawnSync([process.execPath, mainPath, ...args], {
+function runFreshCli(env: Record<string, string>, cwd: string, ...args: string[]): CliResult {
+  const result = Bun.spawnSync([process.execPath, "--no-env-file", mainPath, ...args], {
     env,
-    cwd: process.cwd(),
+    cwd,
     killSignal: "SIGKILL",
     stderr: "pipe",
     stdout: "pipe",
@@ -52,7 +52,7 @@ function runFreshCli(env: Record<string, string>, ...args: string[]): CliResult 
   };
 }
 
-function freshVault(): {
+function freshVault(options: { writeSyntheticDotenv?: boolean } = {}): {
   env: Record<string, string>;
   notes: string;
   root: string;
@@ -65,7 +65,14 @@ function freshVault(): {
   const env = freshEnv(root);
   mkdirSync(notes, { recursive: true });
   writeFileSync(join(notes, "ada.md"), "ada met grace at the acme library\n", "utf8");
-  const init = runFreshCli(env, "init", vault, "--no-service");
+  if (options.writeSyntheticDotenv) {
+    writeFileSync(
+      join(root, ".env"),
+      "KIZUKI_MEMT_URL=http://127.0.0.1:9\nKIZUKI_MEMT_API_KEY=synthetic-dotenv-key\nKIZUKI_MEMT_MODEL=memt-pro\n",
+      "utf8",
+    );
+  }
+  const init = runFreshCli(env, root, "init", vault, "--no-service");
   if (init.exitCode !== 0) {
     throw new Error(`freshVault init failed: ${init.stderr}`);
   }
@@ -124,10 +131,11 @@ interface CleanReadEnvelope {
 
 function assertZeroDegradedDoctor(
   env: Record<string, string>,
+  cwd: string,
   vault: string,
   extraArgs: string[] = [],
 ): DoctorEnvelope {
-  const result = runFreshCli(env, "doctor", "--json", "--vault", vault, ...extraArgs);
+  const result = runFreshCli(env, cwd, "doctor", "--json", "--vault", vault, ...extraArgs);
   expect(result.exitCode, result.stderr).toBe(0);
   expect(result.stderr).toBe("");
   const body = JSON.parse(result.stdout) as DoctorEnvelope;
@@ -184,14 +192,14 @@ describe("fresh-user doctor truth and zero spurious degraded flags", () => {
     const setup = freshVault();
     const markBefore = readFileSync(join(setup.vault, ".kizuki", "ledger-mark"), "utf8");
 
-    const plain = assertZeroDegradedDoctor(setup.env, setup.vault);
+    const plain = assertZeroDegradedDoctor(setup.env, setup.root, setup.vault);
     assertExpectedRails(plain.data.serve.rails, "idle", null);
 
-    assertZeroDegradedDoctor(setup.env, setup.vault, ["--integrity"]);
+    assertZeroDegradedDoctor(setup.env, setup.root, setup.vault, ["--integrity"]);
     expect(readFileSync(join(setup.vault, ".kizuki", "ledger-mark"), "utf8")).toBe(markBefore);
   });
 
-  test("fresh-user initialization and doctor do not inherit host KIZUKI_MEMT_* environment variables", () => {
+  test("fresh-user initialization and doctor do not inherit host KIZUKI_MEMT_* environment variables or caller .env files", () => {
     const saved = {
       KIZUKI_MEMT_URL: process.env.KIZUKI_MEMT_URL,
       KIZUKI_MEMT_API_KEY: process.env.KIZUKI_MEMT_API_KEY,
@@ -201,11 +209,11 @@ describe("fresh-user doctor truth and zero spurious degraded flags", () => {
     process.env.KIZUKI_MEMT_API_KEY = "synthetic-host-key";
     process.env.KIZUKI_MEMT_MODEL = "memt-pro";
     try {
-      const setup = freshVault();
+      const setup = freshVault({ writeSyntheticDotenv: true });
       expect(setup.env.KIZUKI_MEMT_URL).toBeUndefined();
       expect(setup.env.KIZUKI_MEMT_API_KEY).toBeUndefined();
       expect(setup.env.KIZUKI_MEMT_MODEL).toBeUndefined();
-      const report = assertZeroDegradedDoctor(setup.env, setup.vault);
+      const report = assertZeroDegradedDoctor(setup.env, setup.root, setup.vault);
       assertExpectedRails(report.data.serve.rails, "idle", null);
     } finally {
       for (const [key, value] of Object.entries(saved)) {
@@ -219,6 +227,7 @@ describe("fresh-user doctor truth and zero spurious degraded flags", () => {
     const setup = freshVault();
     const imported = runFreshCli(
       setup.env,
+      setup.root,
       "import",
       "markdown-folder",
       "--source",
@@ -228,7 +237,7 @@ describe("fresh-user doctor truth and zero spurious degraded flags", () => {
     expect(imported.exitCode, imported.stderr).toBe(0);
     expect(imported.stderr).toBe("");
 
-    const afterImport = assertZeroDegradedDoctor(setup.env, setup.vault);
+    const afterImport = assertZeroDegradedDoctor(setup.env, setup.root, setup.vault);
     expect(afterImport.data.connections).toHaveLength(1);
     expect(afterImport.data.connections[0]).toMatchObject({
       connector_id: "kizuki.markdown-folder",
@@ -236,18 +245,18 @@ describe("fresh-user doctor truth and zero spurious degraded flags", () => {
       problem: null,
     });
 
-    const served = runFreshCli(setup.env, "serve", "--once", "--no-http", "--vault", setup.vault);
+    const served = runFreshCli(setup.env, setup.root, "serve", "--once", "--no-http", "--vault", setup.vault);
     expect(served.exitCode, served.stderr).toBe(0);
-    const afterServe = assertZeroDegradedDoctor(setup.env, setup.vault);
+    const afterServe = assertZeroDegradedDoctor(setup.env, setup.root, setup.vault);
     assertExpectedRails(afterServe.data.serve.rails, "ok", "ok");
 
-    const query = runFreshCli(setup.env, "query", "Ada", "--json", "--vault", setup.vault);
+    const query = runFreshCli(setup.env, setup.root, "query", "Ada", "--json", "--vault", setup.vault);
     expect(query.exitCode, query.stderr).toBe(0);
     expect(query.stderr).toBe("");
     const queryBody = JSON.parse(query.stdout) as CleanReadEnvelope;
     expect(queryBody).toMatchObject({ schema: "kizuki.cli.query/v1", status: "ok", degraded: [], warnings: [] });
 
-    const context = runFreshCli(setup.env, "context", "--query", "Ada", "--json", "--vault", setup.vault);
+    const context = runFreshCli(setup.env, setup.root, "context", "--query", "Ada", "--json", "--vault", setup.vault);
     expect(context.exitCode, context.stderr).toBe(0);
     expect(context.stderr).toBe("");
     const contextBody = JSON.parse(context.stdout) as CleanReadEnvelope;
@@ -259,6 +268,7 @@ describe("fresh-user doctor truth and zero spurious degraded flags", () => {
     const setup = freshVault();
     const imported = runFreshCli(
       setup.env,
+      setup.root,
       "import",
       "markdown-folder",
       "--source",
@@ -270,23 +280,23 @@ describe("fresh-user doctor truth and zero spurious degraded flags", () => {
     for (const kind of ["export", "backup"] as const) {
       const archive = join(setup.root, `${kind}-out`);
       const restored = join(setup.root, `${kind}-restored`);
-      const created = runFreshCli(setup.env, kind, "--out", archive, "--vault", setup.vault);
+      const created = runFreshCli(setup.env, setup.root, kind, "--out", archive, "--vault", setup.vault);
       expect(created.exitCode, created.stderr).toBe(0);
-      const verified = runFreshCli(setup.env, "restore", "--from", archive, "--verify");
+      const verified = runFreshCli(setup.env, setup.root, "restore", "--from", archive, "--verify");
       expect(verified.exitCode, verified.stderr).toBe(0);
-      const recovered = runFreshCli(setup.env, "restore", "--from", archive, "--into", restored);
+      const recovered = runFreshCli(setup.env, setup.root, "restore", "--from", archive, "--into", restored);
       expect(recovered.exitCode, recovered.stderr).toBe(0);
 
-      assertZeroDegradedDoctor(setup.env, restored);
+      assertZeroDegradedDoctor(setup.env, setup.root, restored);
 
-      const query = runFreshCli(setup.env, "query", "Ada", "--json", "--vault", restored);
+      const query = runFreshCli(setup.env, setup.root, "query", "Ada", "--json", "--vault", restored);
       expect(query.exitCode, query.stderr).toBe(0);
       expect(query.stderr).toBe("");
       const queryBody = JSON.parse(query.stdout) as CleanReadEnvelope;
       expect(queryBody).toMatchObject({ schema: "kizuki.cli.query/v1", status: "ok", degraded: [], warnings: [] });
       expect(query.stdout.toLowerCase()).toContain("ada met grace");
 
-      const context = runFreshCli(setup.env, "context", "--query", "Ada", "--json", "--vault", restored);
+      const context = runFreshCli(setup.env, setup.root, "context", "--query", "Ada", "--json", "--vault", restored);
       expect(context.exitCode, context.stderr).toBe(0);
       expect(context.stderr).toBe("");
       const contextBody = JSON.parse(context.stdout) as CleanReadEnvelope;

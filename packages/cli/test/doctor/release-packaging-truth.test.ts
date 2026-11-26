@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { RAIL_IDS } from "@kizuki/core";
 import {
   MAX_BUILD_TIMESTAMP_EPOCH_SECONDS,
+  PACKAGED_POLICY_CREATE_COMMAND,
+  assertNoEmbeddedRootPath,
   buildMetadataDefines,
   isValidBuildTimestamp,
   packagedQuickStart,
@@ -20,7 +22,7 @@ import {
   type StepReceipt,
 } from "../../../../scripts/stranger-proof";
 
-setDefaultTimeout(120_000);
+setDefaultTimeout(180_000);
 
 const repoRoot = resolve(import.meta.dir, "../../../..");
 const directories: string[] = [];
@@ -37,12 +39,73 @@ function temporary(prefix = "kizuki-release-truth-"): string {
   return directory;
 }
 
-const VERSION_PROBE = `import { versionCommand } from ${JSON.stringify(resolve(repoRoot, "packages/cli/src/commands/version.ts"))};
-const lines: string[] = [];
-const code = await versionCommand.run({ out: (line: string) => lines.push(line), err: () => {} } as never, []);
-process.stdout.write(lines.join("\\n") + "\\n");
-process.exit(code);
-`;
+function createIndependentCheckout(destination: string): void {
+  const tracked = Bun.spawnSync(["git", "ls-files", "-z"], {
+    cwd: repoRoot,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (tracked.exitCode !== 0) {
+    throw new Error(`git ls-files failed: ${tracked.stderr.toString()}`);
+  }
+  const files = tracked.stdout.toString().split("\0").filter(Boolean);
+  mkdirSync(destination, { recursive: true });
+  for (const rel of files) {
+    const source = join(repoRoot, rel);
+    if (!existsSync(source)) continue;
+    const target = join(destination, rel);
+    mkdirSync(dirname(target), { recursive: true });
+    cpSync(source, target, { force: true });
+  }
+  const gitEnv = {
+    PATH: process.env.PATH ?? "/usr/bin:/bin",
+    HOME: destination,
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_AUTHOR_NAME: "Kizuki Repro",
+    GIT_AUTHOR_EMAIL: "repro@example.com",
+    GIT_COMMITTER_NAME: "Kizuki Repro",
+    GIT_COMMITTER_EMAIL: "repro@example.com",
+    GIT_AUTHOR_DATE: "2026-01-02T03:04:05Z",
+    GIT_COMMITTER_DATE: "2026-01-02T03:04:05Z",
+  };
+  const runGit = (args: string[]) => {
+    const result = Bun.spawnSync(["git", ...args], {
+      cwd: destination,
+      env: gitEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (result.exitCode !== 0) {
+      throw new Error(`git ${args.join(" ")} failed: ${result.stderr.toString()}`);
+    }
+  };
+  runGit(["init", "-q"]);
+  runGit(["add", "-A"]);
+  runGit(["-c", "commit.gpgsign=false", "commit", "-q", "-m", "reproducible release fixture"]);
+  cpSync(join(repoRoot, "node_modules"), join(destination, "node_modules"), {
+    recursive: true,
+    verbatimSymlinks: true,
+  });
+  for (const pkg of readdirSync(join(repoRoot, "packages"))) {
+    const pkgModules = join(repoRoot, "packages", pkg, "node_modules");
+    if (!existsSync(pkgModules)) continue;
+    cpSync(pkgModules, join(destination, "packages", pkg, "node_modules"), {
+      recursive: true,
+      verbatimSymlinks: true,
+    });
+  }
+}
+
+function makeRails(state: "idle" | "ok") {
+  return RAIL_IDS.map((rail) => ({
+    rail,
+    status: state,
+    last_result: state === "idle" ? null : "ok",
+    reason: null,
+    degraded_streak: 0,
+  }));
+}
 
 describe("release packaging reproducibility and timestamp contract", () => {
   test("build and smoke share the same 4-digit UTC timestamp bounds", () => {
@@ -76,34 +139,58 @@ describe("release packaging reproducibility and timestamp contract", () => {
     }
   });
 
-  test("two compiled binaries with identical resolved build metadata are byte-identical", async () => {
-    const directory = temporary("kizuki-reproducible-build-");
-    const sha = "0123456789abcdef0123456789abcdef01234567";
-    const entrypoint = join(directory, "probe.ts");
-    writeFileSync(entrypoint, VERSION_PROBE, "utf8");
-    const builtAt = resolveBuildTimestamp({}, "1767323045");
-    const define = { KIZUKI_COMPILED: "true", ...buildMetadataDefines(sha, builtAt) };
-    const compileOnce = (slot: string): string => {
-      const staging = join(directory, slot);
-      mkdirSync(staging, { recursive: true });
-      const binary = join(staging, "kizuki");
-      const flags = Object.entries(define).flatMap(([key, value]) => ["--define", `${key}=${value}`]);
-      const compiled = Bun.spawnSync([process.execPath, "build", entrypoint, "--compile", "--outfile", binary, ...flags], {
+  test("two independent checkout paths build byte-identical full release manifests with no embedded checkout paths", async () => {
+    const workspace = temporary("kizuki-reproducible-release-");
+    const checkoutA = join(workspace, "src-a");
+    const checkoutB = join(workspace, "independent-checkout-beta");
+    createIndependentCheckout(checkoutA);
+    createIndependentCheckout(checkoutB);
+
+    const buildIn = (checkout: string): string => {
+      const result = Bun.spawnSync([process.execPath, "--no-env-file", "scripts/build-release.ts"], {
+        cwd: checkout,
+        env: {
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+          HOME: join(workspace, "home"),
+          ...(process.env.TMPDIR === undefined ? {} : { TMPDIR: process.env.TMPDIR }),
+        },
         stdout: "pipe",
         stderr: "pipe",
+        timeout: 120_000,
       });
-      if (compiled.exitCode !== 0) throw new Error(`repro build failed: ${compiled.stderr.toString()}`);
-      return createHash("sha256").update(readFileSync(binary)).digest("hex");
+      if (result.exitCode !== 0) {
+        throw new Error(`release build in ${checkout} failed: ${result.stderr.toString()}`);
+      }
+      return result.stdout.toString().trim();
     };
-    const first = compileOnce("staging-1");
+
+    const releaseA = buildIn(checkoutA);
     await Bun.sleep(1050);
-    const second = compileOnce("staging-2");
-    expect(second).toBe(first);
+    const releaseB = buildIn(checkoutB);
+
+    const manifestA = readFileSync(join(releaseA, "SHA256SUMS"), "utf8");
+    const manifestB = readFileSync(join(releaseB, "SHA256SUMS"), "utf8");
+    expect(manifestB).toBe(manifestA);
+
+    for (const binary of ["kizuki", "kizuki-mcp"] as const) {
+      const pathA = join(releaseA, binary);
+      const pathB = join(releaseB, binary);
+      assertNoEmbeddedRootPath(pathA, checkoutA);
+      assertNoEmbeddedRootPath(pathB, checkoutB);
+      expect(readFileSync(pathA).includes(Buffer.from(repoRoot))).toBe(false);
+    }
+
+    const leaked = join(workspace, "leaked-bin");
+    writeFileSync(leaked, `prefix ${checkoutA}/node_modules/bufferutil suffix`, "utf8");
+    expect(() => assertNoEmbeddedRootPath(leaked, checkoutA)).toThrow("embeds build checkout path");
   });
 
-  test("packagedQuickStart includes local PATH symlinks, PATH export, 14-tool MCP note, and clean prose", () => {
+  test("packagedQuickStart includes runnable ./kizuki version, policy setup, PATH symlinks, 14-tool MCP note, and clean prose", () => {
     const sha = "c".repeat(40);
     const text = packagedQuickStart({ version: "1.0.2", target: selectedReleaseTarget(), sourceSha: sha });
+    expect(text).toContain("./kizuki version");
+    expect(text).not.toContain("with: kizuki version");
+    expect(text).toContain(`  ${PACKAGED_POLICY_CREATE_COMMAND}`);
     expect(text).toContain('ln -sf "$PWD/kizuki" "$HOME/.local/bin/kizuki"');
     expect(text).toContain('ln -sf "$PWD/kizuki-mcp" "$HOME/.local/bin/kizuki-mcp"');
     expect(text).toContain('export PATH="$HOME/.local/bin:$PATH"');
@@ -116,7 +203,7 @@ describe("release packaging reproducibility and timestamp contract", () => {
 });
 
 describe("stranger-proof doctor stderr and step receipt truth", () => {
-  test("assertCleanDoctorEnvelope enforces healthy doctor JSON and clean stderr", () => {
+  test("assertCleanDoctorEnvelope enforces healthy doctor JSON, expected rails, and clean stderr", () => {
     const healthy = {
       schema: "kizuki.cli.doctor/v1",
       status: "ok",
@@ -126,18 +213,53 @@ describe("stranger-proof doctor stderr and step receipt truth", () => {
         ok: true,
         problems: [] as unknown[],
         ledger: { ok: true },
-        serve: { ok: true, failures: [] as unknown[] },
+        serve: { ok: true, failures: [] as unknown[], rails: makeRails("idle") },
       },
+    };
+    const healthyOk = {
+      ...healthy,
+      data: { ...healthy.data, serve: { ...healthy.data.serve, rails: makeRails("ok") } },
     };
     expect(() => assertCleanDoctorEnvelope(JSON.stringify(healthy), 0)).not.toThrow();
     expect(() => assertCleanDoctorEnvelope(JSON.stringify(healthy), 0, "")).not.toThrow();
+    expect(() => assertCleanDoctorEnvelope(JSON.stringify(healthyOk), 0, "", "ok")).not.toThrow();
+    expect(() => assertCleanDoctorEnvelope(JSON.stringify(healthy), 0, "", "ok")).toThrow("doctor-unhealthy");
+    expect(() => assertCleanDoctorEnvelope(JSON.stringify(healthyOk), 0, "", "idle")).toThrow("doctor-unhealthy");
+
+    const degradedRail = makeRails("idle").map((rail) =>
+      rail.rail === "sync" ? { ...rail, last_result: "degraded", degraded_streak: 1 } : rail,
+    );
+    expect(() =>
+      assertCleanDoctorEnvelope(
+        JSON.stringify({ ...healthy, data: { ...healthy.data, serve: { ...healthy.data.serve, rails: degradedRail } } }),
+        0,
+      ),
+    ).toThrow("doctor-degraded");
+    const degradedStatusRail = makeRails("ok").map((rail) =>
+      rail.rail === "sync" ? { ...rail, status: "degraded", last_result: "degraded", degraded_streak: 1 } : rail,
+    );
+    expect(() =>
+      assertCleanDoctorEnvelope(
+        JSON.stringify({ ...healthy, data: { ...healthy.data, serve: { ...healthy.data.serve, rails: degradedStatusRail } } }),
+        0,
+        "",
+        "ok",
+      ),
+    ).toThrow("doctor-degraded");
+    expect(() =>
+      assertCleanDoctorEnvelope(
+        JSON.stringify({ ...healthy, data: { ...healthy.data, serve: { ...healthy.data.serve, rails: makeRails("idle").slice(1) } } }),
+        0,
+      ),
+    ).toThrow("doctor-unhealthy");
+
     expect(() => assertCleanDoctorEnvelope(JSON.stringify(healthy), 0, "degraded=index-behind-ledger\n")).toThrow("doctor-degraded");
     expect(() => assertCleanDoctorEnvelope(JSON.stringify(healthy), 0, "unexpected warning\n")).toThrow("doctor-stderr");
     expect(() => assertCleanDoctorEnvelope(JSON.stringify({ ...healthy, degraded: ["index-behind-ledger"] }), 0)).toThrow("doctor-degraded");
     expect(() => assertCleanDoctorEnvelope(JSON.stringify({ ...healthy, warnings: ["stale"] }), 0)).toThrow("doctor-warnings");
     expect(() => assertCleanDoctorEnvelope(JSON.stringify({ ...healthy, status: "error" }), 1)).toThrow("doctor-unhealthy");
     expect(() => assertCleanDoctorEnvelope(JSON.stringify({ ...healthy, data: { ...healthy.data, problems: [{ page: "-", error: "drift" }] } }), 0)).toThrow("doctor-unhealthy");
-    expect(() => assertCleanDoctorEnvelope(JSON.stringify({ ...healthy, data: { ...healthy.data, serve: { ok: false, failures: ["unit masked"] } } }), 0)).toThrow("doctor-unhealthy");
+    expect(() => assertCleanDoctorEnvelope(JSON.stringify({ ...healthy, data: { ...healthy.data, serve: { ok: false, failures: ["unit masked"], rails: makeRails("idle") } } }), 0)).toThrow("doctor-unhealthy");
     expect(() => assertCleanDoctorEnvelope("{invalid", 0)).toThrow("doctor-invalid-json");
   });
 

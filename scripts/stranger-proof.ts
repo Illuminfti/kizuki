@@ -8,6 +8,7 @@ import { releaseTarget, requireNativeHost, selectedReleaseTarget } from "./relea
 import { ArtifactProofError, validateArtifactProof } from "./artifact-proof";
 import type { ArtifactProofSchema, CliEngineObservation, McpEngineObservation } from "./artifact-proof";
 import { EngineProofError, collectEngineProcess, mcpObservationFromOutput, parseDoctorObservation } from "./artifact-engine";
+import { RAIL_IDS } from "../packages/core/src/serve/rail-registry";
 
 const root = resolve(import.meta.dir, "..");
 import type { BuildInfo } from "./release-artifacts";
@@ -128,11 +129,16 @@ function checkedArtifact(path: string): BuildInfo {
 }
 
 /**
- * Enforces that a freshly initialized vault's `doctor --json` envelope is healthy
- * with zero degraded flags, zero warnings, zero problems, healthy serve/ledger,
- * and clean stderr.
+ * Enforces that a vault's `doctor --json` envelope is healthy with zero
+ * degraded flags, zero warnings, zero problems, healthy serve/ledger, every
+ * expected rail in the required state with zero degraded streak, and clean stderr.
  */
-export function assertCleanDoctorEnvelope(stdout: string, exitCode: number, stderr = ""): void {
+export function assertCleanDoctorEnvelope(
+  stdout: string,
+  exitCode: number,
+  stderr = "",
+  expectedRailState: "idle" | "ok" = "idle",
+): void {
   assertNoDegradedDiagnostics("doctor", stderr);
   if (stderr.trim() !== "") {
     throw new ArtifactProofError("doctor-stderr");
@@ -166,8 +172,36 @@ export function assertCleanDoctorEnvelope(stdout: string, exitCode: number, stde
     !isObject(data.serve) ||
     data.serve.ok !== true ||
     !Array.isArray(data.serve.failures) ||
-    data.serve.failures.length !== 0
+    data.serve.failures.length !== 0 ||
+    !Array.isArray(data.serve.rails)
   ) {
+    throw new ArtifactProofError("doctor-unhealthy");
+  }
+  const expectedLastResult = expectedRailState === "idle" ? null : "ok";
+  const seenRails = new Set<string>();
+  for (const entry of data.serve.rails) {
+    if (!isObject(entry) || typeof entry.rail !== "string") {
+      throw new ArtifactProofError("doctor-unhealthy");
+    }
+    if (
+      entry.status === "degraded" ||
+      entry.last_result === "degraded" ||
+      (typeof entry.degraded_streak === "number" && entry.degraded_streak > 0)
+    ) {
+      throw new ArtifactProofError("doctor-degraded");
+    }
+    if (
+      seenRails.has(entry.rail) ||
+      entry.status !== expectedRailState ||
+      entry.last_result !== expectedLastResult ||
+      entry.reason !== null ||
+      entry.degraded_streak !== 0
+    ) {
+      throw new ArtifactProofError("doctor-unhealthy");
+    }
+    seenRails.add(entry.rail);
+  }
+  if (seenRails.size !== RAIL_IDS.length || RAIL_IDS.some((rail) => !seenRails.has(rail))) {
     throw new ArtifactProofError("doctor-unhealthy");
   }
 }

@@ -6,7 +6,14 @@ import { mcpSession } from "./smoke-release-mcp";
 
 import { selectedReleaseTarget } from "./release-targets";
 import { parseBuildInfo } from "./stranger-proof";
-import { PACKAGED_CLI_COMMANDS, isValidBuildTimestamp, packagedCommandLine } from "./build-release";
+import {
+  PACKAGED_CLI_COMMANDS,
+  PACKAGED_POLICY_CREATE_COMMAND,
+  PACKAGED_SOURCE_POLICY,
+  isValidBuildTimestamp,
+  packagedCommandLine,
+} from "./build-release";
+import { RAIL_IDS } from "../packages/core/src/serve/rail-registry";
 const target = selectedReleaseTarget();
 
 const root = resolve(import.meta.dir, "..");
@@ -28,6 +35,9 @@ const readme = readFileSync(join(release, "README.txt"), "utf8");
 for (const argv of Object.values(PACKAGED_CLI_COMMANDS)) {
   if (!readme.includes(packagedCommandLine(argv))) throw new Error(`package README missing ${argv.join(" ")}`);
 }
+if (!readme.includes("./kizuki version") || !readme.includes(`  ${PACKAGED_POLICY_CREATE_COMMAND}`)) {
+  throw new Error("package README missing runnable ./kizuki version or source policy setup command");
+}
 
 function run(command: string, args: string[], env: Record<string, string>): string {
   const result = Bun.spawnSync([command, ...args], { env, stderr: "pipe", stdout: "pipe", timeout: 30_000 });
@@ -42,6 +52,14 @@ function runJson(command: string, args: string[], env: Record<string, string>): 
     throw new Error(`compiled JSON command failed (${args[0] ?? "kizuki"} exited ${result.exitCode})`);
   }
   return { stdout: result.stdout.toString(), stderr: result.stderr.toString() };
+}
+
+interface DoctorRail {
+  rail?: string;
+  status?: string;
+  last_result?: string | null;
+  reason?: string | null;
+  degraded_streak?: number;
 }
 
 interface DoctorJsonEnvelope {
@@ -61,6 +79,7 @@ interface DoctorJsonEnvelope {
       failures?: unknown[];
       model?: { canon_writing?: string; model_ref?: string | null };
       stores?: { vector_layer?: { state?: string } };
+      rails?: DoctorRail[];
     };
   };
 }
@@ -68,7 +87,7 @@ interface DoctorJsonEnvelope {
 function assertHealthyNoModelDoctor(
   raw: { stdout: string; stderr: string },
   label: string,
-  options: { expectMarkdownConnection?: boolean } = {},
+  options: { expectMarkdownConnection?: boolean; expectedRailState: "idle" | "ok" },
 ): void {
   if (raw.stderr !== "") throw new Error(`${label} doctor emitted unexpected stderr`);
   const doctor = JSON.parse(raw.stdout) as DoctorJsonEnvelope;
@@ -87,6 +106,7 @@ function assertHealthyNoModelDoctor(
     doctor.data.serve?.ok !== true ||
     !Array.isArray(doctor.data.serve.failures) ||
     doctor.data.serve.failures.length !== 0 ||
+    !Array.isArray(doctor.data.serve.rails) ||
     doctor.data.serve.model?.canon_writing !== "off" ||
     doctor.data.serve.model?.model_ref !== null ||
     doctor.data.serve.stores?.vector_layer?.state !== "off" ||
@@ -96,6 +116,31 @@ function assertHealthyNoModelDoctor(
     doctor.data.memt?.endpoint_host !== null
   ) {
     throw new Error(`${label} doctor did not report a clean healthy no-model vault with zero degraded flags`);
+  }
+  const expectedLastResult = options.expectedRailState === "idle" ? null : "ok";
+  const railsById = new Map<string, DoctorRail>();
+  for (const rail of doctor.data.serve.rails) {
+    if (typeof rail.rail !== "string" || railsById.has(rail.rail)) {
+      throw new Error(`${label} doctor reported malformed or duplicate rail entries`);
+    }
+    railsById.set(rail.rail, rail);
+  }
+  if (railsById.size !== RAIL_IDS.length) {
+    throw new Error(`${label} doctor reported ${railsById.size} rails, expected ${RAIL_IDS.length}`);
+  }
+  for (const expectedRail of RAIL_IDS) {
+    const rail = railsById.get(expectedRail);
+    if (
+      rail === undefined ||
+      rail.status !== options.expectedRailState ||
+      rail.last_result !== expectedLastResult ||
+      rail.reason !== null ||
+      rail.degraded_streak !== 0
+    ) {
+      throw new Error(
+        `${label} doctor rail ${expectedRail} unhealthy: status=${String(rail?.status)} last_result=${String(rail?.last_result)} degraded_streak=${String(rail?.degraded_streak)}`,
+      );
+    }
   }
   if (options.expectMarkdownConnection) {
     const importedConnection = doctor.data.connections?.find(
@@ -199,14 +244,14 @@ try {
     throw new Error("Beeper is missing from the compiled connection catalog");
   }
   run(cli, ["init", vault, "--no-service"], env);
-  assertHealthyNoModelDoctor(runJson(cli, ["doctor", "--json", "--vault", vault], env), "fresh-init");
+  assertHealthyNoModelDoctor(runJson(cli, ["doctor", "--json", "--vault", vault], env), "fresh-init", {
+    expectedRailState: "idle",
+  });
   if (existsSync(join(vault, ".kizuki", "memt", "registry.sqlite"))) {
     throw new Error("fresh-init doctor created memt registry on untouched vault");
   }
   const policy = join(rootTemp, "source-policy.json");
-  writeFileSync(policy, JSON.stringify({ purposes: ["capture", "recall", "session", "derive", "extract", "export"],
-    allowed_fields: ["text", "subjects", "attachments", "metadata"], retention: "persistent_owned_until_revoked",
-    egress: "local_only", sensitivity_floor: "private" }), { mode: 0o600 });
+  writeFileSync(policy, JSON.stringify(PACKAGED_SOURCE_POLICY), { mode: 0o600 });
   run(cli, ["import", "markdown-folder", "--source", notes, "--vault", vault,
     "--policy", policy, "--expected-revision", "0", "--operation-id", "release-smoke-consent"], env);
   const query = assertCleanEnvelope(
@@ -220,7 +265,7 @@ try {
   assertHealthyNoModelDoctor(
     runJson(cli, ["doctor", "--json", "--vault", vault], env),
     "imported",
-    { expectMarkdownConnection: true },
+    { expectMarkdownConnection: true, expectedRailState: "idle" },
   );
   assertContextPacket(
     runJson(cli, ["context", "--query", "Ada", "--json", "--vault", vault], env),
@@ -258,7 +303,7 @@ try {
   assertHealthyNoModelDoctor(
     runJson(cli, ["doctor", "--json", "--vault", vault], env),
     "post-serve-once",
-    { expectMarkdownConnection: true },
+    { expectMarkdownConnection: true, expectedRailState: "ok" },
   );
   const exported = join(rootTemp, "export");
   const restored = join(rootTemp, "restored");
@@ -268,7 +313,7 @@ try {
   assertHealthyNoModelDoctor(
     runJson(cli, ["doctor", "--json", "--vault", restored], env),
     "restored",
-    { expectMarkdownConnection: true },
+    { expectMarkdownConnection: true, expectedRailState: "idle" },
   );
   const restoredQuery = assertCleanEnvelope(
     runJson(cli, ["query", "Ada", "--json", "--vault", restored], env),
@@ -290,6 +335,60 @@ try {
     "post-uninstall query",
   );
   if (!afterUninstall.stdout.includes("Ada")) throw new Error("uninstall did not preserve queryable vault data");
+
+  // Exercise the printed terminal quick-start sequence verbatim in a clean PATH=/usr/bin:/bin shell from the package folder.
+  const quickstartRoot = join(rootTemp, "quickstart");
+  const quickstartWorkspace = join(quickstartRoot, "workspace");
+  const quickstartNotes = join(quickstartRoot, "notes");
+  const quickstartPolicy = join(quickstartRoot, "policy.json");
+  mkdirSync(quickstartRoot, { mode: 0o700 });
+  mkdirSync(quickstartNotes, { mode: 0o700 });
+  writeFileSync(join(quickstartNotes, "note.md"), "Acme release onboarding check.\n", "utf8");
+  const quickstartEnv = {
+    PATH: "/usr/bin:/bin",
+    HOME: join(quickstartRoot, "home"),
+    XDG_CONFIG_HOME: join(quickstartRoot, "xdg"),
+    KIZUKI_CONFIG: join(quickstartRoot, "config.toml"),
+    KIZUKI_SUPERVISOR: "none",
+  };
+  const substituteQuickstart = (line: string): string =>
+    line
+      .replaceAll("/absolute/workspace", quickstartWorkspace)
+      .replaceAll("/absolute/notes", quickstartNotes)
+      .replaceAll("/absolute/policy.json", quickstartPolicy);
+  const quickstartScript = [
+    "./kizuki version",
+    PACKAGED_POLICY_CREATE_COMMAND,
+    PACKAGED_CLI_COMMANDS.init.join(" "),
+    PACKAGED_CLI_COMMANDS.import.join(" "),
+    PACKAGED_CLI_COMMANDS.query.join(" "),
+    PACKAGED_CLI_COMMANDS.doctor.join(" "),
+  ]
+    .map(substituteQuickstart)
+    .join("\n");
+  const quickstartRun = Bun.spawnSync(["/bin/sh", "-eu", "-c", quickstartScript], {
+    cwd: release,
+    env: quickstartEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+    timeout: 60_000,
+  });
+  const quickstartStdout = quickstartRun.stdout.toString();
+  const quickstartStderr = quickstartRun.stderr.toString();
+  if (
+    quickstartRun.exitCode !== 0 ||
+    !quickstartStdout.includes(versionLine) ||
+    !quickstartStdout.includes("Acme release onboarding check.")
+  ) {
+    throw new Error(
+      `printed terminal quick-start sequence failed (exit ${quickstartRun.exitCode}): ${quickstartStderr}`,
+    );
+  }
+  assertHealthyNoModelDoctor(
+    runJson(cli, ["doctor", "--json", "--vault", quickstartWorkspace], quickstartEnv),
+    "quickstart",
+    { expectMarkdownConnection: true, expectedRailState: "idle" },
+  );
 
   // Exercise the documented zero-friction local PATH symlink install in the temp HOME.
   const localBin = join(env.HOME, ".local", "bin");
