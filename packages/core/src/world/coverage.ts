@@ -1,15 +1,21 @@
 import type { Database } from "bun:sqlite";
+import { OWNER } from "../agents";
 import type { ViewGap } from "../contracts/concept-card";
+import type { WorldKindPopulation } from "../contracts/world-kinds";
+import { activeWorldRegistry } from "../contracts/world-vocabulary";
 import { getCheckpoint, inspectConnections, LedgerError, type Checkpoint } from "../ledger/connections";
 import { LIVE_PREDICATE } from "../ledger/ledger";
 import type { ScanCoverage } from "../contracts/source-coverage";
 import { tableExists } from "../ledger/schema";
 import { readExtractCursor } from "../serve/extract";
 import type { ServeContext } from "../serving/types";
-import { authorizedEventSql } from "./policy-sql";
+import { authorizedClaimSql, authorizedEventSql } from "./policy-sql";
 import type { WorldDependencies } from "./dependencies";
 import { instantNanoSql, instantSecondSql } from "../query/sql";
 import { rfc3339Instant } from "../agents/time";
+import { knownPermittedAndUnheldSql } from "./known/cutoff";
+import { eligibleWorldClaim } from "./pipeline/eligible";
+import { WorldProjectionBudgetError } from "./pipeline/frame";
 
 export type SourceCoverageGap = Extract<
   ViewGap,
@@ -224,4 +230,180 @@ export function readSourceCoverage(ctx: ServeContext): SourceCoverageReport[] {
   if (!tableExists(ctx.db, "source_grants") || !tableExists(ctx.db, "source_event_bindings")) return [];
   const eventFilter = authorizedEventSql(ctx);
   return coverageReports(ctx.db, visibleSources(ctx, eventFilter), eventFilter, ctx.principal.kind === "owner");
+}
+
+const KIND_COVERAGE_SCAN_LIMIT = 4096;
+
+export interface WorldKindCoverageEntry {
+  readonly kind: string;
+  readonly vocabulary_id: string;
+  readonly card_schema: string;
+  readonly offered_to_producer: boolean;
+  readonly population: readonly WorldKindPopulation[];
+  readonly population_enabled: boolean;
+  readonly classified_handles: number;
+  readonly live_assertions: number;
+  readonly contributing_sources: number;
+  readonly state: "active" | "dark";
+  readonly gaps: readonly SourceCoverageGap[];
+}
+
+export interface WorldKindCoverageReport {
+  readonly total_kinds: number;
+  readonly active_kinds: number;
+  readonly populated_kinds: number;
+  readonly offered_kinds: number;
+  readonly kinds: readonly WorldKindCoverageEntry[];
+}
+
+/**
+ * Principal-scoped coverage metrics across every registered world kind.
+ * Uses the exact same claim authorization, support admission, and source
+ * visibility rules as world discovery so hidden claims or sources never alter
+ * counts, state, or gaps.
+ */
+export function readWorldKindCoverage(ctx: ServeContext): WorldKindCoverageReport {
+  const { db } = ctx;
+  const sourceGaps = sourceCoverage(ctx);
+  const registryKinds = [...activeWorldRegistry().kinds].sort((a, b) => a.id.localeCompare(b.id));
+  const hasWorldTables =
+    tableExists(db, "claims") &&
+    tableExists(db, "claim_v2_semantics") &&
+    tableExists(db, "claim_v2_support") &&
+    tableExists(db, "semantic_bindings");
+  const claimFilter = hasWorldTables ? authorizedClaimSql(ctx, "base") : null;
+  const admittedFilter = hasWorldTables ? knownPermittedAndUnheldSql(ctx, "base") : null;
+  const classificationQuery = hasWorldTables
+    ? db.query<{ handle_id: string; claim_id: string }, (string | number)[]>(
+        `SELECT b.handle_id, c.claim_id
+           FROM semantic_bindings b
+           CROSS JOIN claim_v2_semantics c
+             ON c.subject_kind=b.raw_kind AND c.subject_id=b.raw_id
+            AND coalesce(json_extract(c.payload,'$.subject.namespace'),'')=b.raw_namespace
+           CROSS JOIN claims base ON base.claim_id=c.claim_id
+          WHERE c.discriminator='assertion' AND c.predicate='world.kind'
+            AND c.polarity='positive' AND json_extract(c.payload,'$.perspective.mode')='asserted'
+            AND json_extract(c.payload,'$.object.kind')='vocabulary'
+            AND json_extract(c.payload,'$.object.ref.id')=?
+            AND base.status='live'
+            AND ${claimFilter!.sql}
+            AND ${admittedFilter!.sql}
+          ORDER BY b.handle_id, c.claim_id
+          LIMIT ${KIND_COVERAGE_SCAN_LIMIT + 1}`,
+      )
+    : null;
+  const assertionQuery = hasWorldTables
+    ? db.query<{ claim_id: string }, (string | number)[]>(
+        `SELECT DISTINCT c.claim_id
+           FROM semantic_bindings b
+           CROSS JOIN claim_v2_semantics c
+             ON c.subject_kind=b.raw_kind AND c.subject_id=b.raw_id
+            AND coalesce(json_extract(c.payload,'$.subject.namespace'),'')=b.raw_namespace
+           CROSS JOIN claims base ON base.claim_id=c.claim_id
+          WHERE b.handle_id IN (SELECT value FROM json_each(?))
+            AND c.discriminator='assertion'
+            AND base.status='live'
+            AND ${claimFilter!.sql}
+            AND ${admittedFilter!.sql}
+          ORDER BY c.claim_id
+          LIMIT ${KIND_COVERAGE_SCAN_LIMIT + 1}`,
+      )
+    : null;
+
+  const kinds: WorldKindCoverageEntry[] = registryKinds.map((spec) => {
+    const population_enabled = spec.population.some((path) => path !== "extraction" || spec.offeredToProducer);
+    const verifiedHandles = new Set<string>();
+    const verifiedClaims = new Set<string>();
+    const sources = new Set<string>();
+    let truncated = false;
+    const budget = { bytes: 0 };
+    if (classificationQuery !== null && claimFilter !== null && admittedFilter !== null) {
+      const rows = classificationQuery.all(spec.vocabularyId, ...claimFilter.bindings, ...admittedFilter.bindings);
+      if (rows.length > KIND_COVERAGE_SCAN_LIMIT) truncated = true;
+      for (const row of rows.slice(0, KIND_COVERAGE_SCAN_LIMIT)) {
+        try {
+          const item = eligibleWorldClaim(ctx, row.claim_id, { kind: "all" }, budget);
+          if (
+            item === null ||
+            item.semantic.predicate !== "world.kind" ||
+            item.semantic.polarity !== "positive" ||
+            item.semantic.perspective.mode !== "asserted" ||
+            item.semantic.object.kind !== "vocabulary" ||
+            item.semantic.object.ref.id !== spec.vocabularyId
+          )
+            continue;
+          verifiedHandles.add(row.handle_id);
+          verifiedClaims.add(row.claim_id);
+          for (const support of item.supports) {
+            if (support.row.support_origin === "source") sources.add(support.row.source_key);
+          }
+        } catch (error) {
+          if (error instanceof WorldProjectionBudgetError) {
+            truncated = true;
+            break;
+          }
+          throw error;
+        }
+      }
+    }
+    let live_assertions = 0;
+    if (verifiedHandles.size > 0 && assertionQuery !== null && claimFilter !== null && admittedFilter !== null) {
+      const assertionRows = assertionQuery.all(
+        JSON.stringify([...verifiedHandles]),
+        ...claimFilter.bindings,
+        ...admittedFilter.bindings,
+      );
+      if (assertionRows.length > KIND_COVERAGE_SCAN_LIMIT) truncated = true;
+      for (const row of assertionRows.slice(0, KIND_COVERAGE_SCAN_LIMIT)) {
+        if (verifiedClaims.has(row.claim_id)) {
+          live_assertions += 1;
+          continue;
+        }
+        try {
+          const item = eligibleWorldClaim(ctx, row.claim_id, { kind: "all" }, budget);
+          if (item !== null) live_assertions += 1;
+        } catch (error) {
+          if (error instanceof WorldProjectionBudgetError) {
+            truncated = true;
+            break;
+          }
+          throw error;
+        }
+      }
+    }
+    const state = verifiedHandles.size > 0 || population_enabled ? "active" : "dark";
+    const gaps: SourceCoverageGap[] = [
+      ...new Set<SourceCoverageGap>([
+        ...sourceGaps,
+        ...(verifiedHandles.size === 0 && !population_enabled ? (["coverage"] as const) : []),
+        ...(truncated ? (["coverage"] as const) : []),
+      ]),
+    ];
+    return {
+      kind: spec.id,
+      vocabulary_id: spec.vocabularyId,
+      card_schema: spec.cardSchema,
+      offered_to_producer: spec.offeredToProducer,
+      population: spec.population,
+      population_enabled,
+      classified_handles: verifiedHandles.size,
+      live_assertions,
+      contributing_sources: sources.size,
+      state,
+      gaps,
+    };
+  });
+
+  return {
+    total_kinds: kinds.length,
+    active_kinds: kinds.filter((entry) => entry.state === "active").length,
+    populated_kinds: kinds.filter((entry) => entry.classified_handles > 0).length,
+    offered_kinds: kinds.filter((entry) => entry.offered_to_producer).length,
+    kinds,
+  };
+}
+
+/** Trusted local owner diagnostics across all registered world kinds. */
+export function inspectWorldKindCoverage(db: Database): WorldKindCoverageReport {
+  return readWorldKindCoverage({ db, vaultPath: "", principal: OWNER });
 }

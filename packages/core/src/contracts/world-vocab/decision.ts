@@ -4,6 +4,6 @@ export const DECISION_VOCABULARY: WorldVocabularyModule = {
     endpointKind: "decision", cardSchema: "kizuki.situation-card/v2", offeredToProducer: false, population: ["extraction"] },
   predicates: [
     worldPredicate({ predicate: "decision.label", subject: "decision", objects: ["literal"] }),
-    worldPredicate({ predicate: "decision.status", subject: "decision", objects: ["vocabulary"], values: ["decision/open","decision/decided","decision/reversed"] }),
+    worldPredicate({ predicate: "decision.status", subject: "decision", objects: ["vocabulary"], values: ["decision/open","decision/decided","decision/reversed"], conflictCardinality: "single" }),
   ],
 };
