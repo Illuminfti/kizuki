@@ -458,6 +458,10 @@ try {
     "memt_recall",
     "memt_experience",
     "memt_snapshot",
+    "ontology_status",
+    "ontology_search",
+    "ontology_check_answerable",
+    "ontology_certify",
   ] as const;
   const ownerSession = await mcpSession(mcp, env, ["--vault", vault, "--owner"], [
     agentRequests[0]!,
