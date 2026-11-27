@@ -658,7 +658,7 @@
     // Stage 1: Fast lexical resolve (<25ms server)
     fetch('/api/command/resolve', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Kizuki-Request': '1' },
       body: JSON.stringify({ q: trimmed, includeSemantic: false, limit: 20 }),
     })
       .then((r) => (r.ok ? r.json() : null))
@@ -684,7 +684,7 @@
     ui.semTimer = setTimeout(() => {
       fetch('/api/command/resolve', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Kizuki-Request': '1' },
         body: JSON.stringify({ q: trimmed, includeSemantic: true, limit: 20 }),
       })
         .then((r) => (r.ok ? r.json() : null))
@@ -810,7 +810,7 @@
     try {
       const resp = await fetch('/api/command/execute', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Kizuki-Request': '1' },
         body: JSON.stringify({ q, confirm: Boolean(confirm) }),
       });
       const data = await resp.json();
@@ -895,7 +895,7 @@
     try {
       const resp = await fetch('/api/command/execute', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Kizuki-Request': '1' },
         body: JSON.stringify({ q: 'ask ' + q, confirm: false }),
       });
       const data = await resp.json();

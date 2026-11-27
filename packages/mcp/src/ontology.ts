@@ -1,17 +1,18 @@
 import { Database } from "bun:sqlite";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import {
   ServeError,
-  resolvePrincipal,
+  gate,
   toolAllowed,
 } from "@kizuki/core";
-import type { Principal, Sensitivity, ServeContext, Tool } from "@kizuki/core";
+import type { AuditItem, Principal, Sensitivity, ServeContext } from "@kizuki/core";
 import { createRedactor } from "@kizuki/core/internal";
 import {
   ONTOLOGY_SCHEMA_VERSION,
   OntologyStore,
   checkAnswerable,
   compileOntologyFromVault,
+  computeVaultOntologyFingerprint,
   dedupeStrings,
   defaultOntologyDbPath,
   normalizeOntologySensitivity,
@@ -69,20 +70,47 @@ export function ontologyToolAllowed(
   }
 }
 
-function requireLivePrincipal(
-  ctx: ServeContext,
-  requiredTools: readonly Tool[],
-): Principal {
-  const principal = resolvePrincipal(ctx.db, ctx.principal);
-  if (principal === null) throw new ServeError("unknown_agent", "unknown agent");
-  if (principal.kind !== "owner") {
-    for (const req of requiredTools) {
-      if (!toolAllowed(principal.grant, req)) {
-        throw new ServeError("tool_not_granted", "tool not granted");
-      }
-    }
+function assertNoActivePurgeDiscovery(db: Database): void {
+  const hasTable =
+    db
+      .query<{ name: string }, []>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'purge_batches'",
+      )
+      .get() !== null;
+  if (!hasTable) return;
+  const pending = db
+    .query<{ batch_id: string }, []>(
+      "SELECT batch_id FROM purge_batches WHERE state != 'ready' LIMIT 1",
+    )
+    .get();
+  if (pending !== null) {
+    throw new ServeError("held", "canon unavailable during purge recovery");
   }
-  return principal;
+}
+
+function readPersistedFingerprint(dbPath: string): string | null {
+  if (!existsSync(dbPath)) return null;
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    const hasMeta =
+      db
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'ontology_meta'",
+        )
+        .get() !== null;
+    if (!hasMeta) return null;
+    return (
+      db
+        .query<{ value: string }, [string]>(
+          "SELECT value FROM ontology_meta WHERE key = ?",
+        )
+        .get("vault_fingerprint")?.value ?? null
+    );
+  } catch {
+    return null;
+  } finally {
+    db.close();
+  }
 }
 
 function toOntologySensitivity(s: Sensitivity): OntologySensitivity {
@@ -163,6 +191,7 @@ function redactTerm(
     domain: redactor.text(term.domain),
     description: redactor.text(term.description),
     synonyms: term.synonyms.map((s) => redactor.text(s)),
+    subjects: term.subjects.map((s) => redactor.text(s)),
     attributes: term.attributes.map((a) => redactAttribute(a, redactor)),
     provenance: term.provenance.map((p) => redactor.text(p)),
     sensitivity: term.sensitivity,
@@ -252,15 +281,87 @@ function redactReceipt(
 }
 
 /**
+ * Computes scoped status payload from an open `OntologyStore` (such as a fresh
+ * in-memory fallback compiled when persisted `ontology.sqlite` is stale).
+ */
+function inspectStatusFromStore(
+  store: OntologyStore,
+  dbPath: string,
+  principal: Principal,
+  ceiling: OntologySensitivity,
+  allowedSubjects: readonly string[] | null,
+  compiled: boolean,
+): Record<string, unknown> {
+  const scope: OntologyScopeOptions = {
+    sensitivityCeiling: ceiling,
+    allowedSubjects,
+  };
+  const visibleTerms = store.listTerms(scope);
+  const visibleTermIds = new Set(visibleTerms.map((t) => t.termId));
+  const certifiedTermCount = visibleTerms.filter(
+    (t) => t.certification === "certified",
+  ).length;
+  const visibleRelations = store.listRelations(scope);
+  const defaultJoinCount = visibleRelations.filter((r) => r.isDefaultJoin).length;
+  const visibleMetrics = store.listMetrics(scope);
+  const visibleMetricIds = new Set(visibleMetrics.map((m) => m.metricId));
+  const certifiedMetricCount = visibleMetrics.filter(
+    (m) => m.certification === "certified",
+  ).length;
+
+  let familyCount = 0;
+  for (const fam of store.listTermFamilies()) {
+    if (
+      principal.kind === "owner" ||
+      Object.keys(fam.members).some((tid) => visibleTermIds.has(tid))
+    ) {
+      familyCount += 1;
+    }
+  }
+
+  let certificationReceiptCount = 0;
+  for (const receipt of store.listCertifications()) {
+    if (
+      principal.kind === "owner" ||
+      (receipt.targetKind === "term" && visibleTermIds.has(receipt.targetId)) ||
+      (receipt.targetKind === "metric" && visibleMetricIds.has(receipt.targetId))
+    ) {
+      certificationReceiptCount += 1;
+    }
+  }
+
+  return {
+    schema: "kizuki.ontology-status/v1",
+    compiled,
+    ceiling,
+    ...(principal.kind === "owner" ? { db_path: dbPath } : {}),
+    term_count: visibleTerms.length,
+    certified_term_count: certifiedTermCount,
+    draft_term_count: visibleTerms.length - certifiedTermCount,
+    family_count: familyCount,
+    relation_count: visibleRelations.length,
+    default_join_count: defaultJoinCount,
+    metric_count: visibleMetrics.length,
+    certified_metric_count: certifiedMetricCount,
+    certification_receipt_count: certificationReceiptCount,
+    last_compiled_at: compiled ? store.getMeta("last_compiled_at") : null,
+    schema_version: store.getMeta("schema_version") ?? ONTOLOGY_SCHEMA_VERSION,
+  };
+}
+
+/**
  * Strictly read-only, scope-enforced inspection of an existing `ontology.sqlite`.
  * Never creates or modifies any database or WAL/SHM file.
+ * Returns `null` when the on-disk file exists but its `vault_fingerprint` does
+ * not match `liveFingerprint` so the caller can recompile fresh in-memory.
  */
 function inspectStatusReadOnly(
   dbPath: string,
   principal: Principal,
   ceiling: OntologySensitivity,
   allowedSubjects: readonly string[] | null,
-): Record<string, unknown> {
+  liveFingerprint: string,
+): Record<string, unknown> | null {
   if (!existsSync(dbPath)) {
     return {
       schema: "kizuki.ontology-status/v1",
@@ -292,25 +393,48 @@ function inspectStatusReadOnly(
         .map((r) => r.name),
     );
 
+    const metaOf = (key: string): string | null => {
+      if (!tables.has("ontology_meta")) return null;
+      return (
+        db
+          .query<{ value: string }, [string]>(
+            "SELECT value FROM ontology_meta WHERE key = ?",
+          )
+          .get(key)?.value ?? null
+      );
+    };
+
+    const persistedFingerprint = metaOf("vault_fingerprint");
+    if (persistedFingerprint !== liveFingerprint) {
+      return null;
+    }
+
     const visibleTermIds = new Set<string>();
     let certifiedTermCount = 0;
 
     if (tables.has("ontology_terms")) {
+      const termCols = new Set(
+        db
+          .query<{ name: string }, []>(
+            "SELECT name FROM pragma_table_info('ontology_terms')",
+          )
+          .all()
+          .map((c) => c.name),
+      );
+      const hasSubjects = termCols.has("subjects_json");
       const rows = db
         .query<
           {
             term_id: string;
-            canonical_name: string;
-            normalized_key: string;
-            domain: string;
-            synonyms_json: string;
-            provenance_json: string;
+            subjects_json: string;
             sensitivity: string;
             certification: string;
           },
           []
         >(
-          "SELECT term_id, canonical_name, normalized_key, domain, synonyms_json, provenance_json, sensitivity, certification FROM ontology_terms",
+          hasSubjects
+            ? "SELECT term_id, subjects_json, sensitivity, certification FROM ontology_terms"
+            : "SELECT term_id, '[]' AS subjects_json, sensitivity, certification FROM ontology_terms",
         )
         .all();
 
@@ -319,12 +443,7 @@ function inspectStatusReadOnly(
         if (!withinOntologySensitivity(sens, ceiling)) continue;
         const okSubject = termMatchesAllowedSubjects(
           {
-            termId: row.term_id,
-            normalizedKey: row.normalized_key,
-            canonicalName: row.canonical_name,
-            domain: row.domain,
-            synonyms: parseJsonStringArray(row.synonyms_json),
-            provenance: parseJsonStringArray(row.provenance_json),
+            subjects: parseJsonStringArray(row.subjects_json),
           },
           allowedSubjects,
         );
@@ -440,17 +559,6 @@ function inspectStatusReadOnly(
       }
     }
 
-    const metaOf = (key: string): string | null => {
-      if (!tables.has("ontology_meta")) return null;
-      return (
-        db
-          .query<{ value: string }, [string]>(
-            "SELECT value FROM ontology_meta WHERE key = ?",
-          )
-          .get(key)?.value ?? null
-      );
-    };
-
     const lastCompiledAt = metaOf("last_compiled_at");
     const schemaVersion = metaOf("schema_version") ?? ONTOLOGY_SCHEMA_VERSION;
     const termCount = visibleTermIds.size;
@@ -491,38 +599,83 @@ export interface OntologyBridge {
 export function createOntologyBridge(ctx: ServeContext): OntologyBridge {
   const dbPath = defaultOntologyDbPath(ctx.vaultPath);
   let ownedStore: OntologyStore | null = null;
+  let ownedStoreIno: number | null = null;
 
-  const getExistingOnDiskStore = (): OntologyStore | null => {
-    if (ownedStore !== null) return ownedStore;
+  const currentIno = (): number | null => {
     if (!existsSync(dbPath)) return null;
+    try {
+      return statSync(dbPath).ino;
+    } catch {
+      return null;
+    }
+  };
+
+  const resetOwnedStore = (): void => {
+    if (ownedStore !== null) {
+      ownedStore.close();
+      ownedStore = null;
+    }
+    ownedStoreIno = null;
+  };
+
+  const syncOwnedStoreHandle = (): void => {
+    if (ownedStore === null) return;
+    const ino = currentIno();
+    if (ino === null || ino !== ownedStoreIno) {
+      resetOwnedStore();
+    }
+  };
+
+  const getFreshOnDiskStore = (liveFingerprint: string): OntologyStore | null => {
+    syncOwnedStoreHandle();
+    if (!existsSync(dbPath)) return null;
+    if (ownedStore !== null) {
+      return ownedStore.getMeta("vault_fingerprint") === liveFingerprint
+        ? ownedStore
+        : null;
+    }
+    if (readPersistedFingerprint(dbPath) !== liveFingerprint) {
+      return null;
+    }
     ownedStore = openOntologyStore(dbPath);
+    ownedStoreIno = currentIno();
     return ownedStore;
   };
 
-  const getWritableStore = (): OntologyStore => {
+  const getWritableFreshStore = (liveDb: Database): OntologyStore => {
+    syncOwnedStoreHandle();
+    const liveFingerprint = computeVaultOntologyFingerprint(liveDb);
     if (ownedStore === null) {
       ownedStore = openOntologyStore(dbPath);
+      ownedStoreIno = currentIno();
     }
     if (
-      ownedStore.getMeta("last_compiled_at") === null &&
-      ownedStore.listTerms().length === 0
+      ownedStore.getMeta("vault_fingerprint") !== liveFingerprint ||
+      (ownedStore.getMeta("last_compiled_at") === null &&
+        ownedStore.listTerms().length === 0)
     ) {
-      compileOntologyFromVault(ctx.db, ownedStore);
+      compileOntologyFromVault(liveDb, ownedStore, {
+        vaultFingerprint: liveFingerprint,
+      });
     }
     return ownedStore;
   };
 
   const withReadableStore = <T>(
+    liveDb: Database,
     run: (store: OntologyStore, compiledOnDisk: boolean) => T,
   ): T => {
-    const existing = getExistingOnDiskStore();
+    const liveFingerprint = computeVaultOntologyFingerprint(liveDb);
+    const existing = getFreshOnDiskStore(liveFingerprint);
     if (existing !== null) {
       return run(existing, true);
     }
-    // Auto-compile in-memory without mutating the vault on disk.
+    // Compile fresh in-memory without mutating the vault on disk.
     const memStore = OntologyStore.openInMemory();
     try {
-      compileOntologyFromVault(ctx.db, memStore);
+      compileOntologyFromVault(liveDb, memStore, {
+        vaultFingerprint: liveFingerprint,
+      });
       return run(memStore, false);
     } finally {
       memStore.close();
@@ -530,257 +683,395 @@ export function createOntologyBridge(ctx: ServeContext): OntologyBridge {
   };
 
   const handleStatus = async (
-    _args: Record<string, unknown>,
+    args: Record<string, unknown>,
   ): Promise<Record<string, unknown>> => {
-    const principal = requireLivePrincipal(ctx, ["system_health"]);
-    const { ceiling, allowedSubjects } = scopeForPrincipal(principal);
-    return inspectStatusReadOnly(dbPath, principal, ceiling, allowedSubjects);
+    const envelope = gate(
+      ctx,
+      "system_health",
+      { ontology_tool: "ontology_status", ...args },
+      ({ ctx: live }) => {
+        assertNoActivePurgeDiscovery(live.db);
+        syncOwnedStoreHandle();
+        const { ceiling, allowedSubjects } = scopeForPrincipal(live.principal);
+        const liveFingerprint = computeVaultOntologyFingerprint(live.db);
+        const diskStatus = inspectStatusReadOnly(
+          dbPath,
+          live.principal,
+          ceiling,
+          allowedSubjects,
+          liveFingerprint,
+        );
+        if (diskStatus !== null) {
+          return {
+            canon: [],
+            quoted: [],
+            withheld: [],
+            data: diskStatus,
+          };
+        }
+        const memStore = OntologyStore.openInMemory();
+        try {
+          compileOntologyFromVault(live.db, memStore, {
+            vaultFingerprint: liveFingerprint,
+          });
+          return {
+            canon: [],
+            quoted: [],
+            withheld: [],
+            data: inspectStatusFromStore(
+              memStore,
+              dbPath,
+              live.principal,
+              ceiling,
+              allowedSubjects,
+              false,
+            ),
+          };
+        } finally {
+          memStore.close();
+        }
+      },
+    );
+    return envelope.data!;
   };
 
   const handleSearch = async (
     args: Record<string, unknown>,
   ): Promise<Record<string, unknown>> => {
-    const principal = requireLivePrincipal(ctx, ["search", "context_packet"]);
-    const { ceiling, allowedSubjects } = scopeForPrincipal(principal);
-    const redactor = createRedactor(principal, ctx.servingSecrets);
+    const envelope = gate(
+      ctx,
+      "search",
+      { ontology_tool: "ontology_search", ...args },
+      ({ ctx: live }) => {
+        if (
+          live.principal.kind !== "owner" &&
+          !toolAllowed(live.principal.grant, "context_packet")
+        ) {
+          throw new ServeError("tool_not_granted", "tool not granted");
+        }
+        assertNoActivePurgeDiscovery(live.db);
+        const { ceiling, allowedSubjects } = scopeForPrincipal(live.principal);
+        const redactor =
+          live.redactor ?? createRedactor(live.principal, live.servingSecrets);
 
-    const query = asString(args["query"]);
-    if (query === undefined || query.length > 512) {
-      throw new ServeError("invalid_arguments", "invalid arguments: query");
-    }
-    const rawPurpose = args["purpose"];
-    const purpose: OntologyRetrievePurpose =
-      rawPurpose === "information" ||
-      rawPurpose === "relations" ||
-      rawPurpose === "metrics" ||
-      rawPurpose === "all"
-        ? rawPurpose
-        : "all";
-    const rawMaxChars = args["max_chars"];
-    const maxChars =
-      typeof rawMaxChars === "number" &&
-      Number.isInteger(rawMaxChars) &&
-      rawMaxChars >= 64 &&
-      rawMaxChars <= 16_000
-        ? rawMaxChars
-        : 4000;
-    const rawLimit = args["limit"];
-    const limit =
-      typeof rawLimit === "number" &&
-      Number.isInteger(rawLimit) &&
-      rawLimit >= 1 &&
-      rawLimit <= 50
-        ? rawLimit
-        : 20;
-    const rawFullHits = args["full_hits"];
-    const fullHits =
-      typeof rawFullHits === "number" &&
-      Number.isInteger(rawFullHits) &&
-      rawFullHits >= 0 &&
-      rawFullHits <= 10
-        ? rawFullHits
-        : 2;
-    const rawMaxHops = args["max_join_hops"];
-    const maxJoinHops =
-      typeof rawMaxHops === "number" &&
-      Number.isInteger(rawMaxHops) &&
-      rawMaxHops >= 1 &&
-      rawMaxHops <= 12
-        ? rawMaxHops
-        : 6;
+        const query = asString(args["query"]);
+        if (query === undefined || query.length > 512) {
+          throw new ServeError("invalid_arguments", "invalid arguments: query");
+        }
+        const rawPurpose = args["purpose"];
+        const purpose: OntologyRetrievePurpose =
+          rawPurpose === "information" ||
+          rawPurpose === "relations" ||
+          rawPurpose === "metrics" ||
+          rawPurpose === "all"
+            ? rawPurpose
+            : "all";
+        const rawMaxChars = args["max_chars"];
+        const maxChars =
+          typeof rawMaxChars === "number" &&
+          Number.isInteger(rawMaxChars) &&
+          rawMaxChars >= 64 &&
+          rawMaxChars <= 16_000
+            ? rawMaxChars
+            : 4000;
+        const rawLimit = args["limit"];
+        const limit =
+          typeof rawLimit === "number" &&
+          Number.isInteger(rawLimit) &&
+          rawLimit >= 1 &&
+          rawLimit <= 50
+            ? rawLimit
+            : 20;
+        const rawFullHits = args["full_hits"];
+        const fullHits =
+          typeof rawFullHits === "number" &&
+          Number.isInteger(rawFullHits) &&
+          rawFullHits >= 0 &&
+          rawFullHits <= 10
+            ? rawFullHits
+            : 2;
+        const rawMaxHops = args["max_join_hops"];
+        const maxJoinHops =
+          typeof rawMaxHops === "number" &&
+          Number.isInteger(rawMaxHops) &&
+          rawMaxHops >= 1 &&
+          rawMaxHops <= 12
+            ? rawMaxHops
+            : 6;
 
-    return withReadableStore((store, compiledOnDisk) => {
-      const result = retrieveOntology(store, query, {
-        purpose,
-        maxChars,
-        limit,
-        fullHits,
-        maxJoinHops,
-        sensitivityCeiling: ceiling,
-        allowedSubjects,
-      });
-      const rendered = redactor.text(result.rendered);
-      return {
-        schema: "kizuki.ontology-search/v1",
-        compiled: compiledOnDisk,
-        ceiling,
-        query: redactor.text(result.query),
-        purpose: result.purpose,
-        terms: result.terms.map((entry) => ({
-          term: redactTerm(entry.term, redactor),
-          score: entry.score,
-          tier: entry.tier,
-        })),
-        relations: result.relations.map((rel) => redactRelation(rel, redactor)),
-        join_paths: result.joinPaths.map((jp) => redactJoinPath(jp, redactor)),
-        metrics: result.metrics.map((m) => redactMetric(m, redactor)),
-        rendered,
-        truncated: result.truncated,
-        total_chars: rendered.length,
-      };
-    });
+        return withReadableStore(live.db, (store, compiledOnDisk) => {
+          const result = retrieveOntology(store, query, {
+            purpose,
+            maxChars,
+            limit,
+            fullHits,
+            maxJoinHops,
+            sensitivityCeiling: ceiling,
+            allowedSubjects,
+          });
+          const rendered = redactor.text(result.rendered);
+          const auditServed: AuditItem[] = result.terms.map((entry) => ({
+            id: entry.term.termId,
+            sensitivity: entry.term.sensitivity,
+            taint: null,
+            authority: entry.term.certification,
+            provenance_count: entry.term.provenance.length,
+          }));
+          return {
+            canon: [],
+            quoted: [],
+            withheld: [],
+            audit_served: auditServed,
+            data: {
+              schema: "kizuki.ontology-search/v1",
+              compiled: compiledOnDisk,
+              ceiling,
+              query: redactor.text(result.query),
+              purpose: result.purpose,
+              terms: result.terms.map((entry) => ({
+                term: redactTerm(entry.term, redactor),
+                score: entry.score,
+                tier: entry.tier,
+              })),
+              relations: result.relations.map((rel) =>
+                redactRelation(rel, redactor),
+              ),
+              join_paths: result.joinPaths.map((jp) =>
+                redactJoinPath(jp, redactor),
+              ),
+              metrics: result.metrics.map((m) => redactMetric(m, redactor)),
+              rendered,
+              truncated: result.truncated,
+              total_chars: rendered.length,
+            },
+          };
+        });
+      },
+    );
+    return envelope.data!;
   };
 
   const handleCheckAnswerable = async (
     args: Record<string, unknown>,
   ): Promise<Record<string, unknown>> => {
-    const principal = requireLivePrincipal(ctx, ["search", "context_packet"]);
-    const { ceiling, allowedSubjects } = scopeForPrincipal(principal);
-    const redactor = createRedactor(principal, ctx.servingSecrets);
+    const envelope = gate(
+      ctx,
+      "search",
+      { ontology_tool: "ontology_check_answerable", ...args },
+      ({ ctx: live }) => {
+        if (
+          live.principal.kind !== "owner" &&
+          !toolAllowed(live.principal.grant, "context_packet")
+        ) {
+          throw new ServeError("tool_not_granted", "tool not granted");
+        }
+        assertNoActivePurgeDiscovery(live.db);
+        const { ceiling, allowedSubjects } = scopeForPrincipal(live.principal);
+        const redactor =
+          live.redactor ?? createRedactor(live.principal, live.servingSecrets);
 
-    const question = asString(args["question"]);
-    if (question === undefined || question.length > 1024) {
-      throw new ServeError("invalid_arguments", "invalid arguments: question");
-    }
-    const rawMaxHops = args["max_join_hops"];
-    const maxJoinHops =
-      typeof rawMaxHops === "number" &&
-      Number.isInteger(rawMaxHops) &&
-      rawMaxHops >= 1 &&
-      rawMaxHops <= 12
-        ? rawMaxHops
-        : 6;
-    const rawOverlap = args["min_token_overlap"];
-    const minTokenOverlap =
-      typeof rawOverlap === "number" &&
-      Number.isFinite(rawOverlap) &&
-      rawOverlap >= 0 &&
-      rawOverlap <= 1
-        ? rawOverlap
-        : undefined;
+        const question = asString(args["question"]);
+        if (question === undefined || question.length > 1024) {
+          throw new ServeError(
+            "invalid_arguments",
+            "invalid arguments: question",
+          );
+        }
+        const rawMaxHops = args["max_join_hops"];
+        const maxJoinHops =
+          typeof rawMaxHops === "number" &&
+          Number.isInteger(rawMaxHops) &&
+          rawMaxHops >= 1 &&
+          rawMaxHops <= 12
+            ? rawMaxHops
+            : 6;
+        const rawOverlap = args["min_token_overlap"];
+        const minTokenOverlap =
+          typeof rawOverlap === "number" &&
+          Number.isFinite(rawOverlap) &&
+          rawOverlap >= 0 &&
+          rawOverlap <= 1
+            ? rawOverlap
+            : undefined;
 
-    return withReadableStore((store, compiledOnDisk) => {
-      const report = checkAnswerable(store, question, {
-        sensitivityCeiling: ceiling,
-        allowedSubjects,
-        maxJoinHops,
-        ...(minTokenOverlap !== undefined ? { minTokenOverlap } : {}),
-      });
-      return {
-        schema: "kizuki.ontology-check-answerable/v1",
-        compiled: compiledOnDisk,
-        ceiling,
-        question: redactor.text(report.question),
-        candidates: report.candidates.map((c) => redactor.text(c)),
-        coverage: report.coverage,
-        verdict: report.verdict,
-        resolved: report.resolved.map((entry) => ({
-          query_concept: redactor.text(entry.queryConcept),
-          term_id: redactor.text(entry.termId),
-          canonical_name: redactor.text(entry.canonicalName),
-          matched_by: entry.matchedBy,
-          certification: entry.certification,
-          score: entry.score,
-          domain: redactor.text(entry.domain),
-          sensitivity: entry.sensitivity,
-        })),
-        missing: report.missing.map((m) => redactor.text(m)),
-        join_paths: report.joinPaths.map((jp) => redactJoinPath(jp, redactor)),
-        suggested_metrics: report.suggestedMetrics.map((m) =>
-          redactMetric(m, redactor),
-        ),
-        clarification:
-          report.clarification === null
-            ? null
-            : redactor.text(report.clarification),
-      };
-    });
+        return withReadableStore(live.db, (store, compiledOnDisk) => {
+          const report = checkAnswerable(store, question, {
+            sensitivityCeiling: ceiling,
+            allowedSubjects,
+            maxJoinHops,
+            ...(minTokenOverlap !== undefined ? { minTokenOverlap } : {}),
+          });
+          const auditServed: AuditItem[] = report.resolved.map((entry) => ({
+            id: entry.termId,
+            sensitivity: entry.sensitivity,
+            taint: null,
+            authority: entry.certification,
+            provenance_count: 0,
+          }));
+          return {
+            canon: [],
+            quoted: [],
+            withheld: [],
+            audit_served: auditServed,
+            data: {
+              schema: "kizuki.ontology-check-answerable/v1",
+              compiled: compiledOnDisk,
+              ceiling,
+              question: redactor.text(report.question),
+              candidates: report.candidates.map((c) => redactor.text(c)),
+              coverage: report.coverage,
+              verdict: report.verdict,
+              resolved: report.resolved.map((entry) => ({
+                query_concept: redactor.text(entry.queryConcept),
+                term_id: redactor.text(entry.termId),
+                canonical_name: redactor.text(entry.canonicalName),
+                matched_by: entry.matchedBy,
+                certification: entry.certification,
+                score: entry.score,
+                domain: redactor.text(entry.domain),
+                sensitivity: entry.sensitivity,
+              })),
+              missing: report.missing.map((m) => redactor.text(m)),
+              join_paths: report.joinPaths.map((jp) =>
+                redactJoinPath(jp, redactor),
+              ),
+              suggested_metrics: report.suggestedMetrics.map((m) =>
+                redactMetric(m, redactor),
+              ),
+              clarification:
+                report.clarification === null
+                  ? null
+                  : redactor.text(report.clarification),
+            },
+          };
+        });
+      },
+    );
+    return envelope.data!;
   };
 
   const handleCertify = async (
     args: Record<string, unknown>,
   ): Promise<Record<string, unknown>> => {
-    const principal = requireLivePrincipal(ctx, ["propose"]);
-    const { ceiling, allowedSubjects } = scopeForPrincipal(principal);
-    const redactor = createRedactor(principal, ctx.servingSecrets);
+    const envelope = gate(
+      ctx,
+      "propose",
+      { ontology_tool: "ontology_certify", ...args },
+      ({ ctx: live }) => {
+        assertNoActivePurgeDiscovery(live.db);
+        const { ceiling, allowedSubjects } = scopeForPrincipal(live.principal);
+        const redactor =
+          live.redactor ?? createRedactor(live.principal, live.servingSecrets);
 
-    const termIdArg = asString(args["term_id"]);
-    const normalizedKeyArg = asString(args["normalized_key"]);
-    if (termIdArg === undefined && normalizedKeyArg === undefined) {
-      throw new ServeError(
-        "invalid_arguments",
-        "invalid arguments: term_id or normalized_key is required",
-      );
-    }
-
-    const canonicalName = asString(args["canonical_name"]);
-    const description =
-      typeof args["description"] === "string" ? args["description"] : undefined;
-    const rawSynonyms = args["synonyms"];
-    const synonyms = Array.isArray(rawSynonyms)
-      ? dedupeStrings(
-          rawSynonyms.filter((s): s is string => typeof s === "string"),
-        )
-      : undefined;
-    const domain = asString(args["domain"]);
-    const kind = asString(args["kind"]);
-    const rawCertification = args["certification"];
-    const certification: OntologyCertification =
-      rawCertification === "draft" ? "draft" : "certified";
-
-    const store = getWritableStore();
-    const scope: OntologyScopeOptions = {
-      sensitivityCeiling: ceiling,
-      allowedSubjects,
-    };
-
-    // Resolve strictly within caller sensitivity ceiling & subject scope.
-    let target: OntologyTerm | null = null;
-    if (termIdArg !== undefined) {
-      target =
-        store.getTerm(termIdArg, scope) ??
-        store.getTermByKey(termIdArg, scope);
-    }
-    if (target === null && normalizedKeyArg !== undefined) {
-      target = store.getTermByKey(normalizedKeyArg, scope);
-    }
-    if (target === null) {
-      const lookup = (termIdArg ?? normalizedKeyArg ?? "").toLowerCase();
-      const lookupNorm = normalizeTermKey(lookup);
-      for (const candidate of store.listTerms(scope)) {
-        if (
-          candidate.canonicalName.toLowerCase() === lookup ||
-          candidate.synonyms.some(
-            (s) =>
-              s.toLowerCase() === lookup || normalizeTermKey(s) === lookupNorm,
-          )
-        ) {
-          target = candidate;
-          break;
+        const termIdArg = asString(args["term_id"]);
+        const normalizedKeyArg = asString(args["normalized_key"]);
+        if (termIdArg === undefined && normalizedKeyArg === undefined) {
+          throw new ServeError(
+            "invalid_arguments",
+            "invalid arguments: term_id or normalized_key is required",
+          );
         }
-      }
-    }
 
-    if (target === null) {
-      throw new ServeError("not_found", "term not found");
-    }
+        const canonicalName = asString(args["canonical_name"]);
+        const description =
+          typeof args["description"] === "string"
+            ? args["description"]
+            : undefined;
+        const rawSynonyms = args["synonyms"];
+        const synonyms = Array.isArray(rawSynonyms)
+          ? dedupeStrings(
+              rawSynonyms.filter((s): s is string => typeof s === "string"),
+            )
+          : undefined;
+        const domain = asString(args["domain"]);
+        const kind = asString(args["kind"]);
+        const rawCertification = args["certification"];
+        const certification: OntologyCertification =
+          rawCertification === "draft" ? "draft" : "certified";
 
-    const actor =
-      principal.kind === "owner" ? "owner" : `agent:${principal.agent.name}`;
-    const result = store.certifyTerm({
-      termId: target.termId,
-      actor,
-      ...(canonicalName !== undefined ? { canonicalName } : {}),
-      ...(description !== undefined ? { description } : {}),
-      ...(synonyms !== undefined ? { synonyms } : {}),
-      ...(domain !== undefined ? { domain } : {}),
-      ...(kind !== undefined ? { kind } : {}),
-      certification,
-    });
+        const store = getWritableFreshStore(live.db);
+        const scope: OntologyScopeOptions = {
+          sensitivityCeiling: ceiling,
+          allowedSubjects,
+        };
 
-    return {
-      schema: "kizuki.ontology-certify/v1",
-      ceiling,
-      term: redactTerm(result.term, redactor),
-      receipt: redactReceipt(result.receipt, redactor),
-    };
+        // Resolve strictly within caller sensitivity ceiling & subject scope.
+        let target: OntologyTerm | null = null;
+        if (termIdArg !== undefined) {
+          target =
+            store.getTerm(termIdArg, scope) ??
+            store.getTermByKey(termIdArg, scope);
+        }
+        if (target === null && normalizedKeyArg !== undefined) {
+          target = store.getTermByKey(normalizedKeyArg, scope);
+        }
+        if (target === null) {
+          const lookup = (termIdArg ?? normalizedKeyArg ?? "").toLowerCase();
+          const lookupNorm = normalizeTermKey(lookup);
+          for (const candidate of store.listTerms(scope)) {
+            if (
+              candidate.canonicalName.toLowerCase() === lookup ||
+              candidate.synonyms.some(
+                (s) =>
+                  s.toLowerCase() === lookup ||
+                  normalizeTermKey(s) === lookupNorm,
+              )
+            ) {
+              target = candidate;
+              break;
+            }
+          }
+        }
+
+        if (target === null) {
+          throw new ServeError("not_found", "term not found");
+        }
+
+        const actor =
+          live.principal.kind === "owner"
+            ? "owner"
+            : `agent:${live.principal.agent.name}`;
+        const result = store.certifyTerm({
+          termId: target.termId,
+          actor,
+          ...(canonicalName !== undefined ? { canonicalName } : {}),
+          ...(description !== undefined ? { description } : {}),
+          ...(synonyms !== undefined ? { synonyms } : {}),
+          ...(domain !== undefined ? { domain } : {}),
+          ...(kind !== undefined ? { kind } : {}),
+          certification,
+        });
+
+        const auditServed: AuditItem[] = [
+          {
+            id: result.term.termId,
+            sensitivity: result.term.sensitivity,
+            taint: null,
+            authority: result.term.certification,
+            provenance_count: result.term.provenance.length,
+          },
+        ];
+
+        return {
+          canon: [],
+          quoted: [],
+          withheld: [],
+          audit_served: auditServed,
+          audit_ids: { ontology_receipt_id: [result.receipt.receiptId] },
+          data: {
+            schema: "kizuki.ontology-certify/v1",
+            ceiling,
+            term: redactTerm(result.term, redactor),
+            receipt: redactReceipt(result.receipt, redactor),
+          },
+        };
+      },
+    );
+    return envelope.data!;
   };
 
   const close = (): void => {
-    if (ownedStore !== null) {
-      ownedStore.close();
-      ownedStore = null;
-    }
+    resetOwnedStore();
   };
 
   return {

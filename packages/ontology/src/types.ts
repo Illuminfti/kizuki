@@ -101,6 +101,7 @@ export interface OntologyTerm {
   domain: string;
   description: string;
   synonyms: string[];
+  subjects: string[];
   attributes: OntologyAttribute[];
   provenance: string[];
   sensitivity: OntologySensitivity;
@@ -189,18 +190,26 @@ export function normalizeTermKey(name: string): string {
     .replace(/^_+|_+$/g, "");
 }
 
+const NAMESPACED_SUBJECT_RE = /^[a-z][a-z0-9_-]*:.+/;
+
 /**
- * Fail-closed subject scope matching.
+ * Returns true when `value` is an explicit namespaced subject identifier such
+ * as `person:atlas` or `project:atlas` (excluding synthetic `term:` keys).
+ */
+export function isNamespacedSubjectId(value: string): boolean {
+  const trimmed = value.trim();
+  return NAMESPACED_SUBJECT_RE.test(trimmed) && !/^term:/i.test(trimmed);
+}
+
+/**
+ * Fail-closed exact subject scope matching against provenance-backed subject
+ * identities (`term.subjects`), matching Core authorization semantics.
  * - `allowedSubjects === undefined || allowedSubjects === null`: unrestricted.
  * - Empty array `[]`: denies everything.
- * - Non-empty array: term must match at least one allowed subject by id, key,
- *   canonical name, domain, synonym, provenance ref, or `namespace:` prefix.
+ * - Non-empty array: term must carry at least one exact subject in `allowedSubjects`.
  */
 export function termMatchesAllowedSubjects(
-  term: Pick<
-    OntologyTerm,
-    "termId" | "normalizedKey" | "canonicalName" | "domain" | "synonyms" | "provenance"
-  >,
+  term: Pick<OntologyTerm, "subjects">,
   allowedSubjects: readonly string[] | null | undefined,
 ): boolean {
   if (allowedSubjects === undefined || allowedSubjects === null) {
@@ -209,51 +218,11 @@ export function termMatchesAllowedSubjects(
   if (allowedSubjects.length === 0) {
     return false;
   }
-  const candidates = new Set<string>();
-  const addCandidate = (raw: string): void => {
-    const trimmed = raw.trim().toLowerCase();
-    if (trimmed.length === 0) return;
-    candidates.add(trimmed);
-    const norm = normalizeTermKey(trimmed);
-    if (norm.length > 0) candidates.add(norm);
-    const colonIdx = trimmed.indexOf(":");
-    if (colonIdx > 0 && colonIdx < trimmed.length - 1) {
-      const afterColon = trimmed.slice(colonIdx + 1).trim();
-      if (afterColon.length > 0) {
-        candidates.add(afterColon);
-        const normAfter = normalizeTermKey(afterColon);
-        if (normAfter.length > 0) candidates.add(normAfter);
-      }
-    }
-  };
-
-  addCandidate(term.termId);
-  addCandidate(term.normalizedKey);
-  addCandidate(term.canonicalName);
-  addCandidate(term.domain);
-  for (const syn of term.synonyms) addCandidate(syn);
-  for (const ref of term.provenance) addCandidate(ref);
-
-  for (const subject of allowedSubjects) {
-    const cleaned = subject.trim().toLowerCase();
-    if (cleaned.length === 0) continue;
-    const norm = normalizeTermKey(cleaned);
-    if (candidates.has(cleaned) || (norm.length > 0 && candidates.has(norm))) {
-      return true;
-    }
-    const colonIdx = cleaned.indexOf(":");
-    if (colonIdx > 0 && colonIdx < cleaned.length - 1) {
-      const suffix = cleaned.slice(colonIdx + 1).trim();
-      const normSuffix = normalizeTermKey(suffix);
-      if (
-        candidates.has(suffix) ||
-        (normSuffix.length > 0 && candidates.has(normSuffix))
-      ) {
-        return true;
-      }
-    }
+  if (term.subjects.length === 0) {
+    return false;
   }
-  return false;
+  const allowedSet = new Set(allowedSubjects);
+  return term.subjects.some((subject) => allowedSet.has(subject));
 }
 
 export function normalizeAttributes(

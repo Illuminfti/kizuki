@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   dedupeStrings,
+  isNamespacedSubjectId,
   isOntologySensitivity,
   normalizeAttributes,
   normalizeOntologySensitivity,
@@ -41,6 +42,7 @@ CREATE TABLE IF NOT EXISTS ontology_terms (
   domain TEXT NOT NULL,
   description TEXT NOT NULL,
   synonyms_json TEXT NOT NULL,
+  subjects_json TEXT NOT NULL DEFAULT '[]',
   attributes_json TEXT NOT NULL,
   provenance_json TEXT NOT NULL,
   sensitivity TEXT NOT NULL CHECK(sensitivity IN ('public', 'personal', 'private')),
@@ -177,6 +179,7 @@ interface TermRow {
   domain: string;
   description: string;
   synonyms_json: string;
+  subjects_json?: string | undefined;
   attributes_json: string;
   provenance_json: string;
   sensitivity: string;
@@ -243,6 +246,10 @@ function rowToTerm(row: TermRow): OntologyTerm {
     domain: row.domain,
     description: row.description,
     synonyms: parseJsonArray<string>(row.synonyms_json),
+    subjects:
+      row.subjects_json !== undefined
+        ? parseJsonArray<string>(row.subjects_json)
+        : [],
     attributes: normalizeAttributes(
       parseJsonArray<string | OntologyAttribute>(row.attributes_json),
     ),
@@ -333,6 +340,7 @@ export interface UpsertTermInput {
   readonly domain?: string | undefined;
   readonly description?: string | undefined;
   readonly synonyms?: readonly string[] | undefined;
+  readonly subjects?: readonly string[] | undefined;
   readonly attributes?: readonly (string | OntologyAttribute)[] | undefined;
   readonly provenance?: readonly string[] | undefined;
   readonly sensitivity?: OntologySensitivity | undefined;
@@ -474,6 +482,19 @@ export class OntologyStore {
       db.exec("PRAGMA synchronous = NORMAL");
       db.exec("PRAGMA temp_store = MEMORY");
       db.exec(ONTOLOGY_SCHEMA_SQL);
+      const termColumns = new Set(
+        db
+          .query<{ name: string }, []>(
+            "SELECT name FROM pragma_table_info('ontology_terms')",
+          )
+          .all()
+          .map((col) => col.name),
+      );
+      if (!termColumns.has("subjects_json")) {
+        db.exec(
+          "ALTER TABLE ontology_terms ADD COLUMN subjects_json TEXT NOT NULL DEFAULT '[]'",
+        );
+      }
       db.query(
         "INSERT OR IGNORE INTO ontology_meta (key, value) VALUES ('schema_version', ?)",
       ).run(ONTOLOGY_SCHEMA_VERSION);
@@ -522,7 +543,7 @@ export class OntologyStore {
     if (canonicalName.length === 0) {
       throw new Error("canonicalName must not be empty");
     }
-    const normalizedKey =
+    let normalizedKey =
       input.normalizedKey !== undefined && input.normalizedKey.trim().length > 0
         ? normalizeTermKey(input.normalizedKey)
         : normalizeTermKey(canonicalName);
@@ -530,13 +551,49 @@ export class OntologyStore {
       throw new Error(`Unable to derive normalizedKey from "${canonicalName}"`);
     }
 
-    const existingByKey = this.db
+    const existingById =
+      input.termId !== undefined
+        ? this.db
+            .query<TermRow, [string]>(
+              "SELECT * FROM ontology_terms WHERE term_id = ?",
+            )
+            .get(input.termId)
+        : null;
+    let existingByKey = this.db
       .query<TermRow, [string]>(
         "SELECT * FROM ontology_terms WHERE normalized_key = ?",
       )
       .get(normalizedKey);
     const termId =
       input.termId ?? existingByKey?.term_id ?? `term:${normalizedKey}`;
+    if (
+      input.termId !== undefined &&
+      input.normalizedKey === undefined &&
+      existingByKey !== null &&
+      existingByKey.term_id !== termId
+    ) {
+      const baseCandidate =
+        existingById?.normalized_key ?? normalizeTermKey(termId);
+      if (baseCandidate.length > 0 && baseCandidate !== normalizedKey) {
+        normalizedKey = baseCandidate;
+        existingByKey = this.db
+          .query<TermRow, [string]>(
+            "SELECT * FROM ontology_terms WHERE normalized_key = ?",
+          )
+          .get(normalizedKey);
+      }
+      let suffix = 2;
+      while (existingByKey !== null && existingByKey.term_id !== termId) {
+        normalizedKey = `${baseCandidate || normalizeTermKey(canonicalName)}_${suffix}`;
+        suffix += 1;
+        existingByKey = this.db
+          .query<TermRow, [string]>(
+            "SELECT * FROM ontology_terms WHERE normalized_key = ?",
+          )
+          .get(normalizedKey);
+      }
+    }
+
     const sensitivity =
       input.sensitivity !== undefined
         ? assertValidSensitivity(input.sensitivity, "term sensitivity")
@@ -545,6 +602,12 @@ export class OntologyStore {
     const evidenceCount = Math.max(0, Math.floor(input.evidenceCount ?? 0));
     const updatedAt = input.updatedAt ?? nowIso();
     const synonyms = dedupeStrings(input.synonyms);
+    const subjects =
+      input.subjects !== undefined
+        ? dedupeStrings(input.subjects)
+        : input.termId !== undefined && isNamespacedSubjectId(input.termId)
+          ? [input.termId.trim()]
+          : [];
     const attributes = normalizeAttributes(input.attributes);
     const provenance = dedupeStrings(input.provenance);
     const kind = (input.kind ?? "concept").trim() || "concept";
@@ -558,9 +621,9 @@ export class OntologyStore {
       .query(
         `INSERT INTO ontology_terms (
           term_id, canonical_name, normalized_key, kind, domain, description,
-          synonyms_json, attributes_json, provenance_json, sensitivity,
+          synonyms_json, subjects_json, attributes_json, provenance_json, sensitivity,
           evidence_count, certification, certified_by, certified_at, family_id, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(term_id) DO UPDATE SET
           canonical_name = excluded.canonical_name,
           normalized_key = excluded.normalized_key,
@@ -568,6 +631,7 @@ export class OntologyStore {
           domain = excluded.domain,
           description = excluded.description,
           synonyms_json = excluded.synonyms_json,
+          subjects_json = excluded.subjects_json,
           attributes_json = excluded.attributes_json,
           provenance_json = excluded.provenance_json,
           sensitivity = excluded.sensitivity,
@@ -586,6 +650,7 @@ export class OntologyStore {
         domain,
         description,
         JSON.stringify(synonyms),
+        JSON.stringify(subjects),
         JSON.stringify(attributes),
         JSON.stringify(provenance),
         sensitivity,
@@ -1085,6 +1150,7 @@ export class OntologyStore {
         domain: nextDomain,
         description: nextDescription,
         synonyms: nextSynonyms,
+        subjects: before.subjects,
         attributes: before.attributes,
         provenance: before.provenance,
         sensitivity: before.sensitivity,
@@ -1193,6 +1259,7 @@ export class OntologyStore {
           domain: snap.domain,
           description: snap.description,
           synonyms: snap.synonyms,
+          subjects: Array.isArray(snap.subjects) ? snap.subjects : [],
           attributes: snap.attributes,
           provenance: snap.provenance,
           sensitivity: snap.sensitivity,

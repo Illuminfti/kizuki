@@ -417,7 +417,7 @@
     try {
       const resp = await fetch('/api/capture/quick', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Kizuki-Request': '1' },
         body: JSON.stringify({
           kind: act.kind,
           title: act.title,
@@ -458,7 +458,7 @@
     try {
       const resp = await fetch('/api/interact/stream', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Kizuki-Request': '1' },
         signal: ctrl.signal,
         body: JSON.stringify({
           input: query,
@@ -581,7 +581,7 @@
     try {
       const resp = await fetch('/api/capture/quick', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Kizuki-Request': '1' },
         body: JSON.stringify({
           kind: state.captureKind,
           title: title,

@@ -224,7 +224,11 @@ describe("Area 2 HTTP wire: precompression, ETag/304, conditional JSON C5, stage
     // POST mutations never return 304 even with matching If-None-Match
     const reqPost = new Request("http://127.0.0.1/api/synthetic-large", {
       method: "POST",
-      headers: { "Accept-Encoding": "br", "If-None-Match": etag! },
+      headers: {
+        "Accept-Encoding": "br",
+        "If-None-Match": etag!,
+        "X-Kizuki-Request": "1",
+      },
     });
     const outPost = await finalizeResponse(reqPost, makeRes());
     expect(outPost.status).toBe(200);

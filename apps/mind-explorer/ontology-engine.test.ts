@@ -239,7 +239,11 @@ describe("Lane O3: Auto-Ontology Engine, API & Interactive Studio UI", () => {
       const url = new URL(`http://127.0.0.1${path}`);
       const req = new Request(url.toString(), {
         method,
-        headers: body ? { "Content-Type": "application/json" } : undefined,
+        headers: body
+          ? { "Content-Type": "application/json", "X-Kizuki-Request": "1" }
+          : method !== "GET" && method !== "HEAD"
+            ? { "X-Kizuki-Request": "1" }
+            : undefined,
         body: body ? JSON.stringify(body) : undefined,
       });
       expect(handler.match(req, url)).toBe(true);

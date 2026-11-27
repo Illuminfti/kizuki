@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync } from "node:fs";
 import {
+  accept,
   addAgent,
   authenticate,
   insertClaim,
@@ -8,6 +9,7 @@ import {
   setGrant,
 } from "@kizuki/core";
 import { rebuildDerived } from "@kizuki/core/internal";
+import { purgeEvents } from "../../core/src/ledger/purge";
 import {
   compileOntologyFromVault,
   defaultOntologyDbPath,
@@ -384,5 +386,265 @@ describe("MCP ontology_* tools", () => {
     } finally {
       verifyStore.close();
     }
+  });
+
+  test("routes ontology calls through Core serving gate for rate limiting and serve_audit logging", async () => {
+    const running = live();
+    const token = addAgent(running.db, "onto-rate-limited", {
+      ceiling: "personal",
+      tools: ["system_health", "search", "context_packet", "propose"],
+      rate_limit_per_minute: 2,
+    }).token;
+    const principal = authenticate(running.db, token)!;
+    const client = await connectClient(
+      { db: running.db, vaultPath: running.vaultPath, principal },
+      cleanups,
+    );
+
+    // First 2 calls succeed within rate_limit_per_minute = 2.
+    const first = await call(client, "ontology_status", {});
+    expect(first.isError ?? false).toBe(false);
+    const second = await call(client, "ontology_search", { query: "Ada" });
+    expect(second.isError ?? false).toBe(false);
+
+    // Third call within the same minute must be refused with rate_limited.
+    const third = await call(client, "ontology_search", { query: "Ada" });
+    expect(third.isError).toBe(true);
+    expect(errorOf(third).error).toBe("rate_limited");
+
+    // Denied ontology call from search-only agent must also write a serve_audit denial row.
+    const searchOnly = await connectClient(running.agent("search-only"), cleanups);
+    const deniedRes = await call(searchOnly, "ontology_search", { query: "Ada" });
+    expect(deniedRes.isError).toBe(true);
+    expect(errorOf(deniedRes).error).toBe("tool_not_granted");
+
+    const auditRows = running.db
+      .query<
+        { tool: string; query_shape: string; served: string; denied: string },
+        []
+      >(
+        "SELECT tool, query_shape, served, denied FROM agent_audit ORDER BY at ASC, audit_id ASC",
+      )
+      .all();
+
+    const allowedStatusRows = auditRows.filter(
+      (r) =>
+        r.tool === "system_health" &&
+        r.query_shape.includes("ontology_tool") &&
+        r.denied === "[]",
+    );
+    const allowedSearchRows = auditRows.filter(
+      (r) =>
+        r.tool === "search" &&
+        r.query_shape.includes("ontology_tool") &&
+        r.denied === "[]",
+    );
+    const deniedSearchRows = auditRows.filter(
+      (r) =>
+        r.tool === "search" &&
+        r.query_shape.includes("ontology_tool") &&
+        r.denied.includes("tool_not_granted"),
+    );
+
+    expect(allowedStatusRows.length).toBeGreaterThanOrEqual(1);
+    expect(allowedSearchRows.length).toBeGreaterThanOrEqual(1);
+    expect(deniedSearchRows.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("authorizes ontology subjects strictly by exact namespaced identity without stripping prefixes", async () => {
+    const running = live();
+    await recordedPage(
+      running.db,
+      running.vaultPath,
+      "entities/person-atlas.md",
+      {
+        id: "person:atlas",
+        title: "Atlas",
+        type: "person",
+        status: "active",
+        sensitivity: "public",
+        taint: "clean",
+        subjects: ["person:atlas"],
+      },
+      "Person Atlas is a cartographer.",
+      [running.eventId],
+    );
+    await recordedPage(
+      running.db,
+      running.vaultPath,
+      "facts/project-atlas.md",
+      {
+        id: "project:atlas",
+        title: "Atlas",
+        type: "fact",
+        status: "active",
+        sensitivity: "public",
+        taint: "clean",
+        subjects: ["project:atlas"],
+      },
+      "Project Atlas is an orbital telemetry program.",
+      [running.eventId],
+    );
+    rebuildDerived(running.db, running.vaultPath);
+
+    const dbPath = defaultOntologyDbPath(running.vaultPath);
+    const store = openOntologyStore(dbPath);
+    try {
+      compileOntologyFromVault(running.db, store);
+    } finally {
+      store.close();
+    }
+
+    const token = addAgent(running.db, "person-atlas-only", {
+      ceiling: "personal",
+      subjects: ["person:atlas"],
+      tools: ["system_health", "search", "context_packet", "propose"],
+    }).token;
+    const principal = authenticate(running.db, token)!;
+    const client = await connectClient(
+      { db: running.db, vaultPath: running.vaultPath, principal },
+      cleanups,
+    );
+
+    const searchPayload = payloadOf(
+      await call(client, "ontology_search", { query: "Atlas" }),
+    );
+    const returnedIds = (
+      searchPayload["terms"] as { term: { term_id: string } }[]
+    ).map((entry) => entry.term.term_id);
+    expect(returnedIds).toContain("person:atlas");
+    expect(returnedIds).not.toContain("project:atlas");
+
+    const certifyDenied = await call(client, "ontology_certify", {
+      term_id: "project:atlas",
+      description: "Cross-namespace hijack attempt",
+    });
+    expect(certifyDenied.isError).toBe(true);
+    expect(errorOf(certifyDenied).error).toBe("not_found");
+  });
+
+  test("invalidates stale ontology cache after claim retraction and Core purge without manual recompile", async () => {
+    const running = live();
+    const ephemeral = accept(running.db, {
+      schema: "kizuki.event/v1",
+      connector_id: "fixture",
+      source_record_id: "rec-ephemeral-zephyr",
+      kind: "message",
+      occurred_at: "2026-03-02T10:00:00Z",
+      observed_at: "2026-03-02T10:01:00Z",
+      text: "Zephyr Beacon is temporary.",
+      subjects: [{ subject_id: "project:zephyr_beacon", role: "about" }],
+      sensitivity_hint: "public",
+      deleted: false,
+      attachments: [],
+      metadata: {},
+    });
+    if (ephemeral.status !== "stored") {
+      throw new Error("expected ephemeral event to store");
+    }
+
+    const inserted = await insertClaim(
+      { db: running.db, vault_path: running.vaultPath },
+      {
+        kind: "claim",
+        producer: "owner",
+        subject: "person:solstice_lead",
+        predicate: "project.owns",
+        object: "project:zephyr_beacon",
+        body: "Solstice Lead owns Zephyr Beacon.",
+        provenance: [ephemeral.event.event_id],
+        sensitivity: "public",
+        confidence: 0.95,
+      },
+    );
+
+    if (inserted.outcome !== "stored") {
+      throw new Error("expected claim to store");
+    }
+
+    // Persist compiled ontology.sqlite on disk.
+    const dbPath = defaultOntologyDbPath(running.vaultPath);
+    const store = openOntologyStore(dbPath);
+    try {
+      compileOntologyFromVault(running.db, store);
+    } finally {
+      store.close();
+    }
+    expect(existsSync(dbPath)).toBe(true);
+
+    const owner = await connectClient(running.owner(), cleanups);
+    const beforeSearch = payloadOf(
+      await call(owner, "ontology_search", { query: "solstice_lead" }),
+    );
+    expect(beforeSearch["compiled"]).toBe(true);
+    expect(
+      (beforeSearch["terms"] as { term: { term_id: string } }[]).some(
+        (t) => t.term.term_id === "person:solstice_lead",
+      ),
+    ).toBe(true);
+    const beforeStatus = payloadOf(await call(owner, "ontology_status", {}));
+    expect(beforeStatus["compiled"]).toBe(true);
+    const beforeTermCount = Number(beforeStatus["term_count"]);
+
+    // Retract the claim directly in the ledger WITHOUT manually recompiling ontology.sqlite.
+    running.db
+      .query("UPDATE claims SET status = 'retracted' WHERE claim_id = ?")
+      .run(inserted.claim.claim_id);
+
+    const afterRetractSearch = payloadOf(
+      await call(owner, "ontology_search", { query: "solstice_lead" }),
+    );
+    expect(afterRetractSearch["compiled"]).toBe(false);
+    expect(afterRetractSearch["terms"]).toEqual([]);
+
+    const afterRetractStatus = payloadOf(await call(owner, "ontology_status", {}));
+    expect(afterRetractStatus["compiled"]).toBe(false);
+    expect(Number(afterRetractStatus["term_count"])).toBeLessThan(beforeTermCount);
+
+    // Certify must recompile before lookup and refuse the retracted term.
+    const certifyRetracted = await call(owner, "ontology_certify", {
+      term_id: "person:solstice_lead",
+      description: "Must fail after retraction",
+    });
+    expect(certifyRetracted.isError).toBe(true);
+    expect(errorOf(certifyRetracted).error).toBe("not_found");
+
+    // Re-persist ontology.sqlite, then run Core purgeEvents -> ontology.sqlite is removed and purged subject vanishes immediately.
+    const store2 = openOntologyStore(dbPath);
+    try {
+      compileOntologyFromVault(running.db, store2);
+    } finally {
+      store2.close();
+    }
+    expect(existsSync(dbPath)).toBe(true);
+    const beforePurgeSearch = payloadOf(
+      await call(owner, "ontology_search", { query: "zephyr_beacon" }),
+    );
+    expect(
+      (beforePurgeSearch["terms"] as { term: { term_id: string } }[]).some(
+        (t) => t.term.term_id === "project:zephyr_beacon",
+      ),
+    ).toBe(true);
+
+    purgeEvents(
+      running.db,
+      running.vaultPath,
+      { event_id: ephemeral.event.event_id },
+      "remove zephyr beacon",
+    );
+    expect(existsSync(dbPath)).toBe(false);
+
+    const afterPurgeSearch = payloadOf(
+      await call(owner, "ontology_search", { query: "zephyr_beacon" }),
+    );
+    expect(afterPurgeSearch["terms"]).toEqual([]);
+
+    // Active non-ready purge batch must fail closed with held.
+    running.db
+      .query("INSERT INTO purge_batches (batch_id, state, created_at) VALUES (?, 'discovering', ?)")
+      .run("batch-in-progress", "2026-03-02T12:00:00Z");
+    const heldRes = await call(owner, "ontology_search", { query: "Ada" });
+    expect(heldRes.isError).toBe(true);
+    expect(errorOf(heldRes).error).toBe("held");
   });
 });

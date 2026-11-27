@@ -1503,7 +1503,12 @@
     if (!fetchFn) {
       throw new Error('Fetch API unavailable');
     }
-    const res = await fetchFn(url, opts);
+    const nextOpts = opts ? { ...opts } : {};
+    const method = String(nextOpts.method || 'GET').toUpperCase();
+    if (method !== 'GET' && method !== 'HEAD') {
+      nextOpts.headers = { 'X-Kizuki-Request': '1', ...(nextOpts.headers || {}) };
+    }
+    const res = await fetchFn(url, nextOpts);
     let body = null;
     try {
       body = await res.json();

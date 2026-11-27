@@ -41,7 +41,12 @@
     try { return Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches); } catch { return false; }
   }
   async function api(url, opts) {
-    const r = await fetch(url, opts);
+    const next = opts ? { ...opts } : {};
+    const m = String(next.method || 'GET').toUpperCase();
+    if (m !== 'GET' && m !== 'HEAD') {
+      next.headers = { 'X-Kizuki-Request': '1', ...(next.headers || {}) };
+    }
+    const r = await fetch(url, next);
     let d = {};
     try { d = await r.json(); } catch {}
     return { ok: r.ok, status: r.status, data: d };

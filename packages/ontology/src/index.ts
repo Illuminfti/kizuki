@@ -4,6 +4,7 @@ export {
   allowedOntologySensitivities,
   compareOntologySensitivity,
   dedupeStrings,
+  isNamespacedSubjectId,
   isOntologySensitivity,
   maxOntologySensitivity,
   normalizeAttributes,
@@ -80,6 +81,7 @@ export type {
 export {
   compileOntologyFromInputs,
   compileOntologyFromVault,
+  computeVaultOntologyFingerprint,
 } from "./compiler";
 export type {
   CompileOptions,

@@ -1628,6 +1628,7 @@ export async function loadCanonicalPersonCards(opts: {
 }): Promise<LoadedCanonicalCardsResult> {
   const autoPeopleDir = join(opts.vaultPath, "auto", "entities", "03-entities", "people");
   const worldPeopleDir = join(opts.vaultPath, "world", "people");
+  const draftPeopleDir = join(opts.vaultPath, ".kizuki", "drafts", "people");
 
   const readMdDir = async (dir: string, relPrefix: string): Promise<Array<{ slug: string; relPath: string; fullPath: string; content: string }>> => {
     let entries: string[];
@@ -1657,6 +1658,7 @@ export async function loadCanonicalPersonCards(opts: {
     legacyFiles = await readMdDir(opts.lifeosPeopleDir, "lifeos/03-entities/people/");
   }
   const worldV2Files = await readMdDir(worldPeopleDir, "world/people/");
+  const draftV2Files = await readMdDir(draftPeopleDir, ".kizuki/drafts/people/");
 
   interface RawParsedCard {
     slug: string;
@@ -1701,6 +1703,24 @@ export async function loadCanonicalPersonCards(opts: {
       isWorldV2: true,
       fm: frontmatter,
       wm,
+      mergeTarget: null,
+    });
+  }
+
+  for (const f of draftV2Files) {
+    const { frontmatter } = parseFrontmatter(f.content);
+    const wm = parsePersonCardMarkdown(f.content, frontmatter, {
+      slug: f.slug,
+      sourcePath: f.relPath,
+      isWorldV2: true,
+    });
+    const existingWorld = worldOverrideBySlug.get(f.slug);
+    worldOverrideBySlug.set(f.slug, {
+      slug: f.slug,
+      relPath: f.relPath,
+      isWorldV2: true,
+      fm: existingWorld ? { ...existingWorld.fm, ...frontmatter } : frontmatter,
+      wm: existingWorld ? fuseWorldModels(existingWorld.wm, wm, true) : wm,
       mergeTarget: null,
     });
   }
@@ -2598,11 +2618,39 @@ export function buildWorldModelSynthesisPrompt(opts: {
   return { systemPrompt, userPrompt };
 }
 
+function upsertFrontmatterScalar(fm: string, key: string, value: string): string {
+  const line = `${key}: "${value}"`;
+  const re = new RegExp(`^${key}:.*$`, "m");
+  if (re.test(fm)) {
+    return fm.replace(re, line);
+  }
+  return `${fm}\n${line}`;
+}
+
+function enforceDraftFrontmatter(fm: string, slug: string, today: string): string {
+  const targetCanonPath = `world/people/${slug}.md`;
+  let next = upsertFrontmatterScalar(fm, "schema_version", "person-card-v2");
+  next = upsertFrontmatterScalar(next, "status", "draft");
+  if (/^x-status:/m.test(next)) {
+    next = next.replace(/^x-status:.*$/m, `x-status: "draft"`);
+  }
+  next = upsertFrontmatterScalar(next, "target_canon_path", targetCanonPath);
+  next = upsertFrontmatterScalar(next, "promotion_via", "kizuki-receipted-writer");
+  next = upsertFrontmatterScalar(next, "updated", today);
+  return next;
+}
+
 export async function writeWorldModelPersonCard(
   vaultPath: string,
   rawSlug: string,
   markdown: string
-): Promise<{ card_path: string; full_path: string; content: string }> {
+): Promise<{
+  card_path: string;
+  full_path: string;
+  content: string;
+  draft: true;
+  target_canon_path: string;
+}> {
   const slug = normalizeSlug(rawSlug);
   if (!isValidPersonSlug(slug)) {
     throw new Error(`Invalid person slug: ${rawSlug}`);
@@ -2619,12 +2667,15 @@ export async function writeWorldModelPersonCard(
   }
 
   const today = new Date().toISOString().slice(0, 10);
+  const targetCanonPath = `world/people/${slug}.md`;
   if (!cleanMd.startsWith("---\n")) {
     cleanMd = [
       "---",
       `title: "${slug}"`,
       `schema_version: "person-card-v2"`,
-      `status: "canonical"`,
+      `status: "draft"`,
+      `target_canon_path: "${targetCanonPath}"`,
+      `promotion_via: "kizuki-receipted-writer"`,
       `updated: "${today}"`,
       "---",
       "",
@@ -2633,27 +2684,17 @@ export async function writeWorldModelPersonCard(
   } else {
     const endIdx = cleanMd.indexOf("\n---", 3);
     if (endIdx !== -1) {
-      let fm = cleanMd.slice(4, endIdx);
-      if (/^schema_version:/m.test(fm)) {
-        fm = fm.replace(/^schema_version:.*$/m, `schema_version: "person-card-v2"`);
-      } else {
-        fm += `\nschema_version: "person-card-v2"`;
-      }
-      if (/^updated:/m.test(fm)) {
-        fm = fm.replace(/^updated:.*$/m, `updated: "${today}"`);
-      } else {
-        fm += `\nupdated: "${today}"`;
-      }
+      const fm = enforceDraftFrontmatter(cleanMd.slice(4, endIdx), slug, today);
       cleanMd = `---\n${fm}${cleanMd.slice(endIdx)}`;
     }
   }
   cleanMd = stripEmDashesIntel(cleanMd).trimEnd() + "\n";
 
   const rootResolved = resolve(vaultPath);
-  const targetDir = resolve(rootResolved, "world", "people");
+  const targetDir = resolve(rootResolved, ".kizuki", "drafts", "people");
   const fullPath = resolve(targetDir, `${slug}.md`);
   if (!fullPath.startsWith(targetDir + sep)) {
-    throw new Error("Path traversal blocked for world/people card");
+    throw new Error("Path traversal blocked for person draft card");
   }
 
   await mkdir(dirname(fullPath), { recursive: true, mode: 0o700 });
@@ -2667,9 +2708,11 @@ export async function writeWorldModelPersonCard(
   }
 
   return {
-    card_path: `world/people/${slug}.md`,
+    card_path: `.kizuki/drafts/people/${slug}.md`,
     full_path: fullPath,
     content: cleanMd,
+    draft: true,
+    target_canon_path: targetCanonPath,
   };
 }
 
@@ -2679,7 +2722,14 @@ export async function appendOwnerObservation(
   personName: string,
   existingCardMd: string | null,
   note: { kind: OwnerNoteKind; text: string }
-): Promise<{ card_path: string; full_path: string; content: string; note_line: string }> {
+): Promise<{
+  card_path: string;
+  full_path: string;
+  content: string;
+  note_line: string;
+  draft: true;
+  target_canon_path: string;
+}> {
   const slug = normalizeSlug(rawSlug);
   if (!isValidPersonSlug(slug)) {
     throw new Error(`Invalid person slug: ${rawSlug}`);
@@ -2694,18 +2744,31 @@ export async function appendOwnerObservation(
   const kind: OwnerNoteKind = VALID_OWNER_NOTE_KINDS.has(note.kind) ? note.kind : "insight";
   const today = new Date().toISOString().slice(0, 10);
   const noteLine = `- [${today}] [${kind}] ${cleanText}`;
+  const targetCanonPath = `world/people/${slug}.md`;
 
-  const targetDir = resolve(vaultPath, "world", "people");
+  const rootResolved = resolve(vaultPath);
+  const targetDir = resolve(rootResolved, ".kizuki", "drafts", "people");
   const fullPath = resolve(targetDir, `${slug}.md`);
   if (!fullPath.startsWith(targetDir + sep)) {
     throw new Error("Path traversal blocked for owner observation");
   }
 
+  // Read existing draft first; if absent, seed read-only from canonical world/people/<slug>.md or existingCardMd
   let baseMd = "";
   try {
     baseMd = await readFile(fullPath, "utf8");
   } catch {
-    baseMd = existingCardMd ? stripEmDashesIntel(existingCardMd) : "";
+    const canonicalDir = resolve(rootResolved, "world", "people");
+    const canonicalPath = resolve(canonicalDir, `${slug}.md`);
+    if (canonicalPath.startsWith(canonicalDir + sep)) {
+      try {
+        baseMd = await readFile(canonicalPath, "utf8");
+      } catch {
+        baseMd = existingCardMd ? stripEmDashesIntel(existingCardMd) : "";
+      }
+    } else {
+      baseMd = existingCardMd ? stripEmDashesIntel(existingCardMd) : "";
+    }
   }
 
   if (!baseMd.trim()) {
@@ -2716,7 +2779,9 @@ export async function appendOwnerObservation(
       `canonical_name: "${cleanName}"`,
       `display_name: "${cleanName}"`,
       `schema_version: "person-card-v2"`,
-      `status: "canonical"`,
+      `status: "draft"`,
+      `target_canon_path: "${targetCanonPath}"`,
+      `promotion_via: "kizuki-receipted-writer"`,
       `updated: "${today}"`,
       `confidence: "medium"`,
       `relationship_state: "active"`,
@@ -2725,7 +2790,7 @@ export async function appendOwnerObservation(
       "",
       "<!-- person-card:v2 -->",
       "",
-      `> **Canonical read:** ${cleanName} is tracked in Kizuki Personal Mind OS. Owner observations below capture direct ground-truth signals.`,
+      `> **Draft read:** ${cleanName} is tracked in Kizuki Personal Mind OS. Owner observations below capture direct ground-truth signals for promotion via Core receipted writer.`,
       "",
       "## Owner observations",
       "",
@@ -2733,30 +2798,32 @@ export async function appendOwnerObservation(
       "",
     ].join("\n");
   } else {
-    // Update updated: field in frontmatter (or x-updated:)
     if (baseMd.startsWith("---\n")) {
       const endIdx = baseMd.indexOf("\n---", 3);
       if (endIdx !== -1) {
-        let fm = baseMd.slice(4, endIdx);
-        if (/^updated:/m.test(fm)) {
-          fm = fm.replace(/^updated:.*$/m, `updated: "${today}"`);
-        } else {
-          fm += `\nupdated: "${today}"`;
-        }
-        if (/^schema_version:/m.test(fm)) {
-          fm = fm.replace(/^schema_version:.*$/m, `schema_version: "person-card-v2"`);
-        } else {
-          fm += `\nschema_version: "person-card-v2"`;
-        }
+        const fm = enforceDraftFrontmatter(baseMd.slice(4, endIdx), slug, today);
         baseMd = `---\n${fm}${baseMd.slice(endIdx)}`;
       }
+    } else {
+      const cleanName = stripEmDashesIntel(personName || slug);
+      baseMd = [
+        "---",
+        `title: "${cleanName}"`,
+        `schema_version: "person-card-v2"`,
+        `status: "draft"`,
+        `target_canon_path: "${targetCanonPath}"`,
+        `promotion_via: "kizuki-receipted-writer"`,
+        `updated: "${today}"`,
+        "---",
+        "",
+        baseMd,
+      ].join("\n");
     }
 
     const headingRe = /^##\s+Owner observations\s*$/im;
     const match = headingRe.exec(baseMd);
     if (match) {
       const afterHeadingIdx = match.index + match[0].length;
-      // Find next ## heading after Owner observations, if any
       const rest = baseMd.slice(afterHeadingIdx);
       const nextH2 = rest.search(/\n##\s+/);
       if (nextH2 === -1) {
@@ -2785,10 +2852,12 @@ export async function appendOwnerObservation(
   }
 
   return {
-    card_path: `world/people/${slug}.md`,
+    card_path: `.kizuki/drafts/people/${slug}.md`,
     full_path: fullPath,
     content: finalMd,
     note_line: noteLine,
+    draft: true,
+    target_canon_path: targetCanonPath,
   };
 }
 

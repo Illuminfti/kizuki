@@ -1,8 +1,10 @@
 import type { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 import { detectTermFamiliesFromOntology } from "./term-families";
 import type { OntologyStore } from "./store";
 import {
   dedupeStrings,
+  isNamespacedSubjectId,
   maxOntologySensitivity,
   normalizeAttributes,
   normalizeOntologySensitivity,
@@ -23,6 +25,7 @@ export interface CompilerEntityInput {
   readonly domain?: string | undefined;
   readonly description?: string | undefined;
   readonly synonyms?: readonly string[] | undefined;
+  readonly subjects?: readonly string[] | undefined;
   readonly attributes?: readonly (string | OntologyAttribute)[] | undefined;
   readonly provenance?: readonly string[] | undefined;
   readonly sensitivity?: OntologySensitivity | string | undefined;
@@ -100,6 +103,7 @@ export interface CompileOptions {
   readonly defaultDomain?: string | undefined;
   readonly includeBuiltInMetrics?: boolean | undefined;
   readonly minFamilyPairEvidence?: number | undefined;
+  readonly vaultFingerprint?: string | undefined;
 }
 
 export interface OntologyCompileReport {
@@ -107,9 +111,11 @@ export interface OntologyCompileReport {
   readonly termsCompiled: number;
   readonly termsCreated: number;
   readonly termsUpdated: number;
+  readonly termsRemoved: number;
   readonly preservedCertified: number;
   readonly familiesDetected: number;
   readonly relationsCompiled: number;
+  readonly relationsRemoved: number;
   readonly defaultJoinsSelected: number;
   readonly metricsCompiled: number;
   readonly sourceTables: string[];
@@ -123,6 +129,7 @@ interface TermAccumulator {
   domain: string;
   description: string;
   synonyms: Set<string>;
+  subjects: Set<string>;
   attributes: OntologyAttribute[];
   provenance: Set<string>;
   sensitivity: OntologySensitivity;
@@ -158,6 +165,7 @@ function parseJsonStringArray(raw: unknown): string[] {
           if (typeof item === "string") return item;
           if (typeof item === "object" && item !== null) {
             const rec = item as Record<string, unknown>;
+            if (typeof rec.subject_id === "string") return rec.subject_id;
             if (typeof rec.id === "string") return rec.id;
             if (typeof rec.name === "string") return rec.name;
             if (typeof rec.subject === "string") return rec.subject;
@@ -257,6 +265,273 @@ function tableColumns(db: Database, tableName: string): Set<string> {
   return new Set(rows.map((r) => r.name));
 }
 
+function subjectNamespaceOf(value: string): string | null {
+  const trimmed = value.trim();
+  if (!isNamespacedSubjectId(trimmed)) return null;
+  const colonIdx = trimmed.indexOf(":");
+  return colonIdx > 0 ? trimmed.slice(0, colonIdx).toLowerCase() : null;
+}
+
+function explicitNamespaceOf(
+  id: string | undefined,
+  subjects: Iterable<string> | undefined,
+): string | null {
+  if (id !== undefined) {
+    const ns = subjectNamespaceOf(id);
+    if (ns !== null) return ns;
+  }
+  if (subjects !== undefined) {
+    const namespaces = new Set<string>();
+    for (const s of subjects) {
+      const ns = subjectNamespaceOf(s);
+      if (ns !== null) namespaces.add(ns);
+    }
+    if (namespaces.size === 1) {
+      return [...namespaces][0] ?? null;
+    }
+  }
+  return null;
+}
+
+const FINGERPRINT_ROW_LIMIT = 5_000;
+
+const FINGERPRINT_TABLES: ReadonlyArray<{
+  readonly name: string;
+  readonly preferredColumns: readonly string[];
+}> = [
+  { name: "purge_batches", preferredColumns: ["batch_id", "state", "created_at"] },
+  { name: "event_purges", preferredColumns: ["receipt_id", "event_id", "purged_at"] },
+  { name: "source_grant_receipts", preferredColumns: ["sequence", "source_key", "action"] },
+  { name: "canon_read_generation", preferredColumns: ["singleton", "generation"] },
+  {
+    name: "entities",
+    preferredColumns: [
+      "entity_id",
+      "id",
+      "canonical_name",
+      "name",
+      "title",
+      "kind",
+      "type",
+      "domain",
+      "description",
+      "summary",
+      "synonyms",
+      "synonyms_json",
+      "aliases",
+      "subjects",
+      "subjects_json",
+      "attributes",
+      "attributes_json",
+      "provenance",
+      "provenance_json",
+      "sensitivity",
+      "evidence_count",
+    ],
+  },
+  {
+    name: "canon_pages",
+    preferredColumns: [
+      "page_id",
+      "id",
+      "title",
+      "name",
+      "subject_key",
+      "path",
+      "rel_path",
+      "domain",
+      "page_type",
+      "kind",
+      "body",
+      "summary",
+      "content",
+      "aliases",
+      "synonyms",
+      "subjects",
+      "provenance",
+      "sensitivity",
+    ],
+  },
+  {
+    name: "graph_pages",
+    preferredColumns: [
+      "page_id",
+      "rel_path",
+      "title",
+      "active",
+      "admitted",
+      "sensitivity",
+      "provenance",
+    ],
+  },
+  {
+    name: "search_documents",
+    preferredColumns: [
+      "doc_id",
+      "scope",
+      "title",
+      "path",
+      "page_type",
+      "sensitivity",
+      "subjects",
+      "provenance",
+      "body",
+    ],
+  },
+  {
+    name: "page_index",
+    preferredColumns: ["page_id", "rel_path", "subject_key"],
+  },
+  {
+    name: "claims",
+    preferredColumns: [
+      "claim_id",
+      "id",
+      "kind",
+      "subject",
+      "predicate",
+      "object",
+      "body",
+      "body_hash",
+      "status",
+      "polarity",
+      "confidence",
+      "corroboration",
+      "sensitivity",
+      "subjects",
+      "provenance",
+      "retracted_at",
+      "superseded_by",
+    ],
+  },
+  {
+    name: "events",
+    preferredColumns: [
+      "event_id",
+      "id",
+      "connector_id",
+      "kind",
+      "subjects",
+      "sensitivity",
+      "sensitivity_hint",
+      "deleted",
+      "content_hash",
+    ],
+  },
+  {
+    name: "claim_links",
+    preferredColumns: [
+      "source_id",
+      "source_term",
+      "from_id",
+      "src",
+      "target_id",
+      "target_term",
+      "to_id",
+      "dst",
+      "relation_kind",
+      "relation",
+      "predicate",
+      "kind",
+      "confidence",
+      "evidence_count",
+      "support_refs",
+      "provenance",
+      "sensitivity",
+    ],
+  },
+  {
+    name: "graph_edges",
+    preferredColumns: [
+      "src",
+      "dst",
+      "kind",
+      "sensitivity",
+      "dest_sensitivity",
+      "provenance",
+    ],
+  },
+  {
+    name: "identity_links",
+    preferredColumns: ["subject_a", "subject_b", "score", "status"],
+  },
+];
+
+/**
+ * Computes a deterministic SHA-256 fingerprint of the live vault tables that
+ * feed ontology compilation and purge state. Any insert, deletion, retraction,
+ * purge, or content edit across these tables produces a distinct fingerprint.
+ */
+export function computeVaultOntologyFingerprint(vaultDb: Database): string {
+  const hash = createHash("sha256");
+  const tables = listTables(vaultDb);
+
+  for (const spec of FINGERPRINT_TABLES) {
+    if (!tables.has(spec.name)) {
+      hash.update(`${spec.name}:absent\n`);
+      continue;
+    }
+    const cols = tableColumns(vaultDb, spec.name);
+    const selected = spec.preferredColumns.filter((c) => cols.has(c));
+    const countRow = vaultDb
+      .query<{ count: number }, []>(`SELECT COUNT(*) AS count FROM "${spec.name}"`)
+      .get();
+    const count = countRow?.count ?? 0;
+    hash.update(`${spec.name}:count=${count}:cols=${selected.join(",")}\n`);
+    if (count === 0 || selected.length === 0) continue;
+
+    if (count <= FINGERPRINT_ROW_LIMIT) {
+      const colList = selected.map((c) => `"${c}"`).join(", ");
+      const orderCol = `"${selected[0]}"`;
+      const stmt = vaultDb.query<Record<string, unknown>, []>(
+        `SELECT ${colList} FROM "${spec.name}" ORDER BY ${orderCol} ASC`,
+      );
+      for (const row of stmt.iterate()) {
+        for (const col of selected) {
+          const val = row[col];
+          hash.update(val === null || val === undefined ? "\u0000" : String(val));
+          hash.update("\u001f");
+        }
+        hash.update("\n");
+      }
+    } else {
+      const aggExprs: string[] = ["COUNT(*) AS c"];
+      if (cols.has("status")) {
+        aggExprs.push(
+          "SUM(CASE WHEN status = 'live' THEN 1 ELSE 0 END) AS s_live",
+          "SUM(CASE WHEN status IN ('retracted','superseded','purged') THEN 1 ELSE 0 END) AS s_dead",
+        );
+      }
+      if (cols.has("deleted")) {
+        aggExprs.push("SUM(CASE WHEN deleted = 1 THEN 1 ELSE 0 END) AS s_del");
+      }
+      if (cols.has("active")) {
+        aggExprs.push("SUM(CASE WHEN active = 1 THEN 1 ELSE 0 END) AS s_act");
+      }
+      const firstCol = selected[0];
+      if (firstCol !== undefined) {
+        aggExprs.push(
+          `COALESCE(MIN("${firstCol}"), '') AS min_k`,
+          `COALESCE(MAX("${firstCol}"), '') AS max_k`,
+        );
+      }
+      for (const lenCol of ["subjects", "sensitivity", "sensitivity_hint", "body_hash", "content_hash", "provenance"]) {
+        if (cols.has(lenCol)) {
+          aggExprs.push(`COALESCE(SUM(length("${lenCol}")), 0) AS len_${lenCol}`);
+        }
+      }
+      const summary = vaultDb
+        .query<Record<string, unknown>, []>(
+          `SELECT ${aggExprs.join(", ")} FROM "${spec.name}"`,
+        )
+        .get();
+      hash.update(`${JSON.stringify(summary ?? {})}\n`);
+    }
+  }
+
+  return hash.digest("hex");
+}
+
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
@@ -303,6 +578,13 @@ function extractInputsFromVault(vaultDb: Database): CompilerInputs {
             : cols.has("synonyms_json")
               ? row.synonyms_json
               : row.aliases,
+        ),
+        subjects: parseJsonStringArray(
+          cols.has("subjects")
+            ? row.subjects
+            : cols.has("subjects_json")
+              ? row.subjects_json
+              : undefined,
         ),
         attributes: parseJsonAttributes(
           cols.has("attributes") ? row.attributes : row.attributes_json,
@@ -579,13 +861,24 @@ export function compileOntologyFromInputs(
   const termsByKey = new Map<string, TermAccumulator>();
   const aliasToKey = new Map<string, string>();
 
-  const registerAlias = (raw: string | undefined, key: string): void => {
+  const registerAlias = (
+    raw: string | undefined,
+    key: string,
+    overwrite = false,
+  ): void => {
     if (raw === undefined) return;
     const trimmed = raw.trim();
     if (trimmed.length === 0) return;
-    aliasToKey.set(trimmed.toLowerCase(), key);
-    const norm = normalizeTermKey(trimmed);
-    if (norm.length > 0) aliasToKey.set(norm, key);
+    const lower = trimmed.toLowerCase();
+    if (overwrite || !aliasToKey.has(lower)) {
+      aliasToKey.set(lower, key);
+    }
+    if (!isNamespacedSubjectId(trimmed)) {
+      const norm = normalizeTermKey(trimmed);
+      if (norm.length > 0 && (overwrite || !aliasToKey.has(norm))) {
+        aliasToKey.set(norm, key);
+      }
+    }
   };
 
   const ensureTerm = (seed: {
@@ -595,27 +888,116 @@ export function compileOntologyFromInputs(
     domain?: string | undefined;
     description?: string | undefined;
     synonyms?: readonly string[] | undefined;
+    subjects?: readonly string[] | undefined;
     attributes?: readonly (string | OntologyAttribute)[] | undefined;
     provenance?: readonly string[] | undefined;
     sensitivity?: OntologySensitivity | string | undefined;
     evidenceDelta?: number | undefined;
   }): TermAccumulator | null => {
     const cleanName = seed.name.trim();
-    const normKey = normalizeTermKey(cleanName);
-    if (normKey.length === 0) return null;
+    const baseNormKey = normalizeTermKey(cleanName);
+    if (baseNormKey.length === 0) return null;
 
+    const seedId =
+      seed.id !== undefined && seed.id.trim().length > 0
+        ? seed.id.trim()
+        : undefined;
+    const explicitSubjects = dedupeStrings([
+      ...(seed.subjects ?? []),
+      ...(seedId !== undefined && isNamespacedSubjectId(seedId) ? [seedId] : []),
+    ]);
+    const seedNs = explicitNamespaceOf(seedId, explicitSubjects);
     const sens = normalizeOntologySensitivity(seed.sensitivity, "private");
-    const existing = termsByKey.get(normKey);
+
+    // 1. Exact ID lookup when a stable/namespaced ID is already registered.
+    let existing: TermAccumulator | undefined;
+    if (seedId !== undefined) {
+      const byIdKey = aliasToKey.get(seedId.toLowerCase());
+      if (byIdKey !== undefined) {
+        const candidate = termsByKey.get(byIdKey);
+        if (candidate !== undefined) {
+          const candNs = explicitNamespaceOf(candidate.termId, candidate.subjects);
+          if (
+            candidate.termId.toLowerCase() === seedId.toLowerCase() ||
+            seedNs === null ||
+            candNs === null ||
+            candNs === seedNs
+          ) {
+            existing = candidate;
+          }
+        }
+      }
+    }
+
+    // 2. Normalized-key lookup, refusing to merge distinct explicit namespaces.
+    let normKey = baseNormKey;
+    if (existing === undefined) {
+      const candidateAtBase = termsByKey.get(baseNormKey);
+      if (candidateAtBase !== undefined) {
+        const candNs = explicitNamespaceOf(
+          candidateAtBase.termId,
+          candidateAtBase.subjects,
+        );
+        if (seedNs !== null && candNs !== null && seedNs !== candNs) {
+          const disambiguatedBase =
+            seedId !== undefined
+              ? normalizeTermKey(seedId)
+              : `${seedNs}_${baseNormKey}`;
+          let candidateKey =
+            disambiguatedBase.length > 0 && disambiguatedBase !== baseNormKey
+              ? disambiguatedBase
+              : `${seedNs}_${baseNormKey}`;
+          let suffix = 2;
+          while (true) {
+            const slot = termsByKey.get(candidateKey);
+            if (slot === undefined) {
+              normKey = candidateKey;
+              break;
+            }
+            const slotNs = explicitNamespaceOf(slot.termId, slot.subjects);
+            if (slotNs === seedNs) {
+              existing = slot;
+              normKey = candidateKey;
+              break;
+            }
+            candidateKey = `${disambiguatedBase}_${suffix}`;
+            suffix += 1;
+          }
+        } else {
+          existing = candidateAtBase;
+        }
+      } else if (seedId !== undefined) {
+        const priorById = existingTermsById.get(seedId);
+        if (
+          priorById !== undefined &&
+          !termsByKey.has(priorById.normalizedKey)
+        ) {
+          normKey = priorById.normalizedKey;
+        }
+      }
+    } else {
+      normKey = existing.normalizedKey;
+    }
+
     const existingStored =
-      existingTermsByKey.get(normKey) ??
-      (seed.id !== undefined ? existingTermsById.get(seed.id) : undefined);
+      (seedId !== undefined ? existingTermsById.get(seedId) : undefined) ??
+      (() => {
+        const storedByKey = existingTermsByKey.get(normKey);
+        if (storedByKey === undefined) return undefined;
+        const storedNs = explicitNamespaceOf(
+          storedByKey.termId,
+          storedByKey.subjects,
+        );
+        if (seedNs !== null && storedNs !== null && seedNs !== storedNs) {
+          return undefined;
+        }
+        return storedByKey;
+      })();
 
     if (existing === undefined) {
       const termId =
         existingStored?.termId ??
-        (seed.id !== undefined && seed.id.trim().length > 0
-          ? seed.id.trim()
-          : `term:${normKey}`);
+        (seedId !== undefined ? seedId : `term:${normKey}`);
       const acc: TermAccumulator = {
         termId,
         canonicalName: cleanName,
@@ -624,16 +1006,23 @@ export function compileOntologyFromInputs(
         domain: (seed.domain ?? defaultDomain).trim() || defaultDomain,
         description: (seed.description ?? "").trim(),
         synonyms: new Set(dedupeStrings(seed.synonyms)),
+        subjects: new Set(explicitSubjects),
         attributes: normalizeAttributes(seed.attributes),
         provenance: new Set(dedupeStrings(seed.provenance)),
         sensitivity: sens,
         evidenceCount: Math.max(0, Math.floor(seed.evidenceDelta ?? 1)),
       };
       termsByKey.set(normKey, acc);
-      registerAlias(termId, normKey);
-      registerAlias(cleanName, normKey);
-      registerAlias(normKey, normKey);
-      for (const syn of acc.synonyms) registerAlias(syn, normKey);
+      registerAlias(termId, normKey, true);
+      registerAlias(normKey, normKey, true);
+      registerAlias(cleanName, normKey, false);
+      for (const syn of acc.synonyms) registerAlias(syn, normKey, false);
+      for (const subj of acc.subjects) {
+        const lowerSubj = subj.toLowerCase();
+        if (!aliasToKey.has(lowerSubj) || lowerSubj === termId.toLowerCase()) {
+          aliasToKey.set(lowerSubj, normKey);
+        }
+      }
       return acc;
     }
 
@@ -660,10 +1049,17 @@ export function compileOntologyFromInputs(
     }
     if (seed.synonyms !== undefined) {
       for (const syn of dedupeStrings(seed.synonyms)) {
-        if (normalizeTermKey(syn) !== normKey) {
+        if (normalizeTermKey(syn) !== existing.normalizedKey) {
           existing.synonyms.add(syn);
         }
-        registerAlias(syn, normKey);
+        registerAlias(syn, existing.normalizedKey, false);
+      }
+    }
+    for (const subj of explicitSubjects) {
+      existing.subjects.add(subj);
+      const lowerSubj = subj.toLowerCase();
+      if (!aliasToKey.has(lowerSubj) || lowerSubj === existing.termId.toLowerCase()) {
+        aliasToKey.set(lowerSubj, existing.normalizedKey);
       }
     }
     if (seed.attributes !== undefined && seed.attributes.length > 0) {
@@ -677,7 +1073,9 @@ export function compileOntologyFromInputs(
         existing.provenance.add(ref);
       }
     }
-    if (seed.id !== undefined) registerAlias(seed.id, normKey);
+    if (seedId !== undefined) {
+      registerAlias(seedId, existing.normalizedKey, false);
+    }
     // Sensitivity rises monotonically so private evidence can never be downgraded.
     existing.sensitivity = maxOntologySensitivity(existing.sensitivity, sens);
     existing.evidenceCount += Math.max(0, Math.floor(seed.evidenceDelta ?? 1));
@@ -693,6 +1091,7 @@ export function compileOntologyFromInputs(
       domain: ent.domain ?? defaultDomain,
       description: ent.description,
       synonyms: ent.synonyms,
+      subjects: ent.subjects,
       attributes: ent.attributes,
       provenance: ent.provenance ?? (ent.id !== undefined ? [`entity:${ent.id}`] : []),
       sensitivity: ent.sensitivity,
@@ -716,25 +1115,28 @@ export function compileOntologyFromInputs(
       domain,
       description: summarizeBody(page.body),
       synonyms: page.synonyms,
+      subjects: page.subjects,
       provenance: prov,
       sensitivity: page.sensitivity,
       evidenceDelta: 1,
     });
     if (term !== null && page.path !== undefined) {
-      registerAlias(page.path, term.normalizedKey);
+      registerAlias(page.path, term.normalizedKey, false);
     }
     if (term !== null && page.subjects !== undefined) {
       for (const subj of page.subjects) {
         const cleanSubj = humanizeSubjectName(subj);
-        if (
-          normalizeTermKey(cleanSubj) !== term.normalizedKey &&
-          cleanSubj.length > 0
-        ) {
+        const alreadySameTerm =
+          aliasToKey.get(subj.toLowerCase()) === term.normalizedKey ||
+          normalizeTermKey(cleanSubj) === term.normalizedKey;
+        if (!alreadySameTerm && cleanSubj.length > 0) {
           ensureTerm({
+            id: isNamespacedSubjectId(subj) ? subj : undefined,
             name: cleanSubj,
             kind: "entity",
             domain: inferDomainFromSubject(subj, domain),
             synonyms: subj !== cleanSubj ? [subj] : [],
+            subjects: [subj],
             provenance: prov,
             sensitivity: page.sensitivity,
             evidenceDelta: 1,
@@ -792,19 +1194,28 @@ export function compileOntologyFromInputs(
         attrs.push(attr);
       }
 
+      const subjIsNamespaced = isNamespacedSubjectId(subjRaw);
+      const subjSubjects = subjIsNamespaced
+        ? [subjRaw]
+        : claim.subjects !== undefined && claim.subjects.length === 1
+          ? [...claim.subjects]
+          : [];
+
       const subjTerm = ensureTerm({
+        id: subjIsNamespaced ? subjRaw : undefined,
         name: subjName,
         kind: "entity",
         domain: subjDomain,
         description: summarizeBody(claim.body),
         synonyms: subjRaw !== subjName ? [subjRaw] : [],
+        subjects: subjSubjects,
         attributes: attrs,
         provenance: prov,
         sensitivity: sens,
         evidenceDelta,
       });
       if (subjTerm !== null) {
-        registerAlias(subjRaw, subjTerm.normalizedKey);
+        registerAlias(subjRaw, subjTerm.normalizedKey, false);
       }
 
       // Track potential open conflicts on (subject, predicate) with differing objects or negative polarity.
@@ -835,25 +1246,28 @@ export function compileOntologyFromInputs(
         const objRaw = claim.object.trim();
         const objName = humanizeSubjectName(objRaw);
         const objKey = normalizeTermKey(objName);
+        const objIsNamespaced = isNamespacedSubjectId(objRaw);
         const existingObj =
           termsByKey.has(objKey) ||
           aliasToKey.has(objRaw.toLowerCase()) ||
           objRaw.includes(":");
         if (existingObj || /^[A-Z][A-Za-z0-9 _-]+$/.test(objName)) {
           const objTerm = ensureTerm({
+            id: objIsNamespaced ? objRaw : undefined,
             name: objName,
             kind: "entity",
             domain: inferDomainFromSubject(objRaw, subjDomain),
             synonyms: objRaw !== objName ? [objRaw] : [],
+            subjects: objIsNamespaced ? [objRaw] : [],
             provenance: prov,
             sensitivity: sens,
             evidenceDelta: 1,
           });
-          if (objTerm !== null) {
-            registerAlias(objRaw, objTerm.normalizedKey);
+          if (objTerm !== null && subjTerm !== null) {
+            registerAlias(objRaw, objTerm.normalizedKey, false);
             rawLinks.push({
-              source: subjName,
-              target: objName,
+              source: subjTerm.termId,
+              target: objTerm.termId,
               relationKind: claim.predicate.trim(),
               confidence: claim.confidence ?? 0.8,
               evidenceCount: evidenceDelta,
@@ -869,15 +1283,17 @@ export function compileOntologyFromInputs(
       const cleanSubj = humanizeSubjectName(subj);
       if (cleanSubj.length === 0) continue;
       const t = ensureTerm({
+        id: isNamespacedSubjectId(subj) ? subj : undefined,
         name: cleanSubj,
         kind: "entity",
         domain: inferDomainFromSubject(subj, defaultDomain),
         synonyms: subj !== cleanSubj ? [subj] : [],
+        subjects: [subj],
         provenance: prov,
         sensitivity: sens,
         evidenceDelta: 1,
       });
-      if (t !== null) registerAlias(subj, t.normalizedKey);
+      if (t !== null) registerAlias(subj, t.normalizedKey, false);
     }
   }
 
@@ -896,15 +1312,17 @@ export function compileOntologyFromInputs(
       const cleanSubj = humanizeSubjectName(subj);
       if (cleanSubj.length === 0) continue;
       const t = ensureTerm({
+        id: isNamespacedSubjectId(subj) ? subj : undefined,
         name: cleanSubj,
         kind: "entity",
         domain: inferDomainFromSubject(subj, ev.connectorId ?? defaultDomain),
         synonyms: subj !== cleanSubj ? [subj] : [],
+        subjects: [subj],
         provenance: prov,
         sensitivity: sens,
         evidenceDelta: 1,
       });
-      if (t !== null) registerAlias(subj, t.normalizedKey);
+      if (t !== null) registerAlias(subj, t.normalizedKey, false);
     }
   }
 
@@ -915,13 +1333,15 @@ export function compileOntologyFromInputs(
     if (alias.score !== undefined && alias.score < 0.7) continue;
     const keyA =
       aliasToKey.get(alias.subjectA.toLowerCase()) ??
-      normalizeTermKey(humanizeSubjectName(alias.subjectA));
-    const termA = termsByKey.get(keyA);
+      (isNamespacedSubjectId(alias.subjectA)
+        ? undefined
+        : normalizeTermKey(humanizeSubjectName(alias.subjectA)));
+    const termA = keyA !== undefined ? termsByKey.get(keyA) : undefined;
     if (termA !== undefined) {
       const syn = humanizeSubjectName(alias.subjectB);
       if (normalizeTermKey(syn) !== termA.normalizedKey && syn.length > 0) {
         termA.synonyms.add(syn);
-        registerAlias(alias.subjectB, termA.normalizedKey);
+        registerAlias(alias.subjectB, termA.normalizedKey, false);
       }
     }
   }
@@ -929,6 +1349,9 @@ export function compileOntologyFromInputs(
   const resolveEndpointKey = (raw: string): string | null => {
     const lower = raw.trim().toLowerCase();
     if (aliasToKey.has(lower)) return aliasToKey.get(lower) ?? null;
+    if (isNamespacedSubjectId(raw)) {
+      return null;
+    }
     const norm = normalizeTermKey(humanizeSubjectName(raw));
     if (aliasToKey.has(norm)) return aliasToKey.get(norm) ?? null;
     if (termsByKey.has(norm)) return norm;
@@ -1012,32 +1435,60 @@ export function compileOntologyFromInputs(
     }
   }
 
-  // 7. Persist atomically inside a SQLite transaction, enforcing Sticky Certification.
+  // 7. Persist atomically inside a SQLite transaction, enforcing Sticky Certification
+  //    and removing all terms, relations, term-bound metrics, and certification
+  //    receipts no longer supported by live vault inputs.
   let termsCreated = 0;
   let termsUpdated = 0;
+  let termsRemoved = 0;
   let preservedCertified = 0;
   let familiesDetected = 0;
   let relationsCompiled = 0;
+  let relationsRemoved = 0;
   let defaultJoinsSelected = 0;
   let metricsCompiled = 0;
 
+  const existingRelationIds = new Set(
+    store.listRelations().map((rel) => rel.relationId),
+  );
+
   store.transaction(() => {
-    const persistedTerms: OntologyTerm[] = [];
+    const plannedTermIds = new Set<string>();
+    const priorByAcc = new Map<TermAccumulator, OntologyTerm | undefined>();
 
     for (const acc of termsByKey.values()) {
       const prior =
-        existingTermsByKey.get(acc.normalizedKey) ??
-        existingTermsById.get(acc.termId);
+        existingTermsById.get(acc.termId) ??
+        existingTermsByKey.get(acc.normalizedKey);
+      priorByAcc.set(acc, prior);
+      plannedTermIds.add(
+        prior !== undefined && prior.certification === "certified"
+          ? prior.termId
+          : acc.termId,
+      );
+    }
+
+    // Remove stale/unsupported terms first so removed rows cannot hold keys
+    // or linger after retractions/purges.
+    for (const existingTermId of existingTermsById.keys()) {
+      if (!plannedTermIds.has(existingTermId)) {
+        if (store.deleteTerm(existingTermId)) {
+          termsRemoved += 1;
+        }
+      }
+    }
+
+    const supportedTermIds = new Set<string>();
+    const termIdRemap = new Map<string, string>();
+
+    for (const acc of termsByKey.values()) {
+      const prior = priorByAcc.get(acc);
 
       if (prior !== undefined && prior.certification === "certified") {
         // Sticky Certification Invariant: preserve owner's certified name,
-        // description, synonyms, and certification fields while refreshing live
-        // evidence count, attributes, and provenance.
-        const mergedAttrs = normalizeAttributes([
-          ...prior.attributes,
-          ...acc.attributes,
-        ]);
-        const mergedProv = dedupeStrings([...prior.provenance, ...acc.provenance]);
+        // description, synonyms, and certification fields while replacing
+        // evidence count, attributes, subjects, and provenance strictly from
+        // live current support so purged references never linger.
         const saved = store.upsertTerm({
           termId: prior.termId,
           canonicalName: prior.canonicalName,
@@ -1046,8 +1497,9 @@ export function compileOntologyFromInputs(
           domain: prior.domain,
           description: prior.description,
           synonyms: prior.synonyms,
-          attributes: mergedAttrs,
-          provenance: mergedProv,
+          subjects: [...acc.subjects],
+          attributes: acc.attributes,
+          provenance: [...acc.provenance],
           sensitivity: maxOntologySensitivity(prior.sensitivity, acc.sensitivity),
           evidenceCount: acc.evidenceCount,
           certification: "certified",
@@ -1056,7 +1508,8 @@ export function compileOntologyFromInputs(
           familyId: prior.familyId,
           updatedAt: compiledAt,
         });
-        persistedTerms.push(saved);
+        supportedTermIds.add(saved.termId);
+        termIdRemap.set(acc.termId, saved.termId);
         preservedCertified += 1;
         termsUpdated += 1;
       } else {
@@ -1068,6 +1521,7 @@ export function compileOntologyFromInputs(
           domain: acc.domain,
           description: acc.description,
           synonyms: [...acc.synonyms],
+          subjects: [...acc.subjects],
           attributes: acc.attributes,
           provenance: [...acc.provenance],
           sensitivity: acc.sensitivity,
@@ -1078,7 +1532,8 @@ export function compileOntologyFromInputs(
           familyId: null,
           updatedAt: compiledAt,
         });
-        persistedTerms.push(saved);
+        supportedTermIds.add(saved.termId);
+        termIdRemap.set(acc.termId, saved.termId);
         if (prior === undefined) {
           termsCreated += 1;
         } else {
@@ -1087,15 +1542,21 @@ export function compileOntologyFromInputs(
       }
     }
 
-    // Persist compiled relations.
-    const persistedRelations: OntologyRelation[] = [];
+    // Replace relations atomically with strictly live supported relations.
+    store.db.exec("DELETE FROM ontology_relations");
+    const supportedRelationIds = new Set<string>();
     for (const [relKey, rel] of relationsByKey.entries()) {
+      const srcId = termIdRemap.get(rel.sourceTermId) ?? rel.sourceTermId;
+      const dstId = termIdRemap.get(rel.targetTermId) ?? rel.targetTermId;
+      if (!supportedTermIds.has(srcId) || !supportedTermIds.has(dstId)) {
+        continue;
+      }
       const isDefaultJoin = defaultJoinKeys.has(relKey);
       const avgConf =
         rel.confidenceCount > 0 ? rel.confidenceSum / rel.confidenceCount : 0.5;
       const saved = store.upsertRelation({
-        sourceTermId: rel.sourceTermId,
-        targetTermId: rel.targetTermId,
+        sourceTermId: srcId,
+        targetTermId: dstId,
         relationKind: rel.relationKind,
         evidenceCount: rel.evidenceCount,
         confidence: Number(avgConf.toFixed(4)),
@@ -1104,9 +1565,27 @@ export function compileOntologyFromInputs(
         sensitivity: rel.sensitivity,
         updatedAt: compiledAt,
       });
-      persistedRelations.push(saved);
+      supportedRelationIds.add(saved.relationId);
       relationsCompiled += 1;
       if (isDefaultJoin) defaultJoinsSelected += 1;
+    }
+
+    for (const priorRelId of existingRelationIds) {
+      if (!supportedRelationIds.has(priorRelId)) {
+        relationsRemoved += 1;
+      }
+    }
+
+    // Remove term-bound metrics whose backing term is no longer supported.
+    const metricTermRows = store.db
+      .query<{ metric_id: string; term_id: string }, []>(
+        "SELECT metric_id, term_id FROM ontology_metrics WHERE term_id IS NOT NULL",
+      )
+      .all();
+    for (const row of metricTermRows) {
+      if (!supportedTermIds.has(row.term_id)) {
+        store.deleteMetric(row.metric_id);
+      }
     }
 
     // Detect and persist term families across all current store terms + relations.
@@ -1231,7 +1710,33 @@ export function compileOntologyFromInputs(
       }
     }
 
+    // Remove certification receipts targeting removed terms or metrics so
+    // purged/unsupported snapshots cannot survive in ontology_certifications.
+    const survivingMetricIds = new Set(
+      store.listMetrics().map((metric) => metric.metricId),
+    );
+    const certRows = store.db
+      .query<{ receipt_id: string; target_kind: string; target_id: string }, []>(
+        "SELECT receipt_id, target_kind, target_id FROM ontology_certifications",
+      )
+      .all();
+    const deleteCert = store.db.query(
+      "DELETE FROM ontology_certifications WHERE receipt_id = ?",
+    );
+    for (const row of certRows) {
+      const orphanedTerm =
+        row.target_kind === "term" && !supportedTermIds.has(row.target_id);
+      const orphanedMetric =
+        row.target_kind === "metric" && !survivingMetricIds.has(row.target_id);
+      if (orphanedTerm || orphanedMetric) {
+        deleteCert.run(row.receipt_id);
+      }
+    }
+
     store.setMeta("last_compiled_at", compiledAt);
+    if (opts.vaultFingerprint !== undefined) {
+      store.setMeta("vault_fingerprint", opts.vaultFingerprint);
+    }
   });
 
   return {
@@ -1239,9 +1744,11 @@ export function compileOntologyFromInputs(
     termsCompiled: termsByKey.size,
     termsCreated,
     termsUpdated,
+    termsRemoved,
     preservedCertified,
     familiesDetected,
     relationsCompiled,
+    relationsRemoved,
     defaultJoinsSelected,
     metricsCompiled,
     sourceTables: [...(inputs.sourceTables ?? [])],
@@ -1259,6 +1766,11 @@ export function compileOntologyFromVault(
   store: OntologyStore,
   opts: CompileOptions = {},
 ): OntologyCompileReport {
+  const vaultFingerprint =
+    opts.vaultFingerprint ?? computeVaultOntologyFingerprint(vaultDb);
   const inputs = extractInputsFromVault(vaultDb);
-  return compileOntologyFromInputs(inputs, store, opts);
+  return compileOntologyFromInputs(inputs, store, {
+    ...opts,
+    vaultFingerprint,
+  });
 }

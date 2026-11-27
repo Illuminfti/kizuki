@@ -6,7 +6,7 @@ import { bindCanonFiles, requireCanonFiles, snapshotCanonIo, withCanonMutationAs
 import { settleWriteReservations } from "../serve/budget-ledger";
 import { purgeExtractInputs } from "../serve/extract";
 import type { Database } from "bun:sqlite";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { applyPurgeRewrite } from "../canon/apply";
 import { eraseCanonStageTraces } from "../canon/stage-recovery";
@@ -673,6 +673,19 @@ function claimsCiting(
   });
 }
 
+/** Remove rebuildable local ontology cache files so purged data cannot be served. */
+function invalidateDerivedOntologyForPurge(vaultPath: string): void {
+  if (vaultPath === ":memory:" || vaultPath.length === 0) return;
+  const base = join(resolve(vaultPath), ".kizuki", "ontology.sqlite");
+  for (const candidate of [base, `${base}-wal`, `${base}-shm`]) {
+    try {
+      rmSync(candidate, { force: true });
+    } catch {
+      // Ignore ENOENT or already-removed derived cache files.
+    }
+  }
+}
+
 /** Remove every local projection supported by erased evidence before rewriting. */
 function removeDerivedForPurge(
   db: Database,
@@ -1326,6 +1339,7 @@ function purgeEventsOwned(
       .map((page) => page.id)
       .filter((id) => id.length > 0);
     const derivedDocIds = removeDerivedForPurge(db, eventIds, pageIds, snapshot.flatMap(row => row.page === null ? [] : [row.page]));
+    invalidateDerivedOntologyForPurge(vaultPath);
 
     const citing = claimsCiting(db, eventIds);
     const claimIds = [...new Set(citing.map((claim) => claim.claim_id))].sort();
@@ -1592,6 +1606,7 @@ function catchUpHolds(db: Database, vaultPath: string, batchId: string): {
       db, eventIds, matched.affected.map(page => page.id),
       snapshot.flatMap(row => row.page === null ? [] : [row.page]),
     );
+    invalidateDerivedOntologyForPurge(vaultPath);
     for (const op of listOps(db, batchId)) {
       const known = new Set(op.ids);
       const extra = [...new Set([...latePages, ...derivedDocIds])].filter(id => !known.has(id));

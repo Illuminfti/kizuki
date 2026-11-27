@@ -2317,7 +2317,11 @@
         try {
           const res = await fetchFn('/api/decisions/stamp', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              Accept: 'application/json',
+              'X-Kizuki-Request': '1',
+            },
             body: JSON.stringify({
               threadId: tid,
               verdict: v,

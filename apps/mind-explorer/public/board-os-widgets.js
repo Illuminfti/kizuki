@@ -885,7 +885,12 @@
         err.offline = true;
         throw err;
       }
-      const res = await fetchFn(url, options);
+      const nextOptions = options ? { ...options } : {};
+      const method = String(nextOptions.method || 'GET').toUpperCase();
+      if (method !== 'GET' && method !== 'HEAD') {
+        nextOptions.headers = { 'X-Kizuki-Request': '1', ...(nextOptions.headers || {}) };
+      }
+      const res = await fetchFn(url, nextOptions);
       let data = null;
       try {
         if (res && typeof res.json === 'function') {

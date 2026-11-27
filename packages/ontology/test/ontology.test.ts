@@ -139,16 +139,19 @@ describe("OntologyStore (SQLite STRICT + certification receipts + sensitivity)",
       const pub = store.upsertTerm({
         canonicalName: "Public Atlas",
         domain: "docs",
+        subjects: ["doc:public_atlas"],
         sensitivity: "public",
       });
       const pers = store.upsertTerm({
         canonicalName: "Personal Journal",
         domain: "notes",
+        subjects: ["note:personal_journal"],
         sensitivity: "personal",
       });
       const priv = store.upsertTerm({
         canonicalName: "Private Vault Key",
         domain: "security",
+        subjects: ["secret:vault_key"],
         sensitivity: "private",
       });
       store.upsertRelation({
@@ -172,14 +175,48 @@ describe("OntologyStore (SQLite STRICT + certification receipts + sensitivity)",
       expect(
         store.listTerms({ sensitivityCeiling: "private", allowedSubjects: [] }),
       ).toEqual([]);
+      // Domain name alone must NEVER satisfy subject authorization.
+      expect(
+        store.listTerms({
+          sensitivityCeiling: "private",
+          allowedSubjects: ["docs"],
+        }),
+      ).toEqual([]);
+      // Exact provenance-backed subject matches.
       expect(
         store
           .listTerms({
             sensitivityCeiling: "private",
-            allowedSubjects: ["docs"],
+            allowedSubjects: ["doc:public_atlas"],
           })
           .map((t) => t.termId),
       ).toEqual([pub.termId]);
+
+      // Distinct namespaces sharing a bare suffix must NEVER cross-authorize.
+      const personAtlas = store.upsertTerm({
+        termId: "person:atlas",
+        canonicalName: "Atlas",
+        domain: "people",
+        subjects: ["person:atlas"],
+        sensitivity: "public",
+      });
+      const projectAtlas = store.upsertTerm({
+        termId: "project:atlas",
+        canonicalName: "Atlas",
+        domain: "projects",
+        subjects: ["project:atlas"],
+        sensitivity: "public",
+      });
+      expect(personAtlas.termId).toBe("person:atlas");
+      expect(projectAtlas.termId).toBe("project:atlas");
+      expect(
+        store
+          .listTerms({
+            sensitivityCeiling: "private",
+            allowedSubjects: ["person:atlas"],
+          })
+          .map((t) => t.termId),
+      ).toEqual(["person:atlas"]);
       expect(pers.sensitivity).toBe("personal");
     } finally {
       store.close();
@@ -569,6 +606,104 @@ describe("Incremental Semantic Compiler (defensive vault scan + sticky certifica
       expect(report.metricsCompiled).toBe(4);
     } finally {
       emptyVault.close();
+      store.close();
+    }
+  });
+
+  test("keeps distinct namespaced subjects separate and removes unsupported terms, relations, and receipts on recompile", () => {
+    const store = OntologyStore.openInMemory();
+    try {
+      const first = compileOntologyFromInputs(
+        {
+          claims: [
+            {
+              claimId: "c-alex",
+              subject: "person:alex",
+              predicate: "leads",
+              object: "project:atlas",
+              body: "Alex leads Project Atlas.",
+              sensitivity: "public",
+              provenance: ["event:e-alex"],
+            },
+            {
+              claimId: "c-person-atlas",
+              subject: "person:atlas",
+              predicate: "role",
+              object: "navigator",
+              body: "Person Atlas is a navigator.",
+              sensitivity: "public",
+              provenance: ["event:e-patlas"],
+            },
+          ],
+        },
+        store,
+      );
+      expect(first.termsCompiled).toBe(3);
+      expect(first.relationsCompiled).toBe(1);
+
+      // Distinct namespaces sharing suffix "atlas" stay separate and strictly scoped.
+      const onlyPersonAtlas = store.listTerms({
+        sensitivityCeiling: "private",
+        allowedSubjects: ["person:atlas"],
+      });
+      expect(onlyPersonAtlas.map((t) => t.termId)).toEqual(["person:atlas"]);
+      expect(
+        store
+          .listTerms({
+            sensitivityCeiling: "private",
+            allowedSubjects: ["project:atlas"],
+          })
+          .map((t) => t.termId),
+      ).toEqual(["project:atlas"]);
+
+      // Certify person:alex and attach a term-bound metric so receipts and metrics exist.
+      store.certifyTerm({
+        termId: "person:alex",
+        actor: "owner",
+        description: "Certified Alex profile.",
+      });
+      store.upsertMetric({
+        name: "alex_deliverables",
+        termId: "person:alex",
+        description: "Deliverables led by Alex.",
+        expression: "COUNT(deliverables)",
+        sensitivity: "public",
+      });
+      expect(store.listCertifications("person:alex").length).toBe(1);
+
+      // Recompile with live claim updated (old provenance removed): surviving certified term must NOT retain purged provenance.
+      compileOntologyFromInputs(
+        {
+          claims: [
+            {
+              claimId: "c-alex-2",
+              subject: "person:alex",
+              predicate: "status",
+              object: "active",
+              body: "Alex is active.",
+              sensitivity: "public",
+              provenance: ["event:e-alex-2"],
+            },
+          ],
+        },
+        store,
+      );
+      const alexRefreshed = store.getTerm("person:alex");
+      expect(alexRefreshed?.certification).toBe("certified");
+      expect(alexRefreshed?.provenance).toEqual(["event:e-alex-2", "claim:c-alex-2"]);
+      expect(alexRefreshed?.provenance).not.toContain("event:e-alex");
+
+      // Recompile with empty inputs: all unsupported terms, relations, term-bound metrics, and receipts are pruned.
+      const pruned = compileOntologyFromInputs({}, store, {
+        includeBuiltInMetrics: false,
+      });
+      expect(pruned.termsCompiled).toBe(0);
+      expect(pruned.termsRemoved).toBeGreaterThanOrEqual(1);
+      expect(store.listTerms()).toEqual([]);
+      expect(store.listRelations()).toEqual([]);
+      expect(store.listCertifications()).toEqual([]);
+      expect(store.getMetricByName("alex_deliverables")).toBeNull();
+    } finally {
       store.close();
     }
   });

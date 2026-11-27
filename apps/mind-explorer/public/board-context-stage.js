@@ -2020,7 +2020,7 @@
       const fn = resolveFetch(opts);
       const res = await fn('/api/agent-board/synthesize', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Kizuki-Request': '1' },
         body: JSON.stringify({
           threadId: String(p.threadId || ''),
           channel: String(p.channel || 'box').replace(/^#+/, ''),
@@ -2067,7 +2067,7 @@
       const section = normalizeSection(p.section || 'actions');
       const res = await fn('/api/agent-board/promote', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Kizuki-Request': '1' },
         body: JSON.stringify({
           threadId: String(p.threadId || ''),
           channel: String(p.channel || 'box').replace(/^#+/, ''),
@@ -2117,7 +2117,7 @@
       };
       const res = await fn('/api/decisions/stamp', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Kizuki-Request': '1' },
         body: JSON.stringify(payload),
       });
       const data = await readJsonSafe(res);
@@ -2171,7 +2171,7 @@
       const fn = resolveFetch(opts);
       const res = await fn('/api/decisions/undo', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Kizuki-Request': '1' },
         body: JSON.stringify({
           threadId: String(p.threadId || ''),
           ...(p.note ? { note: stripEmDash(p.note) } : {}),

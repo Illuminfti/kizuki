@@ -27,6 +27,7 @@ export interface OssieConcept {
   domain: string;
   description: string;
   synonyms: string[];
+  subjects: string[];
   attributes: OssieAttribute[];
   provenance: string[];
   sensitivity: OntologySensitivity;
@@ -159,6 +160,7 @@ export function exportOssieModel(
       domain: term.domain,
       description: term.description,
       synonyms: [...term.synonyms],
+      subjects: [...term.subjects],
       attributes: term.attributes.map((attr) => {
         const out: OssieAttribute = { name: attr.name };
         if (attr.kind !== undefined) out.kind = attr.kind;
@@ -603,6 +605,7 @@ function validateOssieDocument(raw: unknown): OssieModelDocument {
       domain: String(entry.domain ?? "general"),
       description: String(entry.description ?? ""),
       synonyms: Array.isArray(entry.synonyms) ? entry.synonyms.map(String) : [],
+      subjects: Array.isArray(entry.subjects) ? entry.subjects.map(String) : [],
       attributes,
       provenance: Array.isArray(entry.provenance)
         ? entry.provenance.map(String)
@@ -765,6 +768,7 @@ export function importOssieModel(
           domain: existing.domain,
           description: existing.description,
           synonyms: existing.synonyms,
+          subjects: concept.subjects.length > 0 ? concept.subjects : existing.subjects,
           attributes: normalizeAttributes([
             ...existing.attributes,
             ...concept.attributes,
@@ -791,6 +795,7 @@ export function importOssieModel(
           domain: concept.domain,
           description: concept.description,
           synonyms: concept.synonyms,
+          subjects: concept.subjects,
           attributes: concept.attributes,
           provenance: concept.provenance,
           sensitivity: concept.sensitivity,

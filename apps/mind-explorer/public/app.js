@@ -823,7 +823,11 @@
   async function apiPost(url, payload) {
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'X-Kizuki-Request': '1',
+      },
       body: JSON.stringify(payload),
     });
     const data = await res.json().catch(() => ({ ok: false, error: 'Invalid JSON response' }));
@@ -7170,7 +7174,11 @@
       setStatus('is-loading', 'Uploading and indexing GPS history into local vault...');
       const res = await fetch('/api/replay/import-location', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'X-Kizuki-Request': '1',
+        },
         body: rawText,
       });
       const data = await res.json().catch(() => ({ ok: false, error: 'Invalid server JSON response' }));

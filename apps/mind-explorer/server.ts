@@ -252,6 +252,155 @@ function jsonResponse(body: unknown, status = 200, extraHeaders?: Record<string,
   });
 }
 
+function extractHostname(hostHeader: string): string {
+  const trimmed = hostHeader.trim().toLowerCase();
+  if (!trimmed) return "";
+  if (trimmed.startsWith("[")) {
+    const closeIdx = trimmed.indexOf("]");
+    return closeIdx !== -1 ? trimmed.slice(0, closeIdx + 1) : trimmed;
+  }
+  const firstColon = trimmed.indexOf(":");
+  const lastColon = trimmed.lastIndexOf(":");
+  if (firstColon !== -1 && firstColon === lastColon) {
+    return trimmed.slice(0, firstColon);
+  }
+  return trimmed;
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "[::1]" || hostname === "::1";
+}
+
+function parseAllowedOrigins(): { origins: Set<string>; hostnames: Set<string> } {
+  const origins = new Set<string>();
+  const hostnames = new Set<string>();
+  const raw = process.env.KIZUKI_ALLOWED_ORIGINS || "";
+  for (const part of raw.split(",")) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    try {
+      const parsed = new URL(trimmed);
+      origins.add(parsed.origin.toLowerCase());
+      hostnames.add(extractHostname(parsed.host));
+    } catch {
+      // Ignore malformed KIZUKI_ALLOWED_ORIGINS entry
+    }
+  }
+  return { origins, hostnames };
+}
+
+export function enforceMutationOriginGuard(
+  req: Request,
+  url: URL,
+  configuredHost?: string,
+): Response | null {
+  const method = (req.method || "GET").toUpperCase();
+  if (method === "GET" || method === "HEAD") {
+    return null;
+  }
+  if (method === "OPTIONS") {
+    return jsonResponse({ error: "Cross-origin preflight rejected" }, 403);
+  }
+
+  const { origins: allowedOrigins, hostnames: allowedOriginHostnames } = parseAllowedOrigins();
+
+  // a. Trusted Host check (DNS rebinding guard)
+  const rawHost =
+    req.headers.get("x-forwarded-host") || req.headers.get("host") || url.host || "";
+  const effectiveHost = rawHost.split(",")[0].trim();
+  const hostname = extractHostname(effectiveHost);
+  const configuredHostname = configuredHost ? extractHostname(configuredHost) : "";
+  const isTailscaleHost = hostname.endsWith(".ts.net") && hostname.length > ".ts.net".length;
+  const isConfiguredMatch =
+    Boolean(configuredHostname) &&
+    (hostname === configuredHostname ||
+      hostname.replace(/^\[|\]$/g, "") === configuredHostname.replace(/^\[|\]$/g, ""));
+
+  if (
+    !hostname ||
+    (!isLoopbackHostname(hostname) &&
+      !isConfiguredMatch &&
+      !isTailscaleHost &&
+      !allowedOriginHostnames.has(hostname))
+  ) {
+    return jsonResponse({ error: "Untrusted Host header rejected" }, 403);
+  }
+
+  // b. Sec-Fetch-Site check
+  const secFetchSite = req.headers.get("sec-fetch-site");
+  if (secFetchSite !== null) {
+    const site = secFetchSite.trim().toLowerCase();
+    if (site !== "same-origin" && site !== "none") {
+      return jsonResponse({ error: "Cross-site mutation rejected" }, 403);
+    }
+  }
+
+  // c. Origin check
+  const originHeader = req.headers.get("origin");
+  if (originHeader !== null) {
+    const originTrimmed = originHeader.trim();
+    if (!originTrimmed || originTrimmed.toLowerCase() === "null") {
+      return jsonResponse({ error: "Cross-origin mutation rejected" }, 403);
+    }
+    let originUrl: URL;
+    try {
+      originUrl = new URL(originTrimmed);
+    } catch {
+      return jsonResponse({ error: "Cross-origin mutation rejected" }, 403);
+    }
+    if (
+      originUrl.host.toLowerCase() !== effectiveHost.toLowerCase() &&
+      !allowedOrigins.has(originUrl.origin.toLowerCase())
+    ) {
+      return jsonResponse({ error: "Cross-origin mutation rejected" }, 403);
+    }
+  } else {
+    // d. Referer check (defense-in-depth when Origin is absent)
+    const refererHeader = req.headers.get("referer");
+    if (refererHeader !== null && refererHeader.trim() !== "") {
+      let refererUrl: URL;
+      try {
+        refererUrl = new URL(refererHeader.trim());
+      } catch {
+        return jsonResponse({ error: "Cross-origin referer rejected" }, 403);
+      }
+      if (
+        refererUrl.host.toLowerCase() !== effectiveHost.toLowerCase() &&
+        !allowedOrigins.has(refererUrl.origin.toLowerCase())
+      ) {
+        return jsonResponse({ error: "Cross-origin referer rejected" }, 403);
+      }
+    }
+  }
+
+  // e. Non-CORS-simple credential / Content-Type check
+  const rawContentType = req.headers.get("content-type") || "";
+  const mediaType = rawContentType.split(";")[0].trim().toLowerCase();
+  if (
+    mediaType === "text/plain" ||
+    mediaType === "application/x-www-form-urlencoded" ||
+    mediaType === "multipart/form-data"
+  ) {
+    return jsonResponse(
+      { error: "Unsupported Content-Type for mutation; use application/json" },
+      415,
+    );
+  }
+
+  const hasCustomHeader = Boolean(
+    (req.headers.get("x-kizuki-request") || "").trim() ||
+      (req.headers.get("x-requested-with") || "").trim(),
+  );
+  if (mediaType !== "application/json" && !hasCustomHeader) {
+    return jsonResponse(
+      { error: "Mutation requires application/json Content-Type or X-Kizuki-Request header" },
+      403,
+    );
+  }
+
+  return null;
+}
+
 async function serveStatic(req: Request, url: URL, assetStore: AssetStore): Promise<Response> {
   const virtualRes = await assetStore.serveVirtualBundle(req, url);
   if (virtualRes) return virtualRes;
@@ -382,9 +531,16 @@ export function createExplorerApp(opts: ExplorerServerOptions = {}) {
     // routes/ directory absent
   }
 
+  const configuredHost = opts.hostname || DEFAULT_HOST;
+
   async function rawFetchHandler(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const { pathname } = url;
+
+    const originGuardResponse = enforceMutationOriginGuard(req, url, configuredHost);
+    if (originGuardResponse) {
+      return originGuardResponse;
+    }
 
     try {
       for (let i = 0; i < routeModules.length; i += 1) {

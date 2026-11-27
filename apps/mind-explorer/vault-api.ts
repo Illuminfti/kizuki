@@ -699,6 +699,8 @@ export interface PersonSynthesizeResponse {
   model: string;
   latency_ms: number;
   card_path: string;
+  draft: true;
+  target_canon_path: string;
   dossier: PersonDossierResponse;
 }
 
@@ -711,6 +713,8 @@ export interface PersonNoteRequest {
 export interface PersonNoteResponse {
   ok: true;
   card_path: string;
+  draft: true;
+  target_canon_path: string;
   note_line: string;
   dossier: PersonDossierResponse;
 }
@@ -1364,11 +1368,17 @@ export function parseDocHead(rawHead: string, fallbackName: string): { title: st
   };
 }
 
+const PEOPLE_DRAFT_DOC_RE = /^\.kizuki\/drafts\/people\/[a-z0-9][a-z0-9_-]{0,96}\.md$/;
+
+function isPeopleDraftDocPath(relPath: string): boolean {
+  return PEOPLE_DRAFT_DOC_RE.test(relPath.replace(/\\/g, "/"));
+}
+
 function isEditableVaultDocPath(relPath: string): boolean {
   const p = relPath.replace(/\\/g, "/");
   if (p === "owner-anchors.md" || p === "owner-notes.md") return true;
   if (/^owner-notes\/[a-zA-Z0-9][a-zA-Z0-9_-]{0,120}\.md$/.test(p)) return true;
-  return /^world\/people\/[a-z0-9][a-z0-9_-]{0,96}\.md$/.test(p);
+  return isPeopleDraftDocPath(p);
 }
 
 function deriveEventTitle(text: string | null | undefined, kind: string, connectorId: string): string {
@@ -4960,7 +4970,8 @@ export class KizukiVaultApi {
     if (segments.some((s) => s === "" || s === "." || s === "..")) {
       throw new ForbiddenError("Path traversal is forbidden");
     }
-    if (SECRET_PATH_RE.test(normalized)) {
+    const isAllowedDraftDoc = isPeopleDraftDocPath(normalized);
+    if (!isAllowedDraftDoc && SECRET_PATH_RE.test(normalized)) {
       throw new ForbiddenError("Access to protected or secret paths is forbidden");
     }
     if (!normalized.toLowerCase().endsWith(".md")) {
@@ -4983,7 +4994,7 @@ export class KizukiVaultApi {
       subRel = normalized;
     }
 
-    if (!subRel || SECRET_PATH_RE.test(subRel)) {
+    if (!subRel || (!isAllowedDraftDoc && SECRET_PATH_RE.test(subRel))) {
       throw new ForbiddenError("Access to protected or secret paths is forbidden");
     }
 
@@ -5160,8 +5171,13 @@ export class KizukiVaultApi {
 
     const { relPath, fullPath } = await this.validateVaultDocPath(req.path, { mustExist: false });
     if (!isEditableVaultDocPath(relPath)) {
+      if (/^world\/people\//i.test(relPath)) {
+        throw new ForbiddenError(
+          "Direct overwrite of canonical world/people/* is forbidden; save to .kizuki/drafts/people/<safe-slug>.md and promote via Core receipted writer"
+        );
+      }
       throw new ForbiddenError(
-        "Write restricted to owner-anchors.md, owner-notes.md, owner-notes/<safe-slug>.md, or world/people/<safe-slug>.md"
+        "Write restricted to owner-anchors.md, owner-notes.md, owner-notes/<safe-slug>.md, or .kizuki/drafts/people/<safe-slug>.md"
       );
     }
 
@@ -8484,6 +8500,8 @@ export class KizukiVaultApi {
       model: synth.model,
       latency_ms,
       card_path: written.card_path,
+      draft: written.draft,
+      target_canon_path: written.target_canon_path,
       dossier,
     };
   }
@@ -8533,6 +8551,8 @@ export class KizukiVaultApi {
     return {
       ok: true,
       card_path: result.card_path,
+      draft: result.draft,
+      target_canon_path: result.target_canon_path,
       note_line: result.note_line,
       dossier,
     };

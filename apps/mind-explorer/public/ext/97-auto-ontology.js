@@ -33,7 +33,9 @@
 
   async function apiJson(url, opts) {
     if (typeof fetch !== 'function') return null;
-    const res = await fetch(url, { headers: { Accept: 'application/json', ...(opts?.headers || {}) }, ...opts });
+    const m = String(opts?.method || 'GET').toUpperCase();
+    const h = { Accept: 'application/json', ...(m !== 'GET' && m !== 'HEAD' ? { 'X-Kizuki-Request': '1' } : {}), ...(opts?.headers || {}) };
+    const res = await fetch(url, { ...opts, headers: h });
     const text = await res.text();
     let data = null;
     try { data = JSON.parse(text); } catch { data = { ok: false, error: text }; }
