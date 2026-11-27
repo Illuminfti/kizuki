@@ -27,6 +27,5 @@ export const describeFragment: McpWorldOp = {
         .max(128),
     },
   },
-  summary:
-    "describe: build kinds/keys/schemas; no counts or past knownAt.",
+  summary: "describe: kinds/keys/schemas.",
 };

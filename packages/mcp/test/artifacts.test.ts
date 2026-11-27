@@ -7,7 +7,7 @@ test("MCP and real HTTP preserve artifact version bindings with unchanged tool c
   try {
     const item = await f.capture("Captured exact artifact"), ref = item.ref();
     const client = await connectClient(f.ctx, close), listed = await client.listTools();
-    expect(listed.tools).toHaveLength(14);
+    expect(listed.tools).toHaveLength(18);
     expect(listed.tools.map(tool => tool.name)).not.toContain("report_outcome");
     expect(Buffer.byteLength(JSON.stringify(listed))).toBeLessThan(40 * 1024);
     for (const input of [

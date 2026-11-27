@@ -1,0 +1,12 @@
+{
+  "name": "@kizuki/ontology",
+  "version": "1.0.2",
+  "type": "module",
+  "module": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@kizuki/core": "workspace:*"
+  }
+}

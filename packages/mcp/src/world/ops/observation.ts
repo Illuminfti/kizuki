@@ -9,5 +9,5 @@ export const observationFragment: McpWorldOp = {
     fidelity: z.enum(["verbatim_text", "source_metadata", "lossy_transcript"]), occurred: worldRelation.shape.valid,
     sourceObservedAt: z.string().nullable(), admittedAt: z.string(),
   } },
-  summary: "observation: source-faithful selection; roles are source assertions, not identity; full evidence included.",
+  summary: "observation: source-faithful roles and full evidence.",
 };

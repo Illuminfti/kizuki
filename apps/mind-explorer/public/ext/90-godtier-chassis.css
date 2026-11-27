@@ -1,0 +1,482 @@
+/* ==========================================================================
+   KIZUKI MIND OS - GOD-TIER MACHINED CHASSIS & PHYSICAL TACTILE LAYER
+   Anodized Obsidian & Brushed Swiss Porcelain Instrument Finish
+   Strictly layered in @layer overrides:
+   - Clean cascade overrides, tokenized type scale only, zero compositor spam
+   - Strict 0px CLS under ?detail=on|off and prefers-reduced-motion
+   ========================================================================== */
+
+@layer overrides {
+  /* ------------------------------------------------------------------------
+     1. ARCHITECTURAL CHASSIS STUDIO LIGHT & MACHINED DIVIDERS
+     ------------------------------------------------------------------------ */
+  #app-shell,
+  .os-main,
+  .main-stage {
+    background-color: var(--elev-0);
+    background-image: var(--chassis-ambient);
+    background-repeat: no-repeat;
+  }
+
+  .os-sidebar {
+    background-color: var(--elev-1);
+    background-image: var(--chassis-rail-light);
+    background-repeat: no-repeat;
+    border-right: 1px solid var(--border-hairline);
+    box-shadow: inset -1px 0 0 var(--chassis-divider-edge);
+  }
+
+  .os-brand-bar {
+    border-bottom: 1px solid var(--border-hairline);
+    box-shadow: inset 0 -1px 0 var(--chassis-divider-edge);
+  }
+
+  .os-rail-bottom {
+    background-color: var(--elev-1);
+    border-top: 1px solid var(--border-hairline);
+    box-shadow: inset 0 1px 0 var(--chassis-divider-edge);
+  }
+
+  html[data-theme="light"] .os-sidebar {
+    background-color: var(--elev-1);
+    border-right-color: var(--border-hairline);
+  }
+
+  /* ------------------------------------------------------------------------
+     2. SIDEBAR RECESSED INSTRUMENT SEARCH SLOT (Search Cmd+K)
+     ------------------------------------------------------------------------ */
+  .os-search-trigger {
+    background-color: var(--elev-0);
+    border: 1px solid var(--border-hairline);
+    border-radius: var(--r-sm);
+    box-shadow: var(--bevel-well);
+    color: var(--ink-secondary);
+    transition:
+      border-color var(--dur-fast) var(--ease-out),
+      background-color var(--dur-fast) var(--ease-out),
+      box-shadow var(--dur-fast) var(--ease-out),
+      color var(--dur-fast) var(--ease-out);
+  }
+
+  .os-search-trigger:hover {
+    background-color: var(--elev-1);
+    border-color: var(--border-strong);
+    box-shadow: var(--bevel-top), 0 1px 3px oklch(0 0 0 / 0.24);
+    color: var(--ink-primary);
+  }
+
+  .os-search-trigger:active {
+    background-color: var(--elev-0);
+    box-shadow: var(--bevel-well);
+  }
+
+  html[data-theme="light"] .os-search-trigger {
+    background-color: var(--elev-2);
+    border-color: var(--border-hairline);
+    box-shadow: var(--bevel-well);
+  }
+
+  html[data-theme="light"] .os-search-trigger:hover {
+    background-color: var(--elev-1);
+    border-color: var(--border-strong);
+    box-shadow: var(--bevel-top), 0 1px 3px rgba(15, 23, 42, 0.08);
+  }
+
+  /* ------------------------------------------------------------------------
+     3. NAVIGATION RAIL CRAFT (Luminous Left Jewel Pip + Anodized Plate)
+     ------------------------------------------------------------------------ */
+  .os-nav-btn {
+    position: relative;
+    padding: 0 8px 0 11px;
+    border-radius: var(--r-sm);
+    border: 1px solid transparent;
+    transition:
+      background-color var(--dur-fast) var(--ease-out),
+      border-color var(--dur-fast) var(--ease-out),
+      box-shadow var(--dur-fast) var(--ease-out),
+      color var(--dur-fast) var(--ease-out);
+  }
+
+  .os-nav-btn::before {
+    content: "";
+    position: absolute;
+    left: 3px;
+    top: 50%;
+    width: 4px;
+    height: 4px;
+    border-radius: var(--radius-pill);
+    background-color: var(--nav-jewel);
+    box-shadow: 0 0 0 2px var(--nav-jewel-halo);
+    transform: translateY(-50%) scale(0);
+    opacity: 0;
+    transition:
+      transform var(--dur-med) var(--ease-out),
+      opacity var(--dur-fast) var(--ease-out);
+  }
+
+  .os-nav-btn:hover {
+    background-color: var(--elev-2);
+    border-color: var(--border-subtle);
+    color: var(--ink-primary);
+  }
+
+  .os-nav-btn.is-active {
+    background-color: var(--elev-2);
+    border-color: var(--border-strong);
+    box-shadow: var(--bevel-top), 0 2px 6px -2px oklch(0 0 0 / 0.42);
+    color: var(--ink-primary);
+  }
+
+  .os-nav-btn.is-active::before {
+    transform: translateY(-50%) scale(1);
+    opacity: 1;
+  }
+
+  .os-nav-count {
+    min-width: 24px;
+    padding: 1px 5px;
+    border-radius: 4px;
+    text-align: right;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: var(--t-xs);
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+  }
+
+  .os-nav-btn.is-active .os-nav-count {
+    background-color: var(--elev-3);
+    box-shadow: var(--bevel-top);
+    color: var(--ink-primary);
+  }
+
+  html[data-theme="light"] .os-nav-btn:hover {
+    background-color: var(--elev-2);
+    border-color: var(--border-subtle);
+  }
+
+  html[data-theme="light"] .os-nav-btn.is-active {
+    background-color: var(--elev-1);
+    border-color: var(--border-strong);
+    box-shadow: var(--bevel-top), 0 1px 4px rgba(15, 23, 42, 0.08);
+    color: var(--ink-primary);
+  }
+
+  html[data-theme="light"] .os-nav-btn.is-active .os-nav-count {
+    background-color: var(--elev-2);
+    box-shadow: var(--bevel-well);
+  }
+
+  /* ------------------------------------------------------------------------
+     4. MACHINED BEVEL PHYSICS (Raised Plates & Recessed Instrument Wells)
+     ------------------------------------------------------------------------ */
+  .brief-hero,
+  .dossier-hero {
+    position: relative;
+    background-color: var(--elev-1);
+    border: 1px solid var(--border-hairline);
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-machined-plate);
+  }
+
+  .dossier-hero {
+    padding: var(--sp-4) var(--sp-5);
+  }
+
+  .tr-radar-shell,
+  .taste-card,
+  .taste-option-card,
+  .codex-card,
+  .eb-composer-dock,
+  .eb-composer,
+  .kos-pulse-strip,
+  .tr-card {
+    position: relative;
+    box-shadow: var(--shadow-machined-plate);
+  }
+
+  .codex-card:hover,
+  .taste-card:hover,
+  .taste-option-card:hover,
+  .tr-card:hover {
+    box-shadow: var(--shadow-machined-lift);
+  }
+
+  /* Recessed wells for inputs, tracks, progress troughs, and filter bars */
+  input[type="search"],
+  .search-input,
+  .filter-input,
+  .codex-search-input,
+  .people-search-input,
+  .vault-search-input,
+  .stream-search-input,
+  .whoop-bar-track,
+  .codex-leverage-track,
+  .codex-progress-track,
+  .filter-bar,
+  .segmented-control {
+    box-shadow: var(--bevel-well);
+  }
+
+  input[type="search"],
+  .search-input,
+  .filter-input,
+  .codex-search-input,
+  .people-search-input,
+  .vault-search-input,
+  .stream-search-input {
+    background-color: var(--elev-0);
+    border-color: var(--border-hairline);
+  }
+
+  html[data-theme="light"] input[type="search"],
+  html[data-theme="light"] .search-input,
+  html[data-theme="light"] .filter-input,
+  html[data-theme="light"] .codex-search-input,
+  html[data-theme="light"] .people-search-input,
+  html[data-theme="light"] .vault-search-input,
+  html[data-theme="light"] .stream-search-input {
+    background-color: var(--elev-2);
+  }
+
+  /* ------------------------------------------------------------------------
+     5. PHYSICAL SCULPTED KEYCAPS (Anodized Skirt Shadow + Press Depression)
+     ------------------------------------------------------------------------ */
+  kbd,
+  .kbd,
+  .kbd-hint,
+  .tr-kbd,
+  .tr-rank-kbd,
+  .taste-keycap,
+  .cmdp-mode-tab kbd,
+  .cmdp-footer kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 19px;
+    height: 19px;
+    padding: 0 5px;
+    border-radius: 5px;
+    border: 1px solid var(--keycap-border);
+    background: var(--keycap-bg);
+    color: var(--keycap-ink);
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: var(--t-xs);
+    font-weight: 500;
+    line-height: 1;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    vertical-align: middle;
+    box-shadow:
+      inset 0 1px 0 var(--keycap-top-glint),
+      0 2px 0 var(--keycap-shadow);
+    transform: translateY(0);
+    transition:
+      transform 70ms var(--ease-out),
+      box-shadow 70ms var(--ease-out),
+      border-color 110ms var(--ease-out),
+      color 110ms var(--ease-out);
+  }
+
+  kbd.is-key-pressed,
+  .kbd.is-key-pressed,
+  .kbd-hint.is-key-pressed,
+  .tr-kbd.is-key-pressed,
+  .tr-rank-kbd.is-key-pressed,
+  .taste-keycap.is-key-pressed,
+  .cmdp-mode-tab kbd.is-key-pressed,
+  .cmdp-footer kbd.is-key-pressed {
+    transform: translateY(1.5px);
+    border-color: var(--accent-blue);
+    color: var(--ink-primary);
+    box-shadow:
+      inset 0 1px 2px oklch(0 0 0 / 0.45),
+      0 0 0 var(--keycap-shadow);
+  }
+
+  html[data-theme="light"] kbd.is-key-pressed,
+  html[data-theme="light"] .kbd.is-key-pressed,
+  html[data-theme="light"] .kbd-hint.is-key-pressed,
+  html[data-theme="light"] .tr-kbd.is-key-pressed,
+  html[data-theme="light"] .tr-rank-kbd.is-key-pressed,
+  html[data-theme="light"] .taste-keycap.is-key-pressed,
+  html[data-theme="light"] .cmdp-mode-tab kbd.is-key-pressed,
+  html[data-theme="light"] .cmdp-footer kbd.is-key-pressed {
+    box-shadow:
+      inset 0 1px 2px rgba(15, 23, 42, 0.22),
+      0 0 0 var(--keycap-shadow);
+  }
+
+  /* ------------------------------------------------------------------------
+     6. POINTER-TRACKED 1PX SPECULAR RIM HIGHLIGHT (Hover-Capable, Detail On)
+     ------------------------------------------------------------------------ */
+  @media (hover: hover) and (pointer: fine) {
+    html:not([data-detail="off"]) [data-tactile-rim],
+    html:not([data-detail="off"]) .brief-hero,
+    html:not([data-detail="off"]) .dossier-hero,
+    html:not([data-detail="off"]) .tr-radar-shell,
+    html:not([data-detail="off"]) .tr-card,
+    html:not([data-detail="off"]) .codex-card,
+    html:not([data-detail="off"]) .taste-card,
+    html:not([data-detail="off"]) .taste-option-card,
+    html:not([data-detail="off"]) .eb-mesh-shell,
+    html:not([data-detail="off"]) .cmdp-modal {
+      position: relative;
+    }
+
+    html:not([data-detail="off"]) [data-tactile-rim]::after,
+    html:not([data-detail="off"]) .brief-hero::after,
+    html:not([data-detail="off"]) .dossier-hero::after,
+    html:not([data-detail="off"]) .tr-radar-shell::after,
+    html:not([data-detail="off"]) .tr-card::after,
+    html:not([data-detail="off"]) .codex-card::after,
+    html:not([data-detail="off"]) .taste-card::after,
+    html:not([data-detail="off"]) .taste-option-card::after,
+    html:not([data-detail="off"]) .eb-mesh-shell::after,
+    html:not([data-detail="off"]) .cmdp-modal::after {
+      content: "";
+      position: absolute;
+      inset: -1px;
+      border-radius: inherit;
+      padding: 1px;
+      pointer-events: none;
+      opacity: 0;
+      z-index: 2;
+      background: radial-gradient(
+        220px circle at var(--gx, 50%) var(--gy, 0%),
+        var(--rim-specular-color),
+        var(--rim-specular-soft) 46%,
+        transparent 72%
+      );
+      -webkit-mask:
+        linear-gradient(#000 0 0) content-box,
+        linear-gradient(#000 0 0);
+      -webkit-mask-composite: xor;
+      mask:
+        linear-gradient(#000 0 0) content-box,
+        linear-gradient(#000 0 0);
+      mask-composite: exclude;
+      transition: opacity var(--dur-fast) var(--ease-out);
+    }
+
+    html:not([data-detail="off"]) [data-tactile-rim][data-rim-active="1"]::after,
+    html:not([data-detail="off"]) .brief-hero[data-rim-active="1"]::after,
+    html:not([data-detail="off"]) .dossier-hero[data-rim-active="1"]::after,
+    html:not([data-detail="off"]) .tr-radar-shell[data-rim-active="1"]::after,
+    html:not([data-detail="off"]) .tr-card[data-rim-active="1"]::after,
+    html:not([data-detail="off"]) .codex-card[data-rim-active="1"]::after,
+    html:not([data-detail="off"]) .taste-card[data-rim-active="1"]::after,
+    html:not([data-detail="off"]) .taste-option-card[data-rim-active="1"]::after,
+    html:not([data-detail="off"]) .eb-mesh-shell[data-rim-active="1"]::after,
+    html:not([data-detail="off"]) .cmdp-modal[data-rim-active="1"]::after {
+      opacity: 1;
+    }
+  }
+
+  /* ------------------------------------------------------------------------
+     7. SUBTRACTION PROOF (html[data-detail="off"]) - STRICT 0PX CLS
+     Removes optical lighting, specular bevels, and rim sheen while preserving
+     identical box dimensions, borders, and padding.
+     ------------------------------------------------------------------------ */
+  html[data-detail="off"] #app-shell,
+  html[data-detail="off"] .os-main,
+  html[data-detail="off"] .main-stage,
+  html[data-detail="off"] .os-sidebar {
+    background-image: none;
+    box-shadow: none;
+  }
+
+  html[data-detail="off"] .os-brand-bar,
+  html[data-detail="off"] .os-rail-bottom,
+  html[data-detail="off"] .os-search-trigger,
+  html[data-detail="off"] .os-nav-btn.is-active,
+  html[data-detail="off"] .os-nav-btn.is-active .os-nav-count,
+  html[data-detail="off"] .brief-hero,
+  html[data-detail="off"] .dossier-hero,
+  html[data-detail="off"] .tr-radar-shell,
+  html[data-detail="off"] .tr-card,
+  html[data-detail="off"] .taste-card,
+  html[data-detail="off"] .taste-option-card,
+  html[data-detail="off"] .codex-card,
+  html[data-detail="off"] .eb-composer-dock,
+  html[data-detail="off"] .eb-composer,
+  html[data-detail="off"] .kos-pulse-strip,
+  html[data-detail="off"] input[type="search"],
+  html[data-detail="off"] .search-input,
+  html[data-detail="off"] .filter-input,
+  html[data-detail="off"] .codex-search-input,
+  html[data-detail="off"] .whoop-bar-track,
+  html[data-detail="off"] .codex-leverage-track,
+  html[data-detail="off"] .codex-progress-track,
+  html[data-detail="off"] kbd,
+  html[data-detail="off"] .kbd,
+  html[data-detail="off"] .kbd-hint,
+  html[data-detail="off"] .tr-kbd,
+  html[data-detail="off"] .tr-rank-kbd,
+  html[data-detail="off"] .taste-keycap,
+  html[data-detail="off"] .cmdp-mode-tab kbd,
+  html[data-detail="off"] .cmdp-footer kbd {
+    box-shadow: none;
+  }
+
+  html[data-detail="off"] kbd,
+  html[data-detail="off"] .kbd,
+  html[data-detail="off"] .kbd-hint,
+  html[data-detail="off"] .tr-kbd,
+  html[data-detail="off"] .tr-rank-kbd,
+  html[data-detail="off"] .taste-keycap,
+  html[data-detail="off"] .cmdp-mode-tab kbd,
+  html[data-detail="off"] .cmdp-footer kbd {
+    background: var(--elev-2);
+  }
+
+  html[data-detail="off"] .os-nav-btn::before {
+    box-shadow: none;
+  }
+
+  html[data-detail="off"] [data-tactile-rim]::after,
+  html[data-detail="off"] .brief-hero::after,
+  html[data-detail="off"] .dossier-hero::after,
+  html[data-detail="off"] .tr-radar-shell::after,
+  html[data-detail="off"] .tr-card::after,
+  html[data-detail="off"] .codex-card::after,
+  html[data-detail="off"] .taste-card::after,
+  html[data-detail="off"] .taste-option-card::after,
+  html[data-detail="off"] .eb-mesh-shell::after,
+  html[data-detail="off"] .cmdp-modal::after {
+    display: none;
+  }
+
+  /* ------------------------------------------------------------------------
+     8. REDUCED MOTION GUARDRAIL
+     ------------------------------------------------------------------------ */
+  @media (prefers-reduced-motion: reduce) {
+    .os-search-trigger,
+    .os-nav-btn,
+    .os-nav-btn::before,
+    kbd,
+    .kbd,
+    .kbd-hint,
+    .tr-kbd,
+    .tr-rank-kbd,
+    .taste-keycap,
+    .cmdp-mode-tab kbd,
+    .cmdp-footer kbd {
+      transition: none;
+    }
+
+    [data-tactile-rim]::after,
+    .brief-hero::after,
+    .dossier-hero::after,
+    .tr-radar-shell::after,
+    .tr-card::after,
+    .codex-card::after,
+    .taste-card::after,
+    .taste-option-card::after,
+    .eb-mesh-shell::after,
+    .cmdp-modal::after {
+      display: none;
+    }
+  }
+}

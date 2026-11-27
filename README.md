@@ -10,7 +10,7 @@ Every fresh agent starts cold. Kizuki turns the sources you choose into a local,
 
 Local-first · Source-linked · Reversible · Harness-neutral
 
-[How it works](#how-kizuki-works) · [Quick start](#quick-start) · [Agents](#bring-your-agents) · [Architecture](#architecture) · [Vision](#the-vision) · [Status](#status)
+[How it works](#how-kizuki-works) · [Quick start](#quick-start) · [Frontends](#optional-frontends) · [Agents](#bring-your-agents) · [Architecture](#architecture) · [Vision](#the-vision) · [Status](#status)
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-2563eb)](LICENSE)
 [![Release: 1.0.2](https://img.shields.io/badge/release-1.0.2-64748b)](#status)
@@ -140,8 +140,39 @@ Importing does **not** write canon. Without a configured model, expect `canon wr
 
 - **Local CPU semantic search (opt-in, off by default):** Run the bundled loopback-only CPU embedding service in [`deploy/local-embed`](deploy/local-embed/README.md) (`BAAI/bge-small-en-v1.5`, 384d, OpenAI and Ollama wire contracts) and configure `kizuki.retrieval.embedded-pg` with `kizuki.embedding.local-http` in `<vault>/.kizuki/serve.toml`. See [semantic retrieval setup and limits](docs/cli.md#semantic-retrieval-embedding-port).
 - **Dual-system procedural memory (`@kizuki/memt`):** Use `kizuki memt status`, `kizuki memt experience add`, and `kizuki memt recall` to store and retrieve verified procedural experiences under sensitivity ceilings and purge-custody tracking. Without a GPU backend, MemT runs automatically in `local-hybrid` mode; when an optional MemT-1.0 SGLang GPU server is online, `kizuki memt sync` internalizes experiences into verified `.safetensors` KV snapshots. See [`kizuki memt`](docs/cli.md#memt).
+- **Compiled semantic ontology (`@kizuki/ontology`):** Zero-model, local-first semantic layer (`<vault>/.kizuki/ontology.sqlite`) with incremental compilation, prefix/twin term-family detection, data-confirmed semantic join paths, pre-flight answerability and coverage grading (`kizuki ontology check` / MCP `ontology_check_answerable`), sticky owner certifications with undoable receipts, and Apache Ossie YAML/JSON import and export (`kizuki ontology export --format ossie-yaml`).
+- **Optional rich frontends (`apps/mind-explorer` and `apps/mind-rune`):** Standalone web and native Rust GPU workspaces for browsing a local Kizuki vault. See [Optional frontends](#optional-frontends) below.
 
 [Full CLI reference](docs/cli.md)
+
+## Optional frontends
+
+`kizuki app` remains the built-in guided local app inside the core package. For users who want a standalone multi-view web workspace or a native GPU desktop client over a local vault, this repository also ships two optional frontends under `apps/`:
+
+| Frontend | Path | Stack | What it provides |
+| --- | --- | --- | --- |
+| **Mind Explorer (Web)** | [`apps/mind-explorer`](apps/mind-explorer/README.md) | Bun HTTP server + zero-dependency browser UI | Local-only multi-view workspace (Today, Flow Deck, Board, People, Taste, Codex, AI Live), sub-millisecond cached reads, live SSE delta stream, `Cmd+K` command palette, `Alt+O` Auto-Ontology Studio (compiler, pre-flight answerability checker, join-path tracer, one-click certification, Ossie YAML export), `Alt+I` local AI process observatory, `Alt+U` tactile UI studio drawer, and WCAG-audited dark/light themes. |
+| **Mind OS Rune (Native GPU)** | [`apps/mind-rune`](apps/mind-rune/README.md) | Rust (`#![forbid(unsafe_code)]`) + Anomaly Rune GPU | Native macOS/Linux desktop client with unified macOS titlebar, anodized graphite dark and warm-neutral porcelain light palettes, Flow Deck Sankey ribbons, 3-pane Board workspace, Today 24h Day Dial, Mind 8-axis Taste Radar + log-time People Cadence ribbon, AI Live conduit manifold, and automated headless restraint checks. |
+
+### Run Mind Explorer (Web)
+
+Point `KIZUKI_VAULT` at your local vault directory (defaults to `~/Kizuki`) and start the loopback server on `127.0.0.1:8797`:
+
+```bash
+cd apps/mind-explorer
+KIZUKI_VAULT=/path/to/your/vault bun run start
+```
+
+### Run Mind OS Rune (Native GPU desktop)
+
+Build with Cargo and connect to a running `apps/mind-explorer` instance (or pass `--offline` to preview with the bundled synthetic snapshot):
+
+```bash
+cd apps/mind-rune
+cargo run --release -- --api http://127.0.0.1:8797
+```
+
+Both frontends stay strictly local-first: `apps/mind-explorer` binds to `127.0.0.1` by default, reads only local vault/workspace state you point it at, and sends zero telemetry. They are optional workspace apps outside the core `packages/*` release archive.
 
 ## Bring your agents
 
@@ -323,7 +354,7 @@ When invoking `hook session-start` from a **source checkout**, use the isolated 
 
 Full harness recipes, troubleshooting, and security invariants live in the [harness integration guide](docs/integrations.md) and [MCP serving reference](docs/cli.md#mcp-not-a-cli-verb).
 
-### The 14-tool MCP surface
+### The 18-tool MCP surface
 
 `tools/list` dynamically advertises **only** the tools permitted by the principal's live grant (read from the ledger on every listing); calling an ungranted tool still reaches Core, where it is refused and audited. Token sessions default to `kizuki.envelope/v2` with principal-bound opaque references instead of raw internal IDs.
 
@@ -343,6 +374,10 @@ Full harness recipes, troubleshooting, and security invariants live in the [harn
 | | `memt_recall` | Fuse authorized System 2 Kizuki evidence with System 1 procedural experiences under the caller's sensitivity ceiling. | Derived: `search` + `context_packet` |
 | | `memt_experience` | Record, search, or verify scoped procedural experiences (`action=record\|search\|verify`). | Derived: `propose` (or `search` + `context_packet` for read-only `search`) |
 | | `memt_snapshot` | Inspect `.safetensors` purge custody or internalize authorized partitions into MemT-1.0 KV snapshots (`action=inspect\|check\|export\|sync`). | Derived: `system_health` + `propose` |
+| **`@kizuki/ontology` (4)** | `ontology_status` | Inspect compiled semantic ontology stats (terms, certified count, term families, data-confirmed relations, metrics, readiness). | Derived: `system_health` |
+| | `ontology_search` | Two-tier budget-bounded semantic retrieval over compiled ontology terms, relations, and metrics under caller ceiling and subject scope. | Derived: `search` + `context_packet` |
+| | `ontology_check_answerable` | Pre-flight answerability and coverage check returning verdict, coverage ratio, resolved terms, multi-hop join paths, and explicit missing gaps. | Derived: `search` + `context_packet` |
+| | `ontology_certify` | Certify or refine an ontology term definition and synonyms with an auditable receipt that survives incremental recompiles. | Derived: `propose` |
 
 - **Zero widening for procedural memory:** The four `@kizuki/memt` tools inherit the caller's existing core tool allowlist and sensitivity ceiling rather than introducing a parallel permission model. Without a GPU backend online, MemT automatically runs in `local-hybrid` mode; `context_packet` also enriches briefs best-effort with matching verified/observed experiences when budget remains. See [`kizuki memt`](docs/cli.md#memt).
 - **Principal-bound world references:** Every object token and cursor returned by `world_view` (including bounded [World Slices](docs/world/slice.md)) is cryptographically bound to the calling principal and grant epoch. Changing or revoking a grant invalidates prior tokens; foreign, erased, or inaccessible references return `not_found` rather than leaking existence.

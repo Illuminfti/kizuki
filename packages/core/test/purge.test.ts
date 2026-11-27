@@ -1222,4 +1222,24 @@ describe("purgeEvents", () => {
     ).toBe(true);
     db.close();
   });
+
+  test("invalidates derived ontology.sqlite and WAL/SHM files during purge", () => {
+    const db = openLedger(":memory:");
+    const vaultPath = temporaryVault();
+    const target = storedEvent(db, event("ontology-purge-target"));
+    const base = join(vaultPath, ".kizuki", "ontology.sqlite");
+    writeFileSync(base, "stale-ontology");
+    writeFileSync(`${base}-wal`, "stale-wal");
+    writeFileSync(`${base}-shm`, "stale-shm");
+    expect(existsSync(base)).toBe(true);
+    expect(existsSync(`${base}-wal`)).toBe(true);
+    expect(existsSync(`${base}-shm`)).toBe(true);
+
+    purgeEvents(db, vaultPath, { event_id: target.event_id }, "erase derived ontology");
+
+    expect(existsSync(base)).toBe(false);
+    expect(existsSync(`${base}-wal`)).toBe(false);
+    expect(existsSync(`${base}-shm`)).toBe(false);
+    db.close();
+  });
 });

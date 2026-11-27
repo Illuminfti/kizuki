@@ -271,7 +271,7 @@ async function stdioClient(vault: string, token: string): Promise<ContinuityClie
     const tools = (listed.result as { tools?: { name: string; outputSchema?: ListedSchema }[] } | undefined)?.tools;
     expect(tools?.length).toBeGreaterThan(0);
     for (const tool of tools ?? []) {
-      if (tool.name.startsWith("memt_")) {
+      if (tool.name.startsWith("memt_") || tool.name.startsWith("ontology_")) {
         expect(tool.outputSchema?.required).toContain("schema");
         expect(tool.outputSchema?.properties?.schema).toEqual({ type: "string" });
       } else if (tool.name === "world_view") {

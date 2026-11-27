@@ -16,5 +16,5 @@ export const diffFragment: McpWorldOp = {
       truncated: z.boolean(),
     },
   },
-  summary: "diff: of+same-query priorView; changes, incomplete card or new_view_required.",
+  summary: "diff: of+priorView changes.",
 };

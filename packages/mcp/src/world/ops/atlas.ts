@@ -11,5 +11,5 @@ const change = z.strictObject({ added: z.array(claim).max(128), removed: z.array
 export const atlasFragment: McpWorldOp = {
   name: "atlas", fields: { panel: z.enum(panels).optional(), focus: z.strictObject({ operation: z.enum(operations), ref: WORLD_OBJECT_REF, card: z.literal("kizuki.situation-card/v2").optional() }).optional(), baselineView: view.optional() },
   data: { "kizuki.atlas/v1": { panel: z.enum(panels), panels: z.array(z.strictObject({ panel: z.enum(["resume", "changed", "people", "questions", "commitments", "stale", "corrections"]), title: z.string().max(400), status: z.enum(["ready", "empty", "partial", "unavailable"]), reason: z.enum(["not_landed", "baseline_required", "baseline_unusable", "budget", "storage", "history"]).nullable(), entries: z.array(entry).max(4), change: change.nullable(), nextView: view.nullable(), coverage: worldCoverage })).min(1).max(7), coverage: worldCoverage } },
-  summary: "atlas: panel; changed/corrections need focus+baselineView; missing providers stay unavailable.",
+  summary: "atlas: panel; changed/corrections need focus+baselineView.",
 };

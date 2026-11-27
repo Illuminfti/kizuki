@@ -12,18 +12,18 @@ export const procedureFragment: McpWorldOp = { name: "procedure", fields: { proc
     evidenceStrength: z.strictObject({ assertions: relations }), taskUsefulness: usefulness,
     applicability: z.strictObject({ appliesTo: relations, prerequisites: relations, requiredCapabilities: relations, counterexamples: relations }),
     freshness: z.strictObject({ status: z.enum(["unknown", "recorded"]), lastValidated: relations }), executionAuthority: z.literal("none"), } },
-  summary: "procedure: quoted steps, scope, freshness, usefulness; no execution authority.", };
+  summary: "procedure: quoted steps/scope/freshness.", };
 export const findProceduresFragment: McpWorldOp = { name: "find_procedures", fields: { label: LABEL, cursor: CURSOR, about: ABOUT },
   data: { "kizuki.procedure-matches/v1": { matches: z.array(z.strictObject({ ref: WORLD_OBJECT_REF, labels: z.array(z.string().max(400)).max(256) })).max(32), cursor: WIRE_TOKEN.nullable(), coverage: worldCoverage } },
-  summary: "find_procedures: label/about pages; retrieval cannot raise confidence.", };
+  summary: "find_procedures: label/about pages.", };
 export const skillFragment: McpWorldOp = { name: "skill", fields: { skill: WORLD_OBJECT_REF.optional() },
   data: { "kizuki.skill-card/v1": { skill: worldNode("skill"), ...worldCommon, selfReport: relations, exposure: relations, explanation: relations, application: relations, observedOutcome: relations,
     demonstrations: relations, about: relations, outcomes: relations, lastValidated: relations, mastery: z.literal("unknown"), taskUsefulness: usefulness } },
-  summary: "skill separates learning evidence; independent mastery stays unknown.", };
+  summary: "skill: learning evidence; mastery stays unknown.", };
 export const frameworkFragment: McpWorldOp = { name: "framework", fields: { framework: WORLD_OBJECT_REF.optional() },
   data: { "kizuki.framework-card/v1": { framework: worldNode("framework"), ...worldCommon, purpose: relations, components: relations, assumptions: relations, applicability: relations, failureModes: relations, lifecycle: relations } },
-  summary: "framework: nested components/adoption; no cycles.", };
+  summary: "framework: acyclic components/adoption.", };
 
 export const outcomeFragment: McpWorldOp = { name: "outcome", fields: { subject: z.string().min(1).max(256).optional() },
   data: { "kizuki.outcome-card/v1": { stages: z.array(z.strictObject({ claim: worldRef("claim"), stage: z.enum(["agent_reported", "provider_acknowledged", "observed", "reviewed"]), evidence: outcomeEvidence.nullable(), quoted: z.string().max(1024), independent: z.boolean() })).max(128), evaluations: z.array(evaluation).max(128), goalAchieved: z.boolean(), coverage: worldCoverage } },
-  summary: "outcome separates four stages; achievement needs matched independent evidence.", };
+  summary: "outcome: 4 stages; achievement needs independent evidence.", };

@@ -16,5 +16,5 @@ export const sliceFragment: McpWorldOp = {
       z.strictObject({ kind, status: z.literal("unavailable"), reason: z.enum(["not_landed", "extraction_off"]) })])).max(16),
     complete: z.boolean(), truncated: z.boolean(), coverage: worldCoverage,
   } },
-  summary: "slice: task, budgetTokens, optional kinds; whole constraints and explicit gaps.",
+  summary: "slice: task, budgetTokens, kinds; whole constraints.",
 };

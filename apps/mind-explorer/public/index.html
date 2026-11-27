@@ -1,0 +1,1308 @@
+<!doctype html>
+<html lang="en" data-detail="on" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <title>Kizuki Mind OS</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23000000'/%3E%3Cpath d='M16 7L26 24H6L16 7Z' fill='%23ededed'/%3E%3C/svg%3E">
+  <link rel="preload" href="/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/geist-mono-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <style id="kizuki-local-fonts">
+    @font-face {
+      font-family: 'Geist';
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+      src: url('/fonts/geist-latin-wght-normal.woff2') format('woff2');
+      unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+    }
+    @font-face {
+      font-family: 'Geist';
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+      src: url('/fonts/geist-latin-ext-wght-normal.woff2') format('woff2');
+      unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+    }
+    @font-face {
+      font-family: 'Geist Mono';
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+      src: url('/fonts/geist-mono-latin-wght-normal.woff2') format('woff2');
+      unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+    }
+    @font-face {
+      font-family: 'Geist Mono';
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+      src: url('/fonts/geist-mono-latin-ext-wght-normal.woff2') format('woff2');
+      unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+    }
+    @font-face {
+      font-family: 'Geist Mono';
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+      src: url('/fonts/geist-mono-symbols2-wght-normal.woff2') format('woff2');
+      unicode-range: U+2000-2001,U+2004-2008,U+200A,U+23B8-23BD,U+2500-259F;
+    }
+  </style>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/craft-lift.css">
+  <link rel="stylesheet" href="/taste-studio.css">
+  <link rel="stylesheet" href="/master-lift.css">
+  <link rel="stylesheet" href="/agent-board.css">
+  <link rel="stylesheet" href="/board-deep.css">
+  <link rel="stylesheet" href="/kinetic-depth.css">
+</head>
+<body>
+  <div class="app-shell os-shell" id="app-shell" data-active-view="today">
+    <!-- Mobile-First Top Bar (<= 960px) -->
+    <header class="mobile-topbar" id="mobile-topbar" role="banner">
+      <div class="mobile-topbar-left">
+        <button type="button" class="icon-toggle-btn mobile-menu-btn" id="btn-mobile-menu" aria-label="Open navigation menu" aria-expanded="false" aria-controls="os-sidebar">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M2.5 4.25H13.5M2.5 8H13.5M2.5 11.75H13.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <button type="button" class="brand-lockup mobile-brand-lockup" id="btn-mobile-home" aria-label="Go to Today">
+          <svg class="brand-mark" width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M8 1.75L14.5 13.25H1.5L8 1.75Z" fill="currentColor"/>
+          </svg>
+          <span class="brand-title">kizuki</span>
+          <span class="crumb-slash" aria-hidden="true">/</span>
+          <span class="brand-sub">mind</span>
+        </button>
+      </div>
+      <div class="mobile-topbar-right">
+        <button type="button" class="mobile-whoop-pill tabular" id="mobile-whoop-pill" title="Latest Whoop recovery">
+          <span class="whoop-dot" aria-hidden="true"></span>
+          <span id="mobile-whoop-text">--</span>
+        </button>
+        <button type="button" class="icon-toggle-btn" id="btn-mobile-ontology" aria-label="Open Auto-Ontology Studio" title="Auto-Ontology Studio (Alt+O)">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <circle cx="4" cy="4.5" r="1.8" stroke="currentColor" stroke-width="1.3"/>
+            <circle cx="12" cy="4.5" r="1.8" stroke="currentColor" stroke-width="1.3"/>
+            <circle cx="8" cy="12" r="1.8" stroke="currentColor" stroke-width="1.3"/>
+            <path d="M5.7 5.2L10.3 5.2M4.8 6.1L7.1 10.4M11.2 6.1L8.9 10.4" stroke="currentColor" stroke-width="1.2"/>
+          </svg>
+        </button>
+        <button type="button" class="icon-toggle-btn" id="btn-mobile-cmdk" aria-label="Search everything">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <circle cx="7" cy="7" r="4.75" stroke="currentColor" stroke-width="1.4"/>
+            <path d="M10.75 10.75L14 14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <button type="button" class="icon-toggle-btn" id="btn-mobile-chat" aria-label="Open Mind Chat">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M2.5 4A1.5 1.5 0 0 1 4 2.5h8A1.5 1.5 0 0 1 13.5 4v5.5A1.5 1.5 0 0 1 12 11H6.25L3.25 13.5V11H4A1.5 1.5 0 0 1 2.5 9.5V4Z" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <button type="button" class="icon-toggle-btn theme-toggle" id="btn-mobile-theme" aria-label="Switch color theme">
+          <svg class="icon-sun" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.3"/>
+            <path d="M8 1.5V3M8 13V14.5M1.5 8H3M13 8H14.5M3.4 3.4L4.5 4.5M11.5 11.5L12.6 12.6M12.6 3.4L11.5 4.5M4.5 11.5L3.4 12.6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+          </svg>
+          <svg class="icon-moon" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M13.2 9.9A5.5 5.5 0 0 1 6.1 2.8a5.5 5.5 0 1 0 7.1 7.1Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Mobile Sticky Next-Up Ticker (<= 960px) -->
+    <button type="button" class="mobile-next-up-ticker" id="mobile-next-up-ticker" aria-label="Open next meeting brief">
+      <span class="ticker-dot" aria-hidden="true"></span>
+      <span class="ticker-text" id="mobile-ticker-text">Loading live schedule...</span>
+      <span class="ticker-cta">Brief &rarr;</span>
+    </button>
+
+    <!-- Mobile Drawer Scrim -->
+    <div class="sidebar-backdrop" id="sidebar-backdrop" hidden></div>
+
+    <!-- Pane 1: Left OS Sidebar -->
+    <aside class="os-sidebar" id="os-sidebar" aria-label="Personal OS Navigation">
+      <div class="os-brand-bar">
+        <button type="button" class="brand-lockup" id="btn-brand-home" aria-label="Kizuki Mind OS Today">
+          <svg class="brand-mark" width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M8 1.75L14.5 13.25H1.5L8 1.75Z" fill="currentColor"/>
+          </svg>
+          <span class="brand-title">kizuki</span>
+          <span class="crumb-slash" aria-hidden="true">/</span>
+          <span class="brand-sub">mind</span>
+        </button>
+
+        <div class="os-brand-utils">
+          <button type="button" class="icon-toggle-btn theme-toggle" id="btn-theme-toggle" aria-label="Switch color theme" title="Switch Dark / Light mode">
+            <svg class="icon-sun" width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.3"/>
+              <path d="M8 1.5V3M8 13V14.5M1.5 8H3M13 8H14.5M3.4 3.4L4.5 4.5M11.5 11.5L12.6 12.6M12.6 3.4L11.5 4.5M4.5 11.5L3.4 12.6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            </svg>
+            <svg class="icon-moon" width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M13.2 9.9A5.5 5.5 0 0 1 6.1 2.8a5.5 5.5 0 1 0 7.1 7.1Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+            </svg>
+            <span class="sr-only" id="theme-toggle-text">Light</span>
+          </button>
+
+          <button type="button" class="icon-toggle-btn detail-toggle" id="btn-detail-toggle" aria-pressed="true" aria-label="Toggle dot-grid and halos" title="Toggle grid detail (?detail=on|off)">
+            <span class="detail-indicator" aria-hidden="true"></span>
+            <span class="sr-only" id="detail-toggle-text">Grid</span>
+          </button>
+
+          <button type="button" class="icon-toggle-btn sound-toggle-btn" id="btn-sound-toggle" aria-pressed="true" aria-label="Toggle tactile sounds" title="Toggle tactile acoustics"></button>
+
+          <button type="button" class="icon-toggle-btn" id="btn-kbd-atlas" aria-label="Keyboard shortcuts (?)" title="Keyboard shortcut atlas (?)"><span class="tabular" style="font-family:var(--font-mono);font-size:11px;font-weight:600;line-height:1;">?</span></button>
+
+          <button type="button" class="icon-close-btn os-sidebar-close" id="btn-sidebar-close" aria-label="Close navigation menu">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M4 4L12 12M12 4L4 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="os-rail-controls">
+        <div class="os-status-row">
+          <span class="tailnet-badge is-online" id="tailnet-badge" title="Private Tailscale vault connection">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span id="tailnet-status-text">tailnet</span>
+          </span>
+          <span class="os-ambient-clock tabular" id="ambient-clock-slot" title="London time &amp; Local LLM telemetry" style="min-width:0;overflow:hidden;border:0;background:transparent;padding:0;height:auto;flex-shrink:1;"></span>
+        </div>
+
+        <button type="button" class="os-search-trigger" id="btn-cmdk" aria-label="Search everything (Cmd+K)">
+          <span class="os-search-left">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <circle cx="7" cy="7" r="4.75" stroke="currentColor" stroke-width="1.45"/>
+              <path d="M10.75 10.75L14 14" stroke="currentColor" stroke-width="1.45" stroke-linecap="round"/>
+            </svg>
+            <span>Search</span>
+          </span>
+          <kbd class="kbd-hint os-desktop-kbd">&#8984;K</kbd>
+        </button>
+
+        <button type="button" class="os-search-trigger" id="btn-ontology-open" aria-label="Open Auto-Ontology Studio (Alt+O)" title="Compiled Semantic Ontology &amp; Pre-Flight Checker (Alt+O)">
+          <span class="os-search-left">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <circle cx="4" cy="4.5" r="1.7" stroke="currentColor" stroke-width="1.35"/>
+              <circle cx="12" cy="4.5" r="1.7" stroke="currentColor" stroke-width="1.35"/>
+              <circle cx="8" cy="12" r="1.7" stroke="currentColor" stroke-width="1.35"/>
+              <path d="M5.7 5L10.3 5M4.8 6L7.1 10.4M11.2 6L8.9 10.4" stroke="currentColor" stroke-width="1.25"/>
+            </svg>
+            <span>Ontology</span>
+          </span>
+          <kbd class="kbd-hint os-desktop-kbd">Alt+O</kbd>
+        </button>
+      </div>
+
+      <nav class="os-nav" aria-label="Primary workspaces" role="tablist">
+        <div class="os-nav-section-label">Workspace</div>
+
+        <button type="button" class="os-nav-btn is-active" role="tab" aria-selected="true" data-view="today">
+          <span class="os-nav-left">
+            <svg class="os-nav-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="2.2" y="3" width="11.6" height="10.8" rx="1.6"/>
+              <path d="M5.2 1.8v2.2M10.8 1.8v2.2M2.2 6.4h11.6"/>
+            </svg>
+            <span class="os-nav-label">Today</span>
+          </span>
+          <span class="os-nav-count tabular" id="nav-count-today">--</span>
+        </button>
+
+        <button type="button" class="os-nav-btn" role="tab" aria-selected="false" data-view="people">
+          <span class="os-nav-left">
+            <svg class="os-nav-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="6.2" cy="5.5" r="2.3"/>
+              <path d="M2.2 13c.4-2.2 2-3.4 4-3.4s3.6 1.2 4 3.4"/>
+              <path d="M10.8 4.2a2 2 0 0 1 0 3.6M12.2 9.9c1.2.4 2 1.3 2.2 3.1"/>
+            </svg>
+            <span class="os-nav-label">People</span>
+          </span>
+          <span class="os-nav-count tabular" id="nav-count-people">--</span>
+        </button>
+
+        <button type="button" class="os-nav-btn" role="tab" aria-selected="false" data-view="replay">
+          <span class="os-nav-left">
+            <svg class="os-nav-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M2.8 8a5.2 5.2 0 1 0 1.4-3.55"/>
+              <path d="M2.6 2.5v2.6h2.6"/>
+              <path d="M8 5.2v3l2.1 1.3"/>
+            </svg>
+            <span class="os-nav-label">Replay</span>
+          </span>
+          <span class="os-nav-count tabular" id="nav-count-replay">--</span>
+        </button>
+
+        <button type="button" class="os-nav-btn" role="tab" aria-selected="false" data-view="codex">
+          <span class="os-nav-left">
+            <svg class="os-nav-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M8 4.1c-1.25-.9-2.95-1.15-5-.85v9.1c2.05-.3 3.75-.05 5 .85"/>
+              <path d="M8 4.1c1.25-.9 2.95-1.15 5-.85v9.1c-2.05-.3-3.75-.05-5 .85"/>
+              <path d="M8 4.1v9.1"/>
+            </svg>
+            <span class="os-nav-label">Codex</span>
+          </span>
+          <span class="os-nav-count tabular" id="nav-count-codex">--</span>
+        </button>
+
+        <button type="button" class="os-nav-btn" role="tab" aria-selected="false" data-view="taste">
+          <span class="os-nav-left">
+            <svg class="os-nav-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M2.5 4.5h3.2M8.7 4.5h4.8M2.5 8h7.3M12.8 8h.7M2.5 11.5h2.1M7.6 11.5h5.9"/>
+              <circle cx="7.2" cy="4.5" r="1.45"/>
+              <circle cx="11.3" cy="8" r="1.45"/>
+              <circle cx="6.1" cy="11.5" r="1.45"/>
+            </svg>
+            <span class="os-nav-label">Taste</span>
+          </span>
+          <span class="os-nav-count tabular" id="nav-count-taste">--</span>
+        </button>
+
+        <button type="button" class="os-nav-btn" role="tab" aria-selected="false" data-view="board">
+          <span class="os-nav-left">
+            <svg class="os-nav-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="2.2" y="2.2" width="4.6" height="4.6" rx="1.1"/>
+              <rect x="9.2" y="2.2" width="4.6" height="4.6" rx="1.1"/>
+              <rect x="2.2" y="9.2" width="4.6" height="4.6" rx="1.1"/>
+              <rect x="9.2" y="9.2" width="4.6" height="4.6" rx="1.1"/>
+            </svg>
+            <span class="os-nav-label">Board</span>
+          </span>
+          <span class="os-nav-count tabular" id="nav-count-board">--</span>
+        </button>
+
+        <button type="button" class="os-nav-btn" role="tab" aria-selected="false" data-view="vault">
+          <span class="os-nav-left">
+            <svg class="os-nav-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 2.5h7l3 3v8H3v-11Z"/>
+              <path d="M10 2.5v3h3"/>
+            </svg>
+            <span class="os-nav-label">Vault</span>
+          </span>
+          <span class="os-nav-count tabular" id="nav-count-vault">--</span>
+        </button>
+
+        <button type="button" class="os-nav-btn" role="tab" aria-selected="false" data-view="graph">
+          <span class="os-nav-left">
+            <svg class="os-nav-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="4" cy="4.2" r="1.6"/>
+              <circle cx="12" cy="5" r="1.6"/>
+              <circle cx="7.4" cy="11.8" r="1.6"/>
+              <path d="M5.4 4.7l5 .2M4.8 5.6l1.9 4.7M11.1 6.4L8.5 10.4"/>
+            </svg>
+            <span class="os-nav-label">Graph</span>
+          </span>
+          <span class="os-nav-count tabular" id="nav-count-graph">--</span>
+        </button>
+
+        <button type="button" class="os-nav-btn" role="tab" aria-selected="false" data-view="stream">
+          <span class="os-nav-left">
+            <svg class="os-nav-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M2 8h2.6l1.8-4.2 2.4 8.4L10.8 8H14"/>
+            </svg>
+            <span class="os-nav-label">Stream</span>
+          </span>
+          <span class="os-nav-count tabular" id="nav-count-stream">--</span>
+        </button>
+
+        <button type="button" class="os-nav-btn" role="tab" aria-selected="false" data-view="atlas">
+          <span class="os-nav-left">
+            <svg class="os-nav-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="8" cy="8" r="5.8"/>
+              <path d="M2.4 8h11.2M8 2.2c1.6 1.7 2.4 3.6 2.4 5.8S9.6 12.1 8 13.8C6.4 12.1 5.6 10.2 5.6 8S6.4 3.9 8 2.2Z"/>
+            </svg>
+            <span class="os-nav-label">Atlas</span>
+          </span>
+          <span class="os-nav-count tabular" id="nav-count-atlas">--</span>
+        </button>
+
+        <button type="button" class="os-nav-btn" role="tab" aria-selected="false" data-view="memt">
+          <span class="os-nav-left">
+            <svg class="os-nav-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4.2 3.2h7.6a1.4 1.4 0 0 1 1.4 1.4v6.8a1.4 1.4 0 0 1-1.4 1.4H4.2a1.4 1.4 0 0 1-1.4-1.4V4.6a1.4 1.4 0 0 1 1.4-1.4Z"/>
+              <path d="M5.6 6.2h4.8M5.6 9.4h3.2"/>
+            </svg>
+            <span class="os-nav-label">MemT</span>
+          </span>
+          <span class="os-nav-count tabular" id="nav-count-memt">--</span>
+        </button>
+
+        <div class="os-nav-divider"></div>
+
+        <button type="button" class="os-nav-btn os-chat-launch" id="btn-open-chat" aria-label="Open Multi-Turn Mind Chat (Cmd+J)">
+          <span class="os-nav-left">
+            <svg class="os-nav-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M2.5 4A1.5 1.5 0 0 1 4 2.5h8A1.5 1.5 0 0 1 13.5 4v5.5A1.5 1.5 0 0 1 12 11H6.25L3.25 13.5V11H4A1.5 1.5 0 0 1 2.5 9.5V4Z"/>
+            </svg>
+            <span class="os-nav-label">Ask Mind</span>
+          </span>
+          <kbd class="kbd-hint os-desktop-kbd" id="sidebar-chat-badge">&#8984;J</kbd>
+        </button>
+      </nav>
+
+      <!-- Pinned Next Up + Whoop Rail Bottom -->
+      <div class="os-rail-bottom">
+        <section class="rail-nextup" aria-label="Next Up Agenda">
+          <div class="rail-section-head">
+            <span class="rail-section-title">Next Up</span>
+            <span class="rail-section-meta tabular" id="rail-tz-label">LON</span>
+          </div>
+          <div class="rail-next-up-list" id="rail-next-up">
+            <div class="rail-empty">Loading schedule...</div>
+          </div>
+        </section>
+
+        <section class="rail-whoop" id="rail-whoop" aria-label="Whoop Recovery Telemetry">
+          <div class="rail-whoop-top">
+            <span class="rail-whoop-label">
+              <span class="whoop-dot" aria-hidden="true"></span>
+              Whoop
+            </span>
+            <span class="rail-whoop-date tabular" id="rail-whoop-date">--</span>
+          </div>
+          <div class="rail-whoop-metrics tabular" id="rail-whoop-metrics">
+            <span>Loading recovery...</span>
+          </div>
+          <div class="whoop-bar-track" aria-hidden="true">
+            <div class="whoop-bar-fill" id="rail-whoop-bar" style="width:0%"></div>
+          </div>
+        </section>
+      </div>
+    </aside>
+
+    <!-- Main Workspace Stage (8 Views) -->
+    <main class="workspace os-workspace" id="workspace">
+      <!-- VIEW 1: TODAY 3-PANE MASTER-DETAIL WORKBENCH (DEFAULT ACTIVE) -->
+      <section class="view-panel view-today is-active" id="view-today" aria-label="Today Personal OS Workbench">
+        <div class="master-detail-shell" id="today-master-detail">
+          <!-- Pane 2: Triage Feed -->
+          <section class="triage-pane" id="today-triage-pane" aria-label="Today Triage List">
+            <header class="triage-header">
+              <div class="triage-title-group">
+                <h1 class="triage-heading">Today</h1>
+                <span class="triage-count-chip tabular" id="today-triage-count">--</span>
+              </div>
+              <div class="triage-head-right">
+                <div class="triage-kbd-hint os-desktop-kbd" aria-label="Keyboard navigation J and K">
+                  <kbd class="kbd-hint">J</kbd>
+                  <kbd class="kbd-hint">K</kbd>
+                </div>
+                <button type="button" class="btn-secondary btn-xs" id="btn-toggle-quick-action">+ Action</button>
+              </div>
+            </header>
+
+            <!-- Collapsible Inline Quick Action Form -->
+            <form class="triage-quick-add" id="triage-quick-add" hidden>
+              <div class="quick-add-row">
+                <label for="quick-action-title" class="sr-only">New action title</label>
+                <input id="quick-action-title" type="text" placeholder="Add action item..." autocomplete="off" required>
+                <label for="quick-action-tag" class="sr-only">Action category</label>
+                <select id="quick-action-tag">
+                  <option value="Work">Work</option>
+                  <option value="Family">Family</option>
+                  <option value="Reply">Reply</option>
+                  <option value="Personal">Personal</option>
+                </select>
+              </div>
+              <div class="quick-add-actions">
+                <button type="button" class="btn-ghost btn-xs" id="btn-quick-action-cancel">Cancel</button>
+                <button type="submit" class="btn-primary btn-xs" id="btn-quick-action-submit">Add</button>
+              </div>
+            </form>
+
+            <!-- Segmented Filter Tabs -->
+            <div class="triage-filters">
+              <div class="triage-tabs segmented" role="tablist" aria-label="Today filter">
+                <button type="button" class="triage-tab is-active" role="tab" aria-selected="true" data-triage-tab="priority">Priority</button>
+                <button type="button" class="triage-tab" role="tab" aria-selected="false" data-triage-tab="actions">Actions <span class="tab-count tabular" id="tab-count-actions">0</span></button>
+                <button type="button" class="triage-tab" role="tab" aria-selected="false" data-triage-tab="schedule">Schedule <span class="tab-count tabular" id="tab-count-schedule">0</span></button>
+                <button type="button" class="triage-tab" role="tab" aria-selected="false" data-triage-tab="all">All</button>
+              </div>
+
+              <!-- Channel Filter Pills + Spam/Crypto Toggle -->
+              <div class="triage-subbar">
+                <div class="channel-pills" id="today-channel-pills" role="group" aria-label="Filter inbox by channel">
+                  <button type="button" class="channel-pill is-active" data-ch="all">All</button>
+                  <button type="button" class="channel-pill" data-ch="whatsapp"><span class="ch-dot ch-wa" aria-hidden="true"></span>WA</button>
+                  <button type="button" class="channel-pill" data-ch="imessage"><span class="ch-dot ch-imsg" aria-hidden="true"></span>iMsg</button>
+                  <button type="button" class="channel-pill" data-ch="gmail"><span class="ch-dot ch-gmail" aria-hidden="true"></span>Gmail</button>
+                  <button type="button" class="channel-pill" data-ch="telegram"><span class="ch-dot ch-tg" aria-hidden="true"></span>TG</button>
+                </div>
+                <button type="button" class="noise-toggle-btn" id="btn-noise-toggle" aria-pressed="false" title="Toggle spam and crypto promo messages">
+                  <span id="noise-toggle-text">Spam / crypto filtered</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Scrollable Triage List -->
+            <div class="triage-list" id="triage-list" role="listbox" aria-label="Today items">
+              <div class="panel-body"><div class="skeleton-block"></div></div>
+            </div>
+
+            <footer class="triage-footer">
+              <div class="shortcut-row">
+                <span class="shortcut-pair"><kbd class="kbd-hint">J</kbd><kbd class="kbd-hint">K</kbd> move</span>
+                <span class="shortcut-pair"><kbd class="kbd-hint">A</kbd> action</span>
+                <span class="shortcut-pair"><kbd class="kbd-hint">D</kbd> draft</span>
+              </div>
+              <span class="tabular" id="triage-pos-counter">1 / 1</span>
+            </footer>
+          </section>
+
+          <!-- Pane 3: Fluid Live Detail & Docked Local Composer -->
+          <section class="detail-pane" id="today-detail-pane" aria-label="Selected Item Detail">
+            <div class="detail-mobile-back">
+              <button type="button" class="btn-ghost btn-sm" id="btn-today-back">&larr; Back to Today</button>
+            </div>
+
+            <header class="detail-topbar" id="detail-topbar">
+              <div class="detail-breadcrumb" id="detail-breadcrumb">
+                <span class="breadcrumb-parent">Today</span>
+                <span class="breadcrumb-sep">/</span>
+                <span class="breadcrumb-leaf">Morning Brief</span>
+              </div>
+              <div class="detail-actions">
+                <button type="button" class="btn-primary btn-sm" id="btn-detail-primary">Open Vault</button>
+              </div>
+            </header>
+
+            <div class="detail-scroll detail-body" id="detail-body">
+              <div class="skeleton-block"></div>
+            </div>
+
+            <!-- Docked Bottom Local Action Composer (Never Floats) -->
+            <section class="detail-composer" id="detail-composer" aria-label="Local Draft and Mind Assistant">
+              <div class="mobile-composer-bar" id="mobile-composer-bar" role="button" tabindex="0" aria-expanded="false" aria-controls="composer-form">
+                <span class="mobile-composer-prompt" id="mobile-composer-prompt">Draft reply or ask Mind...</span>
+                <button type="button" class="btn-secondary btn-xs mobile-composer-toggle" id="btn-mobile-composer-toggle">Compose</button>
+              </div>
+              <div class="composer-tabs-row">
+                <div class="composer-tabs" role="tablist" aria-label="Composer mode">
+                  <button type="button" class="comp-tab is-active" role="tab" aria-selected="true" data-composer-mode="draft">Draft Reply (Local)</button>
+                  <button type="button" class="comp-tab" role="tab" aria-selected="false" data-composer-mode="action">Create Action</button>
+                  <button type="button" class="comp-tab" role="tab" aria-selected="false" data-composer-mode="ask">Ask Mind</button>
+                </div>
+                <span class="composer-safety-badge">
+                  <span class="status-dot" aria-hidden="true"></span>
+                  Local draft only &middot; No outbound send
+                </span>
+              </div>
+
+              <!-- AI Draft / Answer Output -->
+              <div class="composer-output" id="composer-output" hidden>
+                <div class="composer-output-head">
+                  <div class="composer-output-meta">
+                    <span class="badge badge-cyan" id="composer-output-engine">Local Draft</span>
+                    <span class="tabular" id="composer-output-latency"></span>
+                  </div>
+                  <div class="composer-output-actions">
+                    <button type="button" class="btn-ghost btn-xs" id="btn-composer-output-copy">Copy</button>
+                    <button type="button" class="btn-ghost btn-xs" id="btn-composer-output-close" aria-label="Close draft output">&times;</button>
+                  </div>
+                </div>
+                <div class="markdown-prose composer-output-body" id="composer-output-body"></div>
+              </div>
+
+              <form class="composer-box" id="composer-form">
+                <label for="composer-input" class="sr-only">Local draft, new action, or Mind prompt</label>
+                <textarea id="composer-input" class="composer-input" rows="2" placeholder="Write instructions to draft a local reply, add an action, or ask your Mind..." autocomplete="off"></textarea>
+                <div class="composer-footer">
+                  <span class="composer-context-pill tabular" id="composer-context-label">Morning Brief</span>
+                  <div class="composer-btn-group">
+                    <button type="button" class="btn-ghost btn-xs" id="btn-composer-copy">Copy Draft</button>
+                    <button type="button" class="btn-secondary btn-xs" id="btn-composer-save">Save to Vault</button>
+                    <button type="submit" class="btn-primary btn-xs" id="btn-composer-run">Run / Refine</button>
+                  </div>
+                </div>
+              </form>
+            </section>
+          </section>
+        </div>
+      </section>
+
+      <!-- VIEW 2: PEOPLE CROSS-CHANNEL DOSSIERS -->
+      <section class="view-panel view-people" id="view-people" aria-label="People Cross-Channel Dossiers" hidden>
+        <div class="master-detail-shell" id="people-master-detail">
+          <section class="triage-pane people-master-pane" aria-label="People Directory">
+            <header class="triage-header">
+              <div class="triage-title-group">
+                <h1 class="triage-heading">People</h1>
+                <span class="triage-count-chip tabular" id="people-total-count">--</span>
+              </div>
+              <button type="button" class="btn-ghost btn-xs" id="btn-people-refresh">Refresh</button>
+            </header>
+
+            <div class="triage-filters">
+              <div class="people-search-box">
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <circle cx="7" cy="7" r="4.75" stroke="currentColor" stroke-width="1.4"/>
+                  <path d="M10.75 10.75L14 14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                </svg>
+                <label for="people-search" class="sr-only">Search people across channels</label>
+                <input id="people-search" type="search" placeholder="Search people across WA, TG, iMsg, Gmail..." autocomplete="off" spellcheck="false">
+              </div>
+
+              <div class="channel-pills" id="people-channel-pills" role="group" aria-label="Filter people by channel or profile depth">
+                <button type="button" class="channel-pill is-active" data-people-ch="all" data-channel="all" title="All people">All</button>
+                <button type="button" class="channel-pill" data-people-ch="profiled" data-channel="profiled" title="World Model v2 and LifeOS profiled dossiers">Profiled</button>
+                <button type="button" class="channel-pill" data-people-ch="core" data-channel="core" title="Core and Family inner circle">Core</button>
+                <button type="button" class="channel-pill" data-people-ch="whatsapp" data-channel="whatsapp" title="WhatsApp"><span class="ch-dot ch-wa" aria-hidden="true"></span>WA</button>
+                <button type="button" class="channel-pill" data-people-ch="telegram" data-channel="telegram" title="Telegram"><span class="ch-dot ch-tg" aria-hidden="true"></span>TG</button>
+                <button type="button" class="channel-pill" data-people-ch="imessage" data-channel="imessage" title="iMessage"><span class="ch-dot ch-imsg" aria-hidden="true"></span>iMsg</button>
+                <button type="button" class="channel-pill" data-people-ch="gmail" data-channel="gmail" title="Gmail"><span class="ch-dot ch-gmail" aria-hidden="true"></span>Gmail</button>
+                <button type="button" class="channel-pill" data-people-ch="calendar" data-channel="calendar" title="Calendar"><span class="ch-dot ch-cal" aria-hidden="true"></span>Cal</button>
+              </div>
+            </div>
+
+            <div class="triage-list people-list" id="people-list" role="listbox" aria-label="People list">
+              <div class="panel-body"><div class="skeleton-block"></div></div>
+            </div>
+          </section>
+
+          <section class="detail-pane people-detail-pane" id="people-detail-pane" aria-label="Person Cross-Channel Dossier">
+            <div class="detail-mobile-back">
+              <button type="button" class="btn-ghost btn-sm" id="btn-people-back">&larr; Back to People</button>
+            </div>
+
+            <header class="detail-topbar" id="people-detail-topbar">
+              <div class="detail-breadcrumb" id="people-breadcrumb">
+                <span class="breadcrumb-parent">People</span>
+                <span class="breadcrumb-sep">/</span>
+                <span class="breadcrumb-leaf">Select a person</span>
+              </div>
+              <div class="detail-actions">
+                <button type="button" class="btn-ghost btn-sm" id="btn-people-note" hidden>+ Log Insight</button>
+                <button type="button" class="btn-secondary btn-sm" id="btn-people-prep" hidden>Prep Brief</button>
+                <button type="button" class="btn-secondary btn-sm" id="btn-people-draft" hidden>Draft (Local)</button>
+                <button type="button" class="btn-primary btn-sm" id="btn-people-synthesize" hidden>Deepen Profile</button>
+              </div>
+            </header>
+
+            <div class="detail-scroll people-detail-body" id="people-detail-body">
+              <div class="empty-state">Select any person from the directory to inspect their world-model dossier, asymmetric leverage, cross-channel timeline, and open loops.</div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <!-- VIEW 3: LIFE REPLAY WORKSPACE (TIME-MACHINE CALENDAR + PRIVATE LIFE MAP) -->
+      <section class="view-panel view-replay" id="view-replay" aria-label="Life Replay Time Machine" hidden>
+        <div class="replay-shell" id="replay-shell">
+          <!-- Left Rail: Year Selector, Heatmap, Trips & Active Days -->
+          <aside class="replay-rail" id="replay-rail" aria-label="Replay Timeline Directory">
+            <header class="replay-rail-head">
+              <div class="replay-rail-head-top">
+                <div class="replay-rail-title-group">
+                  <h1 class="replay-rail-title">Replay</h1>
+                  <span class="replay-rail-count tabular" id="replay-stats-badge">-- GPS days</span>
+                </div>
+                <div class="replay-rail-actions">
+                  <button type="button" class="btn-secondary btn-xs" id="btn-replay-import">Import Maps</button>
+                </div>
+              </div>
+              <div class="replay-year-pills" id="replay-year-pills" role="tablist" aria-label="Select replay year"></div>
+            </header>
+
+            <section class="replay-heatmap-card" aria-label="Activity and GPS contribution calendar">
+              <div class="replay-heatmap-head">
+                <span class="replay-heatmap-label">Activity &amp; GPS Calendar</span>
+                <span class="replay-heatmap-stat tabular" id="replay-heatmap-stat">-- active days</span>
+              </div>
+              <div class="replay-heatmap-scroll" id="replay-heatmap-scroll">
+                <div class="heatmap-months" id="replay-heatmap-months"></div>
+                <div class="heatmap-grid" id="replay-heatmap-grid" role="grid" aria-label="Daily activity heatmap"></div>
+              </div>
+              <div class="heatmap-legend">
+                <span class="heatmap-legend-scale">
+                  <span>Less</span>
+                  <span class="heatmap-cell is-l0" aria-hidden="true"></span>
+                  <span class="heatmap-cell is-l1" aria-hidden="true"></span>
+                  <span class="heatmap-cell is-l2" aria-hidden="true"></span>
+                  <span class="heatmap-cell is-l3" aria-hidden="true"></span>
+                  <span class="heatmap-cell is-l4" aria-hidden="true"></span>
+                  <span>More</span>
+                </span>
+                <span class="heatmap-legend-gps">
+                  <span class="heatmap-legend-gps-dot" aria-hidden="true"></span>
+                  <span>GPS pin</span>
+                </span>
+              </div>
+            </section>
+
+            <div class="replay-trips-strip" id="replay-trips-strip" aria-label="Auto-detected trips" hidden></div>
+
+            <div class="triage-filters">
+              <div class="people-search-box">
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <circle cx="7" cy="7" r="4.75" stroke="currentColor" stroke-width="1.4"/>
+                  <path d="M10.75 10.75L14 14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                </svg>
+                <label for="replay-day-filter" class="sr-only">Filter days, places, trips</label>
+                <input id="replay-day-filter" type="search" placeholder="Filter days, places, trips..." autocomplete="off" spellcheck="false">
+              </div>
+            </div>
+
+            <div class="replay-days-list" id="replay-days-list" role="listbox" aria-label="Chronological active days">
+              <div class="panel-body"><div class="skeleton-block"></div></div>
+            </div>
+          </aside>
+
+          <!-- Right Stage: Day Story, Private Offline Map & Sub-Tabs -->
+          <section class="replay-stage" id="replay-stage" aria-label="Selected Day Replay">
+            <div class="detail-mobile-back">
+              <button type="button" class="btn-ghost btn-sm" id="btn-replay-back">&larr; Back to Days</button>
+            </div>
+
+            <header class="replay-topbar" id="replay-topbar">
+              <div class="replay-topbar-left">
+                <div class="replay-stepper" role="group" aria-label="Step between active days">
+                  <button type="button" class="replay-step-btn" id="btn-replay-prev" title="Previous active day (Left Arrow or [)" aria-label="Previous active day">&larr;</button>
+                  <button type="button" class="replay-step-btn" id="btn-replay-next" title="Next active day (Right Arrow or ])" aria-label="Next active day">&rarr;</button>
+                </div>
+                <h2 class="replay-date-heading" id="replay-day-title">Loading Replay...</h2>
+                <span class="replay-location-badge" id="replay-location-badge" hidden></span>
+              </div>
+              <div class="replay-topbar-actions">
+                <button type="button" class="btn-primary btn-sm" id="btn-replay-story">Synthesize Day Story</button>
+              </div>
+            </header>
+
+            <div class="replay-scroll" id="replay-scroll">
+              <!-- Interactive Private Offline Life Map -->
+              <div class="replay-map-card" id="replay-map-card">
+                <canvas class="replay-map-canvas" id="replay-map-canvas" aria-label="Private offline life map"></canvas>
+                <div class="replay-map-hud" id="replay-map-hud">
+                  <span class="replay-map-hud-dot is-active-dot" id="replay-map-hud-dot" aria-hidden="true"></span>
+                  <span id="replay-map-hud-text">Private offline map</span>
+                </div>
+                <div class="replay-map-modes" id="replay-map-modes" role="group" aria-label="Map region framing">
+                  <button type="button" class="replay-map-mode-btn is-active" data-map-region="day" aria-pressed="true">Day</button>
+                  <button type="button" class="replay-map-mode-btn" data-map-region="uk" aria-pressed="false">UK</button>
+                  <button type="button" class="replay-map-mode-btn" data-map-region="europe" aria-pressed="false">Europe</button>
+                  <button type="button" class="replay-map-mode-btn" data-map-region="world" aria-pressed="false">World</button>
+                </div>
+                <div class="replay-map-controls" role="group" aria-label="Map zoom controls">
+                  <button type="button" class="replay-map-ctrl-btn" id="btn-replay-map-in" title="Zoom in" aria-label="Zoom in">+</button>
+                  <button type="button" class="replay-map-ctrl-btn" id="btn-replay-map-out" title="Zoom out" aria-label="Zoom out">-</button>
+                  <button type="button" class="replay-map-ctrl-btn" id="btn-replay-map-fit" title="Fit map view" aria-label="Fit map view">Fit</button>
+                </div>
+                <div class="replay-map-tooltip" id="replay-map-tooltip" hidden role="tooltip"></div>
+              </div>
+
+              <!-- Tactile Vernier Year Time Scrubber -->
+              <div class="vernier-host" id="replay-vernier-host"></div>
+
+              <!-- 6-Card Day KPI Strip -->
+              <div class="replay-kpis" id="replay-kpis" aria-label="Day telemetry KPIs"></div>
+
+              <!-- AI Day Story Block -->
+              <div id="replay-story-container"></div>
+
+              <!-- 24-Hour Day Rhythm Waveform -->
+              <div id="replay-rhythm-container" hidden></div>
+
+              <!-- Segmented Sub-Tabs -->
+              <div class="replay-subtabs" id="replay-subtabs" role="tablist" aria-label="Day replay breakdown">
+                <button type="button" class="replay-subtab is-active" role="tab" aria-selected="true" data-replay-tab="timeline">Timeline <span class="replay-subtab-count" id="replay-tab-count-timeline">0</span></button>
+                <button type="button" class="replay-subtab" role="tab" aria-selected="false" data-replay-tab="places">Where (Places) <span class="replay-subtab-count" id="replay-tab-count-places">0</span></button>
+                <button type="button" class="replay-subtab" role="tab" aria-selected="false" data-replay-tab="work">Work &amp; Docs <span class="replay-subtab-count" id="replay-tab-count-work">0</span></button>
+                <button type="button" class="replay-subtab" role="tab" aria-selected="false" data-replay-tab="people">People &amp; Comms <span class="replay-subtab-count" id="replay-tab-count-people">0</span></button>
+              </div>
+
+              <!-- Active Sub-Tab Content -->
+              <div class="replay-tabpanel" id="replay-tabpanel" role="tabpanel">
+                <div class="skeleton-block"></div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <!-- VIEW 4: MIND CODEX & ACTION PLANE -->
+      <section class="view-panel view-codex" id="view-codex" aria-label="Mind Codex and Action Plane" hidden></section>
+
+      <!-- VIEW 5: TASTE STUDIO & FINE-TUNING -->
+      <section class="view-panel view-taste" id="view-taste" aria-label="Taste Studio and Fine-Tuning" hidden></section>
+
+      <!-- VIEW 6: AGENT BOARD MULTIPLAYER STUDIO -->
+      <section class="view-panel view-board" id="view-board" aria-label="Agent Board Multiplayer Studio" hidden></section>
+
+      <!-- VIEW 6: FULL VAULT MARKDOWN EXPLORER + READER + EDITOR (16.9K DOCS) -->
+      <section class="view-panel view-vault" id="view-vault" aria-label="Vault Document Explorer" hidden>
+        <div class="vault-layout">
+          <aside class="vault-sidebar" id="vault-sidebar" aria-label="Vault files and categories">
+            <div class="vault-sidebar-head">
+              <div class="vault-search-row">
+                <div class="vault-search-box">
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <circle cx="7" cy="7" r="4.75" stroke="currentColor" stroke-width="1.4"/>
+                    <path d="M10.75 10.75L14 14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                  </svg>
+                  <label for="vault-search" class="sr-only">Search vault markdown documents</label>
+                  <input id="vault-search" type="search" placeholder="Search vault docs..." autocomplete="off" spellcheck="false">
+                </div>
+                <button type="button" class="btn-primary btn-sm" id="btn-new-note" title="Create new markdown note">+ New</button>
+              </div>
+              <div class="vault-meta-row">
+                <span class="stream-count tabular" id="vault-result-count">-- docs</span>
+                <label for="vault-sort" class="sr-only">Sort vault documents</label>
+                <select id="vault-sort" class="bar-btn">
+                  <option value="recent">Recent first</option>
+                  <option value="name">Name (A-Z)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="vault-cat-list" id="vault-cat-list" role="tablist" aria-label="Vault categories"></div>
+
+            <div class="vault-doc-list" id="vault-doc-list" role="list" aria-label="Vault documents">
+              <div class="dir-empty">Loading vault documents...</div>
+            </div>
+
+            <div class="vault-pagination" id="vault-pagination" hidden>
+              <button type="button" class="btn-secondary btn-sm full-width" id="btn-vault-load-more">Load more documents</button>
+            </div>
+          </aside>
+
+          <article class="vault-reader-wrap" id="vault-reader-wrap" aria-label="Document Reader">
+            <div class="vault-reader-inner">
+              <header class="doc-header">
+                <div class="doc-crumb-bar">
+                  <button type="button" class="btn-secondary btn-xs vault-mobile-files-btn" id="btn-vault-sidebar-toggle">Files</button>
+                  <nav class="doc-breadcrumb" id="doc-path" aria-label="Document breadcrumb path"></nav>
+                </div>
+                <div class="doc-title-row">
+                  <div class="doc-title-col">
+                    <h1 class="doc-title" id="doc-title">Select a vault document</h1>
+                    <div class="panel-subtitle tabular" id="doc-meta"></div>
+                  </div>
+                  <div class="doc-actions">
+                    <button type="button" class="btn-secondary btn-sm" id="btn-doc-edit" hidden>Edit</button>
+                    <button type="button" class="btn-primary btn-sm" id="btn-doc-ask">Ask Mind</button>
+                    <button type="button" class="btn-ghost btn-sm" id="btn-doc-copy">Copy MD</button>
+                    <button type="button" class="btn-ghost btn-sm" id="btn-doc-raw" aria-pressed="false">Raw</button>
+                  </div>
+                </div>
+                <div class="frontmatter-bar md-frontmatter is-mobile-collapsed" id="doc-frontmatter" hidden aria-label="Document frontmatter metadata"></div>
+              </header>
+
+              <div class="markdown-prose md-body" id="doc-content">
+                <div class="empty-state">Choose any document from Kizuki, Obsidian, or Apple Notes to read rendered tables, callouts, code blocks, and wikilinks.</div>
+              </div>
+
+              <pre class="doc-raw-pre" id="doc-raw-view" hidden></pre>
+
+              <div class="doc-editor-wrap" id="doc-editor-wrap" hidden>
+                <div class="field" id="doc-new-path-wrap" hidden>
+                  <label for="doc-new-path-input">Document path</label>
+                  <input id="doc-new-path-input" type="text" placeholder="owner-notes/untitled.md" autocomplete="off" spellcheck="false">
+                </div>
+                <div class="doc-editor-bar">
+                  <span class="doc-editor-status tabular" id="doc-save-status" role="status" aria-live="polite">Editing markdown</span>
+                  <div class="doc-editor-actions">
+                    <button type="button" class="btn-ghost btn-sm" id="btn-doc-cancel">Cancel</button>
+                    <button type="button" class="btn-primary btn-sm" id="btn-doc-save">Save Changes</button>
+                  </div>
+                </div>
+                <label for="doc-editor-textarea" class="sr-only">Markdown document editor</label>
+                <textarea id="doc-editor-textarea" class="doc-editor-textarea" spellcheck="true" placeholder="# Note title&#10;&#10;Write markdown here..."></textarea>
+              </div>
+            </div>
+          </article>
+
+          <aside class="vault-toc-rail" id="vault-toc-rail" aria-label="Table of contents and related documents">
+            <div class="toc-section">
+              <h2 class="vault-toc-title">On This Page</h2>
+              <nav class="vault-toc-list" id="doc-toc-list" aria-label="Document outline">
+                <p class="panel-subtitle">No headings in document.</p>
+              </nav>
+            </div>
+
+            <div class="toc-section">
+              <h2 class="vault-toc-title">Related Docs</h2>
+              <div class="related-docs-list vault-related-list" id="doc-related-list">
+                <p class="panel-subtitle">No linked documents yet.</p>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- VIEW 4: 3-ZONE MIND GRAPH WORKSPACE -->
+      <section class="view-panel view-graph" id="view-graph" aria-label="Mind Graph" hidden>
+        <aside class="mind-directory" id="mind-directory" aria-label="Mind Directory">
+          <div class="dir-metrics" aria-label="Live vault telemetry">
+            <div class="dir-metric" title="Total events captured in Kizuki vault">
+              <span class="dir-metric-label">Events</span>
+              <span class="dir-metric-val tabular" id="metric-events">--</span>
+            </div>
+            <div class="dir-metric" title="Live claims currently active">
+              <span class="dir-metric-label">Claims</span>
+              <span class="dir-metric-val tabular" id="metric-claims">--</span>
+            </div>
+            <div class="dir-metric" title="Total consolidated world objects in vault">
+              <span class="dir-metric-label">World (Vault)</span>
+              <span class="dir-metric-val tabular" id="metric-consolidated">--</span>
+            </div>
+            <div class="dir-metric" title="Verified MemT procedural recipes">
+              <span class="dir-metric-label">MemT</span>
+              <span class="dir-metric-val tabular" id="metric-memt">--</span>
+            </div>
+          </div>
+
+          <div class="dir-controls">
+            <div class="dir-search-box">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <circle cx="7" cy="7" r="4.75" stroke="currentColor" stroke-width="1.4"/>
+                <path d="M10.75 10.75L14 14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+              </svg>
+              <label for="dir-search" class="sr-only">Filter mind directory</label>
+              <input id="dir-search" type="search" placeholder="Filter world, recipes, concepts, sources..." autocomplete="off" spellcheck="false">
+            </div>
+
+            <div class="dir-tabs" role="tablist" aria-label="Directory groups" style="grid-template-columns: repeat(4, minmax(0, 1fr));">
+              <button type="button" class="dir-tab is-active" data-dir-tab="world" role="tab" aria-selected="true">World</button>
+              <button type="button" class="dir-tab" data-dir-tab="memt" role="tab" aria-selected="false">MemT</button>
+              <button type="button" class="dir-tab" data-dir-tab="concepts" role="tab" aria-selected="false">Concepts</button>
+              <button type="button" class="dir-tab" data-dir-tab="sources" role="tab" aria-selected="false">Sources</button>
+            </div>
+          </div>
+
+          <div class="dir-list" id="dir-list" role="list" aria-label="Navigable vault nodes">
+            <div class="dir-empty">Loading mind index...</div>
+          </div>
+        </aside>
+
+        <div class="graph-stage" id="graph-stage">
+          <canvas id="graph-canvas" aria-label="Interactive Kizuki Mind Graph"></canvas>
+
+          <div class="graph-toolbar" role="region" aria-label="Graph filters">
+            <button type="button" class="btn-secondary btn-xs" id="btn-graph-dir-toggle" title="Toggle Mind Directory (B)">Index</button>
+            <div class="filter-pills" role="group" aria-label="Filter nodes by kind">
+              <button type="button" class="filter-pill is-active" data-kind="all">
+                <span>All</span>
+                <span class="pill-count tabular" data-count-kind="all">0</span>
+              </button>
+              <button type="button" class="filter-pill pill-amber" data-kind="consolidated">
+                <span class="glyph glyph-ring" aria-hidden="true"></span>
+                <span>World</span>
+                <span class="pill-count tabular" data-count-kind="consolidated">0</span>
+              </button>
+              <button type="button" class="filter-pill pill-teal" data-kind="memt">
+                <span class="glyph glyph-diamond" aria-hidden="true"></span>
+                <span>MemT</span>
+                <span class="pill-count tabular" data-count-kind="memt">0</span>
+              </button>
+              <button type="button" class="filter-pill pill-cobalt" data-kind="concept">
+                <span class="glyph glyph-dot" aria-hidden="true"></span>
+                <span>Concepts</span>
+                <span class="pill-count tabular" data-count-kind="concept">0</span>
+              </button>
+              <button type="button" class="filter-pill pill-slate" data-kind="connector">
+                <span class="glyph glyph-square" aria-hidden="true"></span>
+                <span>Sources</span>
+                <span class="pill-count tabular" data-count-kind="connector">0</span>
+              </button>
+            </div>
+
+            <div class="graph-search-wrap">
+              <label for="graph-search" class="sr-only">Filter graph nodes</label>
+              <svg class="search-icon" width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <circle cx="7" cy="7" r="4.75" stroke="currentColor" stroke-width="1.4"/>
+                <path d="M10.75 10.75L14 14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+              </svg>
+              <input id="graph-search" type="search" placeholder="Isolate on graph..." autocomplete="off" spellcheck="false">
+              <button type="button" class="icon-clear-btn" id="btn-graph-search-clear" hidden aria-label="Clear graph filter">&times;</button>
+            </div>
+          </div>
+
+          <div class="graph-breadcrumbs" id="graph-breadcrumbs" hidden aria-label="Exploration path"></div>
+          <div class="graph-tooltip" id="graph-tooltip" hidden role="tooltip"></div>
+
+          <div class="graph-hud">
+            <div class="vernier-readout tabular" id="graph-vernier" data-tactile aria-live="off">
+              <span>X <strong id="vernier-x">0.0</strong></span>
+              <span>Y <strong id="vernier-y">0.0</strong></span>
+              <span>Z <strong id="vernier-z">1.00x</strong></span>
+              <span>N <strong id="vernier-n">0</strong></span>
+            </div>
+
+            <div class="hud-row">
+              <div class="camera-controls" role="group" aria-label="Graph viewport controls">
+                <button type="button" class="hud-btn" id="btn-zoom-in" title="Zoom in (+)" aria-label="Zoom in">
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3.5V12.5M3.5 8H12.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                </button>
+                <button type="button" class="hud-btn" id="btn-zoom-out" title="Zoom out (-)" aria-label="Zoom out">
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3.5 8H12.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                </button>
+                <button type="button" class="hud-btn" id="btn-fit-graph" title="Fit graph to screen (F)" aria-label="Fit graph to screen">
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2.5 6V2.5H6M10 2.5H13.5V6M13.5 10V13.5H10M6 13.5H2.5V10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+                <button type="button" class="hud-btn" id="btn-reheat-graph" title="Resettle physics layout" aria-label="Resettle physics layout">
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M13 8A5 5 0 1 1 11.4 4.35M13 2.5V5.2H10.3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="graph-overlay-state" id="graph-overlay-state" hidden>
+            <div class="state-box">
+              <p class="state-title" id="graph-state-title">Loading mind graph...</p>
+              <p class="state-desc" id="graph-state-desc">Querying Kizuki vault topology.</p>
+              <button type="button" class="btn-secondary" id="btn-graph-retry" hidden>Retry graph load</button>
+            </div>
+          </div>
+
+          <aside class="inspector-drawer" id="node-inspector" aria-label="Node Inspector" aria-hidden="true">
+            <div class="sheet-handle" aria-hidden="true"><span></span></div>
+            <div class="inspector-header">
+              <div class="inspector-title-group">
+                <div class="inspector-badges" id="inspector-badges"></div>
+                <h2 class="inspector-title" id="inspector-title">Select a node</h2>
+              </div>
+              <button type="button" class="icon-close-btn" id="inspector-close" aria-label="Close inspector (Esc)">
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              </button>
+            </div>
+
+            <div class="inspector-body" id="inspector-body">
+              <div class="inspector-metrics" id="inspector-metrics"></div>
+
+              <section class="inspector-section" id="inspector-summary-section">
+                <h3 class="section-eyebrow">Distilled Summary</h3>
+                <div class="inspector-summary markdown-prose" id="inspector-summary"></div>
+              </section>
+
+              <section class="inspector-section" id="inspector-memt-section" hidden>
+                <h3 class="section-eyebrow">Verified MemT Procedure</h3>
+                <div class="memt-detail-box" id="inspector-memt-block"></div>
+              </section>
+
+              <section class="inspector-section" id="inspector-related-docs-section" hidden>
+                <div class="section-head-row">
+                  <h3 class="section-eyebrow">Related Vault Docs</h3>
+                  <span class="section-count tabular" id="inspector-related-docs-count">0</span>
+                </div>
+                <div class="related-docs-list" id="inspector-related-docs"></div>
+              </section>
+
+              <section class="inspector-section">
+                <div class="section-head-row">
+                  <h3 class="section-eyebrow">Connected Neighbors</h3>
+                  <span class="section-count tabular" id="inspector-neighbors-count">0</span>
+                </div>
+                <div class="neighbor-chips" id="inspector-neighbors-list"></div>
+              </section>
+
+              <section class="inspector-section">
+                <div class="section-head-row">
+                  <h3 class="section-eyebrow">Live Claims</h3>
+                  <span class="section-count tabular" id="inspector-claims-count">0</span>
+                </div>
+                <div class="claims-list" id="inspector-claims-list"></div>
+              </section>
+            </div>
+
+            <div class="inspector-footer">
+              <button type="button" class="btn-primary" id="btn-ask-node">Ask Mind</button>
+              <button type="button" class="btn-secondary" id="btn-teach-node">Anchor</button>
+              <button type="button" class="btn-secondary" id="btn-reflex-node">Reflex</button>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- VIEW 5: LIVE EVENT STREAM -->
+      <section class="view-panel view-scroll view-stream" id="view-stream" aria-label="Event Stream" hidden>
+        <div class="view-container stream-layout">
+          <div class="view-header">
+            <div>
+              <h1 class="view-title">Event Stream.</h1>
+              <p class="view-subtitle" id="stream-status-meta">Chronological activity captured across connected Kizuki pipelines.</p>
+            </div>
+            <div class="view-header-actions">
+              <span class="stream-count tabular" id="stream-count">0 events</span>
+              <button type="button" class="btn-secondary" id="btn-stream-refresh">Refresh</button>
+            </div>
+          </div>
+
+          <div class="stream-toolbar">
+            <div class="stream-filter-pills" id="stream-connectors" role="group" aria-label="Filter stream by connector"></div>
+            <div class="stream-search-wrap">
+              <label for="stream-search" class="sr-only">Filter stream events</label>
+              <input id="stream-search" type="search" placeholder="Search events, sessions, commits, or notes..." autocomplete="off">
+            </div>
+          </div>
+
+          <div class="stream-list" id="stream-list" role="list" aria-label="Live event rows">
+            <div class="panel-body"><div class="skeleton-block"></div></div>
+          </div>
+
+          <div class="stream-load-more-wrap">
+            <button type="button" class="btn-secondary" id="btn-stream-load-more" hidden>Load more events</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 6: WORLD ATLAS -->
+      <section class="view-panel view-scroll view-atlas" id="view-atlas" aria-label="World Atlas" hidden>
+        <div class="view-container">
+          <div class="view-header">
+            <div>
+              <h1 class="view-title">World Atlas.</h1>
+              <p class="view-subtitle" id="atlas-status-meta">Live operational panels and consolidated world objects.</p>
+            </div>
+            <button type="button" class="btn-secondary" id="btn-atlas-refresh">Refresh</button>
+          </div>
+
+          <div class="atlas-tabs" id="atlas-panel-tabs" role="tablist" aria-label="Atlas sections">
+            <button type="button" class="sub-tab is-active" data-atlas-tab="all">All Panels</button>
+            <button type="button" class="sub-tab" data-atlas-tab="resume">Resume</button>
+            <button type="button" class="sub-tab" data-atlas-tab="changed">Changed</button>
+            <button type="button" class="sub-tab" data-atlas-tab="stale">Stale / Attention</button>
+            <button type="button" class="sub-tab" data-atlas-tab="people">People</button>
+            <button type="button" class="sub-tab" data-atlas-tab="questions">Open Questions</button>
+            <button type="button" class="sub-tab" data-atlas-tab="commitments">Commitments</button>
+          </div>
+
+          <div class="atlas-panels" id="atlas-panels-grid">
+            <div class="skeleton-block"></div>
+            <div class="skeleton-block"></div>
+          </div>
+
+          <section class="atlas-highlights-section">
+            <div class="section-head-row">
+              <h2 class="section-heading">Consolidated World Objects</h2>
+              <span class="section-count tabular" id="atlas-highlights-count">0</span>
+            </div>
+            <div class="highlights-grid" id="atlas-highlights-grid"></div>
+          </section>
+        </div>
+      </section>
+
+      <!-- VIEW 7: MEMT PROCEDURAL LIBRARY -->
+      <section class="view-panel view-scroll view-memt" id="view-memt" aria-label="MemT Procedural Library" hidden>
+        <div class="view-container">
+          <div class="view-header">
+            <div>
+              <h1 class="view-title">MemT Library.</h1>
+              <p class="view-subtitle" id="memt-status-meta">Verified operating rules, failure preventions, and repeatable recipes.</p>
+            </div>
+            <button type="button" class="btn-primary" id="btn-toggle-recipe-form">+ New Recipe</button>
+          </div>
+
+          <div class="inline-form-wrap" id="memt-add-form-wrap" hidden>
+            <form id="memt-add-form" class="recipe-form" novalidate>
+              <div class="form-head">
+                <h2 class="section-heading">Store Verified MemT Experience</h2>
+                <button type="button" class="btn-ghost" id="btn-cancel-recipe-form">Cancel</button>
+              </div>
+              <div class="form-grid">
+                <div class="field">
+                  <label for="recipe-domain">Domain</label>
+                  <input id="recipe-domain" name="domain" type="text" placeholder="e.g. infra, ui, trading, git" required>
+                </div>
+                <div class="field">
+                  <label for="recipe-condition">Trigger Condition</label>
+                  <input id="recipe-condition" name="condition" type="text" placeholder="When this situation occurs..." required>
+                </div>
+                <div class="field field-wide">
+                  <label for="recipe-recommendation">Verified Recommendation</label>
+                  <textarea id="recipe-recommendation" name="recommendation" rows="2" placeholder="Exact action or invariant to apply..." required></textarea>
+                </div>
+                <div class="field field-wide">
+                  <label for="recipe-verification">Verification Proof / Check</label>
+                  <input id="recipe-verification" name="verification" type="text" placeholder="Command, observation, or invariant check confirming this works">
+                </div>
+              </div>
+              <div class="form-actions">
+                <span class="form-feedback" id="recipe-form-feedback" role="status" aria-live="polite"></span>
+                <button type="submit" class="btn-primary" id="recipe-submit">Save Recipe</button>
+              </div>
+            </form>
+          </div>
+
+          <div class="memt-controls">
+            <div class="memt-search-wrap">
+              <label for="memt-search" class="sr-only">Search MemT recipes</label>
+              <input id="memt-search" type="search" placeholder="Search domain, condition, recommendation, or proof..." autocomplete="off">
+            </div>
+            <div class="domain-pills" id="memt-domain-pills" role="group" aria-label="Filter by domain"></div>
+          </div>
+
+          <div class="memt-grid" id="memt-list">
+            <div class="skeleton-block"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Omni-Search Command Palette (Cmd+K / Ctrl+K) -->
+  <div class="cmdk-backdrop" id="cmdk-backdrop" hidden>
+    <div class="cmdk-modal" id="cmdk-modal" role="dialog" aria-modal="true" aria-label="Omni-search command palette">
+      <div class="cmdk-input-row">
+        <svg class="cmdk-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <circle cx="7" cy="7" r="4.75" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M10.75 10.75L14 14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+        <label for="cmdk-input" class="sr-only">Search calendar, inbox, people, vault docs, MemT, and graph nodes</label>
+        <input id="cmdk-input" type="search" placeholder="Search calendar, inbox, people, vault docs, MemT, or nodes..." autocomplete="off" spellcheck="false">
+        <span class="cmdk-meta tabular" id="cmdk-meta">ESC</span>
+      </div>
+      <div class="cmdk-results" id="cmdk-results" role="listbox"></div>
+      <div class="cmdk-footer">
+        <span><kbd>&uarr;&darr;</kbd> Navigate</span>
+        <span><kbd>Enter</kbd> Open</span>
+        <span><kbd>Esc</kbd> Close</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Full Multi-Turn Mind Chat Sheet / Modal (Cmd+J) - Zero Floating Bottom Overlap -->
+  <div class="chat-modal-backdrop" id="chat-modal-backdrop" hidden>
+    <div class="chat-modal" id="chat-modal" role="dialog" aria-modal="true" aria-label="Multi-Turn Kizuki Mind Chat">
+      <header class="chat-modal-head">
+        <div class="chat-thread-title-group">
+          <span class="chat-thread-title">Mind Chat</span>
+          <span class="badge badge-neutral tabular" id="chat-history-count">0 turns</span>
+          <span class="badge badge-neutral" id="response-engine-badge">Vault + G4</span>
+          <span class="response-latency tabular" id="response-latency"></span>
+        </div>
+        <div class="chat-thread-actions">
+          <button type="button" class="btn-ghost btn-sm" id="btn-chat-save-note" title="Save thread to owner-notes/">Save Note</button>
+          <button type="button" class="btn-ghost btn-sm" id="btn-chat-clear" title="Clear chat thread">Clear</button>
+          <button type="button" class="icon-close-btn" id="btn-chat-close" aria-label="Close Mind Chat (Esc)">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <div class="chat-modal-scroll" id="chat-messages" aria-live="polite"></div>
+
+      <div class="chat-starters" id="chat-starters" aria-label="Quick mind prompts">
+        <button type="button" class="starter-chip" data-starter-mode="ask" data-starter-prompt="Summarize what needs my attention today across calendar, messages, and active workstreams in a concise markdown table.">What needs me today?</button>
+        <button type="button" class="starter-chip" data-starter-mode="ask" data-starter-prompt="Compare my active projects in a concise markdown table with status, blockers, and next actions.">Compare active projects</button>
+        <button type="button" class="starter-chip" data-starter-mode="ask" data-starter-prompt="What verified MemT rules and safeguards apply to Kizuki and Local LLM?">MemT safeguards</button>
+        <button type="button" class="starter-chip" data-starter-mode="reflex" data-starter-prompt="Check my current commitments, schedule conflicts, and blind spots for today.">Reflex check</button>
+      </div>
+
+      <form class="chat-modal-form" id="chat-form">
+        <div class="chat-form-top">
+          <div class="mode-selector" role="radiogroup" aria-label="Mind Chat mode">
+            <button type="button" class="mode-btn is-active" data-mode="ask" aria-pressed="true">Ask Mind</button>
+            <button type="button" class="mode-btn" data-mode="tell" aria-pressed="false">Tell / Anchor</button>
+            <button type="button" class="mode-btn" data-mode="memt" aria-pressed="false">Save Recipe</button>
+            <button type="button" class="mode-btn" data-mode="reflex" aria-pressed="false">Reflex</button>
+          </div>
+
+          <div class="dock-context-chip" id="chat-context-chip" hidden>
+            <span class="chip-prefix" id="chat-context-prefix">Context</span>
+            <span class="chip-name" id="chat-context-label"></span>
+            <button type="button" class="chip-remove" id="btn-detach-context" aria-label="Detach attached context">&times;</button>
+          </div>
+        </div>
+
+        <div class="dock-memt-fields" id="chat-memt-fields" hidden>
+          <div class="dock-mini-field">
+            <label for="chat-memt-domain">Domain</label>
+            <input id="chat-memt-domain" type="text" placeholder="infra / ui / ops" autocomplete="off">
+          </div>
+          <div class="dock-mini-field">
+            <label for="chat-memt-condition">Condition</label>
+            <input id="chat-memt-condition" type="text" placeholder="When X happens..." autocomplete="off">
+          </div>
+          <div class="dock-mini-field">
+            <label for="chat-memt-verification">Verification</label>
+            <input id="chat-memt-verification" type="text" placeholder="How to verify..." autocomplete="off">
+          </div>
+        </div>
+
+        <div class="dock-input-row">
+          <label for="chat-input" class="sr-only">Send a query, anchor a fact, save a recipe, or run a reflex check</label>
+          <textarea id="chat-input" rows="2" placeholder="Ask your mind anything across calendar, inbox, Obsidian, Apple Notes, and Kizuki..." autocomplete="off"></textarea>
+          <button type="submit" class="btn-primary dock-submit" id="chat-submit">
+            <span id="chat-submit-label">Ask</span>
+            <kbd class="submit-kbd" aria-hidden="true">&crarr;</kbd>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Google Maps Timeline Import Modal -->
+  <div class="replay-import-backdrop" id="replay-import-backdrop" hidden>
+    <div class="replay-import-modal" id="replay-import-modal" role="dialog" aria-modal="true" aria-labelledby="replay-import-title">
+      <header class="replay-import-head">
+        <h2 class="replay-import-title" id="replay-import-title">Import Google Maps Timeline</h2>
+        <button type="button" class="icon-close-btn" id="btn-replay-import-close" aria-label="Close import modal (Esc)">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </button>
+      </header>
+      <div class="replay-import-body">
+        <label class="import-dropzone" id="replay-import-dropzone" for="replay-import-file">
+          <input type="file" id="replay-import-file" accept=".json,application/json">
+          <span class="import-dropzone-icon" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M8 10.5V2.75M8 2.75L4.75 6M8 2.75L11.25 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M2.5 10.5V12.25C2.5 12.94 3.06 13.5 3.75 13.5H12.25C12.94 13.5 13.5 12.94 13.5 12.25V10.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </span>
+          <span class="import-dropzone-title">Drop Google Maps Timeline JSON here or click to choose a file</span>
+          <span class="import-dropzone-sub">Parsed locally inside your private Kizuki vault. Zero external uploads.</span>
+          <span class="btn-secondary btn-xs import-dropzone-cta" aria-hidden="true">Choose JSON File</span>
+          <div class="import-dropzone-formats">
+            <span class="import-format-pill">Timeline.json</span>
+            <span class="import-format-pill">Semantic Location History</span>
+            <span class="import-format-pill">Records.json</span>
+          </div>
+        </label>
+        <div class="replay-import-instructions">
+          <div class="replay-import-instructions-title">3-Step Export Instructions</div>
+          <ol>
+            <li><strong>Open Google Maps on your phone:</strong> Go to Settings &rarr; Location &rarr; Location Services &rarr; Timeline (or Your Timeline &rarr; Settings).</li>
+            <li><strong>Export Timeline data:</strong> Tap <strong>Export Timeline data</strong> to save <code>Timeline.json</code>, or export <code>Records.json</code> / <code>Semantic Location History</code> from Google Takeout.</li>
+            <li><strong>Import here:</strong> Drop or pick the <code>.json</code> file above to merge visits, routes, and trips into your offline Life Map.</li>
+          </ol>
+        </div>
+        <div class="replay-import-receipt" id="replay-import-status" role="status" aria-live="polite" hidden></div>
+      </div>
+      <footer class="replay-import-foot">
+        <button type="button" class="btn-secondary btn-sm" id="btn-replay-import-done">Close</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Toast Notification Stack -->
+  <div class="toast-stack" id="toast-stack" aria-live="polite" aria-atomic="false"></div>
+
+  <script src="/markdown.js"></script>
+  <script src="/icons.js"></script>
+  <script src="/motion.js"></script>
+  <script src="/charts.js"></script>
+  <script src="/geo-atlas.js"></script>
+  <script src="/graph.js"></script>
+  <script src="/person-visuals.js"></script>
+  <script src="/replay-map.js"></script>
+  <script src="/sound.js"></script>
+  <script src="/replay-scrubber.js"></script>
+  <script src="/taste-deck-fx.js"></script>
+  <script src="/codex-constellation.js"></script>
+  <script src="/instrument-hud.js"></script>
+  <script src="/codex-view.js"></script>
+  <script src="/taste-view.js"></script>
+  <script src="/ui-sdk-core.js"></script>
+  <script src="/board-mesh-canvas.js"></script>
+  <script src="/board-artifacts.js"></script>
+  <script src="/board-composer-sdk.js"></script>
+  <script src="/board-context-stage.js"></script>
+  <script src="/agent-board-view.js"></script>
+  <script src="/board-os-widgets.js"></script>
+  <script src="/kinetic-os.js"></script>
+  <script src="/app.js"></script>
+  <script>(function(){window.__KIZUKI_ONTOLOGY_HOOKED__=true;var p;function go(t){if(window.KizukiAutoOntology)return t?window.KizukiAutoOntology.toggle():window.KizukiAutoOntology.open();if(!p){p=new Promise(function(ok,no){var m=(window.__KIZUKI_CHUNKS__&&window.__KIZUKI_CHUNKS__.lazyExt&&window.__KIZUKI_CHUNKS__.lazyExt.ontology)||{};var l=document.createElement('link');l.rel='stylesheet';l.href=m.css||'/ext/97-auto-ontology.css';document.head.appendChild(l);var s=document.createElement('script');s.src=m.js||'/ext/97-auto-ontology.js';s.onload=ok;s.onerror=no;document.body.appendChild(s);});}p.then(function(){window.KizukiAutoOntology&&window.KizukiAutoOntology.open();});}document.addEventListener('click',function(e){if(e.target&&e.target.closest&&e.target.closest('#btn-ontology-open,#btn-mobile-ontology'))go(false);});document.addEventListener('keydown',function(e){if(e.altKey&&!e.ctrlKey&&!e.metaKey&&((e.key||'').toLowerCase()==='o'||e.code==='KeyO')){e.preventDefault();go(true);}});if(location.search.indexOf('ontology=open')>-1)go(false);})();</script>
+</body>
+</html>

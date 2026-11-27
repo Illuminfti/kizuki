@@ -1,0 +1,102 @@
+/* Kizuki Mind OS - Studio Motion Primitives & Specular Rim Layer (Lane U1) */
+@layer overrides {
+  :root {
+    --sm-spring: cubic-bezier(0.22, 1.28, 0.36, 1);
+    --sm-rim-a: oklch(0.95 0.018 250 / 0.56);
+    --sm-rim-b: oklch(0.84 0.04 248 / 0.16);
+  }
+  html[data-theme="light"] {
+    --sm-rim-a: oklch(0.46 0.15 254 / 0.42);
+    --sm-rim-b: oklch(0.54 0.10 250 / 0.11);
+  }
+
+  /* 1. FLIP Spring Segmented Thumb (#03) */
+  .sm-seg-host {
+    position: relative; isolation: isolate;
+    & > :is(button, [role="tab"], a) { position: relative; z-index: 1; }
+    &[data-sm-ready="1"] > .sm-seg-thumb { opacity: 1; }
+    &[data-sm-ready="1"] > :is(.is-active, [aria-selected="true"]) {
+      background-color: transparent; border-color: transparent; box-shadow: none;
+    }
+  }
+  .sm-seg-thumb {
+    position: absolute; top: 0; left: 0; z-index: 0; pointer-events: none;
+    border-radius: calc(var(--r-sm) - 2px); background-color: var(--elev-2);
+    border: 1px solid var(--border-strong); box-shadow: var(--bevel-top), 0 1px 3px oklch(0 0 0 / 0.34);
+    transform-origin: 0 0; opacity: 0;
+    transition: transform 340ms var(--sm-spring), opacity 140ms var(--ease-out);
+  }
+  html[data-theme="light"] .sm-seg-thumb {
+    background-color: var(--elev-1);
+    box-shadow: var(--bevel-top), 0 1px 3px rgba(15, 23, 42, 0.09);
+  }
+
+  /* 2. Shared-Border Specular Rim (#08), 3D Micro-Tilt (#12) & Magnetic CTAs (#18) */
+  @media (hover: hover) {
+    html:not([data-detail="off"]) {
+      & :is(.tr-move, .tr-card, .pb-row, .today-card, .taste-card, .sm-tilt-card, .ust-tile, [data-sm-specular]) {
+        position: relative;
+        &::before {
+          content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px;
+          pointer-events: none; z-index: 2; opacity: var(--sm-active, 0);
+          background: radial-gradient(210px circle at var(--sm-mx, 50%) var(--sm-my, 0%), var(--sm-rim-a), var(--sm-rim-b) 44%, transparent 70%);
+          -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          -webkit-mask-composite: xor;
+          mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          mask-composite: exclude;
+          transition: opacity 150ms var(--ease-out);
+        }
+      }
+      & :is(.tr-card, .taste-card)[data-sm-lit="1"]::after { opacity: 0; }
+      & :is(.taste-card, .sm-tilt-card) {
+        transform: perspective(900px) rotateX(var(--sm-rx, 0deg)) rotateY(var(--sm-ry, 0deg));
+        transition: transform 280ms var(--ease-out), box-shadow var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+        &[data-sm-tilt="1"] { transition-duration: 90ms; }
+      }
+      & :is(.tr-detent-btn, #btn-open-vault, #btn-new-action, .iask-send-btn, .icap-submit-btn, #iask-submit, #icap-submit, .iask-submit, #btn-detail-primary, #btn-toggle-quick-action, #btn-new-note, [data-sm-magnetic]) {
+        transform: translate3d(var(--sm-tx, 0px), var(--sm-ty, 0px), 0);
+        transition: transform 320ms var(--sm-spring), border-color var(--dur-fast) ease, color var(--dur-fast) ease, background-color var(--dur-fast) ease;
+      }
+      & [data-sm-mag="1"] { transition-duration: 95ms; }
+      & :is(.tr-detent-btn, [data-sm-mag="1"]):active {
+        transform: translate3d(var(--sm-tx, 0px), var(--sm-ty, 0px), 0) scale(0.97);
+      }
+    }
+  }
+
+  /* 3. Tactile Morphing Theme Switch (#04) */
+  :is(#btn-theme-toggle, #btn-theme, #btn-mobile-theme) {
+    position: relative; overflow: hidden;
+    & :is(.icon-sun, .icon-moon) {
+      display: block; position: absolute; inset: 0; margin: auto;
+      transition: transform 360ms var(--sm-spring), opacity 220ms var(--ease-out);
+    }
+    &.is-sm-morphing { animation: sm-theme-detent 340ms var(--sm-spring); }
+  }
+  html[data-theme="dark"] :is(#btn-theme-toggle, #btn-theme, #btn-mobile-theme) {
+    & .icon-sun { opacity: 1; transform: rotate(0deg) scale(1); }
+    & .icon-moon { opacity: 0; transform: rotate(-90deg) scale(0.45); pointer-events: none; }
+  }
+  html[data-theme="light"] :is(#btn-theme-toggle, #btn-theme, #btn-mobile-theme) {
+    & .icon-moon { opacity: 1; transform: rotate(0deg) scale(1); }
+    & .icon-sun { opacity: 0; transform: rotate(90deg) scale(0.45); pointer-events: none; }
+  }
+  @keyframes sm-theme-detent { 0% { transform: scale(0.90); } 55% { transform: scale(1.06); } 100% { transform: scale(1); } }
+
+  /* 4. Subtraction Proof (?detail=off) & Reduced Motion (0px CLS) */
+  html[data-detail="off"] {
+    & .sm-seg-thumb { box-shadow: none; transition: none; }
+    & [data-sm-lit]::before { display: none; }
+    & :is(.taste-card, .sm-tilt-card, [data-sm-mag]) { transform: none; transition: none; }
+    & :is(#btn-theme-toggle, #btn-theme, #btn-mobile-theme) {
+      &.is-sm-morphing { animation: none; }
+      & :is(.icon-sun, .icon-moon) { transition: none; }
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sm-seg-thumb, .taste-card, .sm-tilt-card, .tr-detent-btn, [data-sm-mag], [data-sm-magnetic],
+    :is(#btn-theme-toggle, #btn-theme, #btn-mobile-theme),
+    :is(#btn-theme-toggle, #btn-theme, #btn-mobile-theme) :is(.icon-sun, .icon-moon) { transition: none; animation: none; }
+    [data-sm-lit]::before { display: none; }
+  }
+}

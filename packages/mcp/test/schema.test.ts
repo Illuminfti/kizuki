@@ -11,6 +11,7 @@ import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { recordedPage } from "../../core/test/helpers/recorded-page";
 import { CORRECT_INPUT, ENVELOPE_SHAPE, PACKET_INPUT } from "../src/schemas";
 import { MEMT_TOOL_NAMES } from "../src/memt";
+import { ONTOLOGY_TOOL_NAMES } from "../src/ontology";
 import { call, connectClient, envelopeOf } from "./client";
 import { mcpFixture } from "./helpers";
 import type { McpFixture } from "./helpers";
@@ -147,7 +148,7 @@ describe("the advertised output schema describes what the server sends", () => {
   test("every tool advertises an output schema", async () => {
     const client = await connectClient(live().owner(), open);
     const tools = (await client.listTools()).tools;
-    expect(tools.map((tool) => tool.name)).toEqual([...TOOLS, ...MEMT_TOOL_NAMES]);
+    expect(tools.map((tool) => tool.name)).toEqual([...TOOLS, ...MEMT_TOOL_NAMES, ...ONTOLOGY_TOOL_NAMES]);
     for (const tool of tools) expect(tool.outputSchema).toBeDefined();
   });
 
@@ -213,9 +214,9 @@ describe("the advertised output schema describes what the server sends", () => {
   test("negotiated tools advertise implemented contracts and retain the world exception", async () => {
     const client = await connectClient(live().owner(), open);
     const tools = (await client.listTools()).tools;
-    expect(tools.map((tool) => tool.name)).toEqual([...TOOLS, "memt_status", "memt_recall", "memt_experience", "memt_snapshot"]);
+    expect(tools.map((tool) => tool.name)).toEqual([...TOOLS, ...MEMT_TOOL_NAMES, ...ONTOLOGY_TOOL_NAMES]);
     for (const tool of tools) {
-      if (tool.name.startsWith("memt_")) continue;
+      if (tool.name.startsWith("memt_") || tool.name.startsWith("ontology_")) continue;
       const advertised = tool.outputSchema as {
         required?: string[];
         properties?: { source_policy?: { required?: string[] }; schema?: { const?: string } };

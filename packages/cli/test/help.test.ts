@@ -1002,6 +1002,7 @@ describe("help", () => {
       import("../src/commands/hook").then((m) => m.hookCommand),
       import("../src/commands/world").then((m) => m.worldCommand),
       import("../src/commands/memt").then((m) => m.memtCommand),
+      import("../src/commands/ontology").then((m) => m.ontologyCommand),
       import("../src/commands/attention").then((m) => m.attentionCommand),
       import("../src/commands/verify").then((m) => m.verifyCommand),
       import("../src/commands/doctor").then((m) => m.doctorCommand),
@@ -1041,7 +1042,7 @@ describe("help", () => {
     // Every command belongs to an explicit group rather than trailing ungrouped after Meta.
     const metaSection = lines.slice(metaIndex + 1, examplesIndex).filter((line) => line.startsWith("  "));
     expect(metaSection.length).toBe(2);
-    for (const verb of ["hook", "attention", "verify", "reflex", "parity", "memt"] as const) {
+    for (const verb of ["hook", "attention", "verify", "reflex", "parity", "memt", "ontology"] as const) {
       const help = runCli(env, "help", verb);
       expect(help.exitCode).toBe(0);
       expect(help.stdout).toContain("Examples");
