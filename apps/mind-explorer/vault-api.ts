@@ -1903,14 +1903,24 @@ async function execCommand(
   args: string[],
   timeoutMs: number
 ): Promise<{ ok: boolean; stdout: string; stderr: string; exitCode: number }> {
-  const proc = Bun.spawn(args, {
-    stdout: "pipe",
-    stderr: "pipe",
-    env: {
-      ...process.env,
-      NO_COLOR: "1",
-    },
-  });
+  let proc: ReturnType<typeof Bun.spawn>;
+  try {
+    proc = Bun.spawn(args, {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...process.env,
+        NO_COLOR: "1",
+      },
+    });
+  } catch (err) {
+    return {
+      ok: false,
+      stdout: "",
+      stderr: err instanceof Error ? err.message : String(err),
+      exitCode: 127,
+    };
+  }
 
   let timedOut = false;
   const timer = setTimeout(() => {

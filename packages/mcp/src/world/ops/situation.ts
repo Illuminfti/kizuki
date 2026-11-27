@@ -33,6 +33,5 @@ export const situationFragment: McpWorldOp = {
       uncertainty: z.array(worldRelation).max(256),
     },
   },
-  summary:
-    "situation reads its ObjectRef; card:kizuki.situation-card/v2 adds commitments/decisions/dependencies; default v1.",
+  summary: "situation: ObjectRef (v2 adds commitments/decisions/deps).",
 };

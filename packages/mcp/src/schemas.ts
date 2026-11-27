@@ -13,8 +13,13 @@ import { buildWorldSurface } from "./world/surface";
  * everything that reaches it.
  */
 const SENSITIVITY = z.enum(["public", "personal", "private"]);
-const ID = z.string().min(1).max(64);
-const RFC3339 = z.string().min(20).max(40);
+const boundedText = (min: number, max: number) =>
+  z.string().refine((value) => value.length >= min && value.length <= max);
+const boundedInt = (min: number, max: number) =>
+  z.number().refine((value) => Number.isInteger(value) && value >= min && value <= max);
+const boundedRegex = (re: RegExp) => z.string().refine((value) => re.test(value));
+const ID = boundedText(1, 64);
+const RFC3339 = boundedText(20, 40);
 const AUTHORITY = z.enum(Object.keys(AUTHORITY_TIERS) as [string, ...string[]]);
 // Named, so `tools/list` states it once per tool rather than once per chunk kind.
 const SUBJECT_LABEL = z.strictObject({
@@ -285,9 +290,9 @@ export function selectableInput<T extends z.ZodObject>(input: T) {
 }
 
 export const SEARCH_INPUT = z.strictObject({
-  query: z.string().min(1).max(512),
+  query: boundedText(1, 512),
   scope: z.enum(["canon", "ledger", "all"]).optional(),
-  limit: z.int().min(1).max(50).optional(),
+  limit: boundedInt(1, 50).optional(),
   types: z.array(ID).max(16).optional(),
   subjects: z.array(z.union([ID, SCOPED_INPUT_REF])).max(16).optional(),
   since: RFC3339.optional(),
@@ -297,37 +302,34 @@ export const SEARCH_INPUT = z.strictObject({
 
 export const GET_PAGE_INPUT = z.strictObject({
   page: SCOPED_INPUT_REF.optional(),
-  id: z.string().min(1).max(256).optional(),
-  path: z.string().min(4).max(256).optional(),
+  id: boundedText(1, 256).optional(),
+  path: boundedText(4, 256).optional(),
 });
 
 export const ENTITIES_INPUT = z.strictObject({
   type: z.enum(["person", "org", "project", "place", "topic"]).optional(),
-  name: z.string().min(1).max(128).optional(),
-  limit: z.int().min(1).max(50).optional(),
+  name: boundedText(1, 128).optional(),
+  limit: boundedInt(1, 50).optional(),
 });
 
 export const TIMELINE_INPUT = z.strictObject({
   source: SCOPED_INPUT_REF.optional(), eventVersion: SCOPED_INPUT_REF.optional(),
-  day: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/)
-    .optional(),
+  day: boundedRegex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   since: RFC3339.optional(),
   until: RFC3339.optional(),
   subject: z.union([ID, SCOPED_INPUT_REF]).optional(),
   connector_id: ID.optional(),
   kind: ID.optional(),
-  limit: z.int().min(1).max(200).optional(),
+  limit: boundedInt(1, 200).optional(),
   event_id: ID.optional(),
-  offset: z.int().min(0).max(100_000).optional(),
-  span: z.int().min(1).max(2_000).optional(),
-  integrity: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+  offset: boundedInt(0, 100_000).optional(),
+  span: boundedInt(1, 2_000).optional(),
+  integrity: boundedRegex(/^[0-9a-f]{64}$/).optional(),
 });
 
 export const GRAPH_INPUT = z.strictObject({
   id: ID.optional(), anchor: SCOPED_INPUT_REF.optional(),
-  depth: z.int().min(1).max(2).optional(),
+  depth: boundedInt(1, 2).optional(),
   kinds: z
     .array(z.enum(["wikilink", "subject", "source"]))
     .max(3)
@@ -338,11 +340,11 @@ export const HEALTH_INPUT = z.strictObject({});
 
 export const PACKET_INPUT = z.strictObject({
   taskEventVersion: SCOPED_INPUT_REF.optional(),
-  query: z.string().min(1).max(512).optional(),
+  query: boundedText(1, 512).optional(),
   subjects: z.array(z.union([ID, SCOPED_INPUT_REF])).max(16).optional(),
   since: RFC3339.optional(),
   until: RFC3339.optional(),
-  budget_tokens: z.int().min(50).max(2000).optional(),
+  budget_tokens: boundedInt(50, 2000).optional(),
   include: z
     .array(z.enum(["canon", "graph", "timeline", "claims"]))
     .max(4)
@@ -354,10 +356,10 @@ export const PACKET_INPUT = z.strictObject({
     .max(5)
     .optional(),
   retain_prefix: z.boolean().optional(),
-  prior_hash: z.string().regex(/^[0-9a-f]{64}$/).optional(),
-  epoch: z.int().min(0).optional(),
+  prior_hash: boundedRegex(/^[0-9a-f]{64}$/).optional(),
+  epoch: boundedInt(0, Number.MAX_SAFE_INTEGER).optional(),
   task_event_id: ID.optional(),
-  task_integrity: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+  task_integrity: boundedRegex(/^[0-9a-f]{64}$/).optional(),
 });
 
 /**
@@ -378,10 +380,10 @@ const MAX_FRONTMATTER_KEYS = 32;
 const MAX_FRONTMATTER_CHARS = 16384;
 
 const FRONTMATTER_VALUE = z.union([
-  z.string().max(MAX_FRONTMATTER_STRING),
+  boundedText(0, MAX_FRONTMATTER_STRING),
   z.number(),
   z.boolean(),
-  z.array(z.string().max(MAX_FRONTMATTER_STRING)).max(MAX_FRONTMATTER_ITEMS),
+  z.array(boundedText(0, MAX_FRONTMATTER_STRING)).refine((items) => items.length <= MAX_FRONTMATTER_ITEMS),
 ]);
 
 function frontmatterChars(bag: Record<string, unknown>): number {
@@ -408,19 +410,19 @@ const CORRECT_OBJECT_REF = z.strictObject({ kind: z.literal("object"), token: CO
  * engine's judgement, made on every call, so a mismatch is refused and audited.
  */
 export const CORRECT_INPUT = z.strictObject({
-  statement: z.string().min(1).max(2000),
+  statement: boundedText(1, 2000),
   target: z.union([SCOPED_INPUT_REF, z
     .strictObject({
       claim_id: ID.optional(),
-      claim_key: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+      claim_key: boundedRegex(/^[0-9a-f]{64}$/).optional(),
       subject: z.union([ID, SCOPED_INPUT_REF]).optional(),
       world_claim: z.strictObject({ kind: z.literal("claim"), token: CORRECT_TOKEN }).optional(),
     }).refine((target) => [target.claim_id, target.claim_key, target.subject, target.world_claim].filter((value) => value !== undefined).length <= 1, "target names exactly one selector")]).optional(),
   object: z
     .union([
-      z.string().min(1).max(1024),
-      z.strictObject({ kind: z.literal("literal"), value: z.string().min(1).max(400) }),
-      z.strictObject({ kind: z.literal("vocabulary"), id: z.string().min(1).max(128) }),
+      boundedText(1, 1024),
+      z.strictObject({ kind: z.literal("literal"), value: boundedText(1, 400) }),
+      z.strictObject({ kind: z.literal("vocabulary"), id: boundedText(1, 128) }),
       z.strictObject({ kind: z.literal("node"), ref: CORRECT_OBJECT_REF }),
     ])
     .optional(),
@@ -439,10 +441,10 @@ export const CORRECT_INPUT = z.strictObject({
 
 export const PROPOSE_INPUT = z.strictObject({
   kind: z.enum(["entity", "claim", "edit", "merge", "deletion"]),
-  target: z.union([z.string().max(256), SCOPED_INPUT_REF]).nullable().optional(),
-  body: z.string().min(1).max(65536),
+  target: z.union([boundedText(0, 256), SCOPED_INPUT_REF]).nullable().optional(),
+  body: boundedText(1, 65536),
   frontmatter: z
-    .record(z.string().max(64), FRONTMATTER_VALUE)
+    .record(boundedText(0, 64), FRONTMATTER_VALUE)
     .refine(
       (bag) => Object.keys(bag).length <= MAX_FRONTMATTER_KEYS,
       `must hold at most ${MAX_FRONTMATTER_KEYS} keys`,
@@ -452,13 +454,13 @@ export const PROPOSE_INPUT = z.strictObject({
       `must hold at most ${MAX_FRONTMATTER_CHARS} characters in total`,
     )
     .optional(),
-  subjects: z.array(z.union([ID, SCOPED_INPUT_REF])).max(16).optional(),
+  subjects: z.array(z.union([ID, SCOPED_INPUT_REF])).refine((items) => items.length <= 16).optional(),
   subject: z.union([ID, SCOPED_INPUT_REF]).optional(),
   predicate: ID.optional(),
-  object: z.union([z.string().min(1).max(1024), worldRelation.shape.object]).optional(),
+  object: z.union([boundedText(1, 1024), worldRelation.shape.object]).optional(),
   polarity: z.enum(["positive", "negative"]).optional(),
-  provenance: z.array(z.union([ID, SCOPED_INPUT_REF])).min(1).max(64),
-  confidence: z.number().min(0).max(1).optional(),
+  provenance: z.array(z.union([ID, SCOPED_INPUT_REF])).refine((items) => items.length >= 1 && items.length <= 64),
+  confidence: z.number().refine((v) => Number.isFinite(v) && v >= 0 && v <= 1).optional(),
 });
 
 /** Generated from the registered operations' fragments; see `world/surface.ts`. */

@@ -21,7 +21,22 @@ export function compactToolSchema(schema: Record<string, unknown>, options: { om
       if (Object.hasOwn(node, key)) node[key] = Array.isArray(node[key]) ? node[key].map((child) => compact(child)) : compact(node[key]);
     }
     for (const key of ARRAYS) {
-      if (Array.isArray(node[key])) node[key] = node[key].map((child) => compact(child));
+      if (Array.isArray(node[key])) {
+        const compacted = node[key].map((child) => compact(child));
+        if (key === "anyOf") {
+          const flat: unknown[] = [];
+          for (const entry of compacted) {
+            if (object(entry) && Object.keys(entry).length === 1 && Array.isArray(entry.anyOf)) {
+              flat.push(...entry.anyOf);
+            } else {
+              flat.push(entry);
+            }
+          }
+          node[key] = flat;
+        } else {
+          node[key] = compacted;
+        }
+      }
     }
     if (
       node["$schema"] === "http://json-schema.org/draft-07/schema#" ||
@@ -57,6 +72,10 @@ export function compactToolSchema(schema: Record<string, unknown>, options: { om
     }
     const names = node["propertyNames"];
     if (object(names) && Object.keys(names).length === 1 && names["type"] === "string") delete node["propertyNames"];
+    if (node["type"] === "integer") {
+      if (node["maximum"] === Number.MAX_SAFE_INTEGER) delete node["maximum"];
+      if (node["minimum"] === Number.MIN_SAFE_INTEGER) delete node["minimum"];
+    }
     if (Array.isArray(node["required"]) && node["required"].length === 0) delete node["required"];
     return node;
   }
@@ -82,7 +101,7 @@ function shareRepeatedSchemas(schema: Record<string, unknown>): Record<string, u
   const eligible = (value: Record<string, unknown>) => !/"(?:\$[^"\n]*|definitions)":/.test(JSON.stringify(value));
   visit(schema, (value, root) => {
     const key = JSON.stringify(value);
-    if (!root && key.length >= 42 && eligible(value)) counts.set(key, { count: (counts.get(key)?.count ?? 0) + 1, value });
+    if (!root && key.length >= 28 && eligible(value)) counts.set(key, { count: (counts.get(key)?.count ?? 0) + 1, value });
     return value;
   }, true);
   const chosen = [...counts].filter(([key, row]) => row.count > 1 && (key.length - 26) * row.count > key.length + 5);

@@ -13,7 +13,7 @@ export const questionFragment: McpWorldOp = {
     lifecycle: z.strictObject({ status: z.enum(["open", "partial", "resolved", "reopened", "abandoned"]), grounds: z.array(worldRef("claim")).max(256) }),
     understanding: z.literal("unknown"),
   } },
-  summary: "question: attributed answers/lifecycle; resolution is not understanding.",
+  summary: "question: attributed answers/lifecycle.",
 };
 export const findQuestionsFragment: McpWorldOp = {
   name: "find_questions", fields: QUERY,
@@ -31,5 +31,5 @@ export const frontierFragment: McpWorldOp = {
       questions: z.array(WORLD_OBJECT_REF).max(32),
     })).max(7), cursor: WIRE_TOKEN.nullable(), coverage: worldCoverage,
   } },
-  summary: "frontier: grouped gaps; unfinished extraction stays partial.",
+  summary: "frontier: grouped gaps.",
 };
