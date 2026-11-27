@@ -1,0 +1,433 @@
+/* ==========================================================================
+   KIZUKI MIND OS - EDITORIAL DESIGN TOKENS (Contract C6)
+   Cascade order: tokens -> base -> components -> views -> overrides
+   Dense-restraint OKLCH dark & pure crisp light polarity. Zero specificity hacks.
+   ========================================================================== */
+
+@layer tokens, base, components, views, overrides;
+
+@layer tokens {
+  :root,
+  html[data-theme="dark"] {
+    color-scheme: dark;
+
+    /* ------------------------------------------------------------------
+       1. 8-Step Type Scale (Contract C6, floor 11px, body >= 13px)
+       ------------------------------------------------------------------ */
+    --t-xs: 11px;
+    --t-sm: 12px;
+    --t-base: 13px;
+    --t-md: 15px;
+    --t-lg: 18px;
+    --t-xl: 24px;
+    --t-2xl: 32px;
+    --t-display: 44px;
+
+    --font-sans: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+    /* ------------------------------------------------------------------
+       2. 4px Spacing Scale
+       ------------------------------------------------------------------ */
+    --sp-1: 4px;
+    --sp-2: 8px;
+    --sp-3: 12px;
+    --sp-4: 16px;
+    --sp-5: 20px;
+    --sp-6: 24px;
+    --sp-7: 28px;
+    --sp-8: 32px;
+    --sp-10: 40px;
+    --sp-12: 48px;
+
+    /* ------------------------------------------------------------------
+       3. 3-Step Radii System (6px / 10px / 14px, non-pill controls)
+       ------------------------------------------------------------------ */
+    --r-sm: 6px;
+    --r-md: 10px;
+    --r-lg: 14px;
+
+    --radius-xs: var(--r-sm);
+    --radius-sm: var(--r-sm);
+    --radius-md: var(--r-md);
+    --radius-lg: var(--r-lg);
+    --radius-xl: var(--r-lg);
+    --radius-pill: 9999px;
+
+    /* ------------------------------------------------------------------
+       4. 5 Elevation Planes (OKLCH Anodized Obsidian Dark Ladder)
+       ------------------------------------------------------------------ */
+    --elev-0: oklch(0.115 0.009 258);
+    --elev-1: oklch(0.155 0.010 258);
+    --elev-2: oklch(0.192 0.011 258);
+    --elev-3: oklch(0.232 0.012 258);
+    --elev-4: oklch(0.270 0.013 258);
+
+    --surface-0: var(--elev-0);
+    --surface-1: var(--elev-1);
+    --surface-2: var(--elev-2);
+    --surface-3: var(--elev-3);
+    --surface-4: var(--elev-4);
+
+    /* Machined Lighting, Bevels & Sculpted Keycap Tokens (Dark) */
+    --bevel-top: inset 0 1px 0 oklch(1 0 0 / 0.085);
+    --bevel-top-strong: inset 0 1px 0 oklch(1 0 0 / 0.14);
+    --bevel-well: inset 0 1px 3px oklch(0 0 0 / 0.52), inset 0 -1px 0 oklch(1 0 0 / 0.045);
+    --shadow-machined-plate: var(--bevel-top), 0 0 0 1px var(--border-hairline), 0 6px 18px -6px oklch(0 0 0 / 0.55);
+    --shadow-machined-lift: var(--bevel-top-strong), 0 0 0 1px var(--border-strong), 0 10px 26px -8px oklch(0 0 0 / 0.64);
+    --keycap-bg: linear-gradient(180deg, oklch(0.245 0.012 258) 0%, oklch(0.188 0.011 258) 100%);
+    --keycap-border: oklch(1 0 0 / 0.16);
+    --keycap-shadow: oklch(0.065 0.007 258);
+    --keycap-top-glint: oklch(1 0 0 / 0.14);
+    --keycap-ink: oklch(0.84 0.006 258);
+    --chassis-ambient: radial-gradient(ellipse 80% 42% at 50% -8%, oklch(0.68 0.04 250 / 0.085), transparent 68%);
+    --chassis-rail-light: linear-gradient(180deg, oklch(0.68 0.03 254 / 0.055) 0%, transparent 240px);
+    --chassis-divider-edge: oklch(1 0 0 / 0.055);
+    --rim-specular-color: oklch(0.88 0.04 248 / 0.34);
+    --rim-specular-soft: oklch(0.76 0.06 248 / 0.09);
+    --nav-jewel: oklch(0.72 0.17 248);
+    --nav-jewel-halo: oklch(0.72 0.17 248 / 0.36);
+    --cmdp-glass-bg: oklch(0.145 0.011 258 / 0.84);
+    --cmdp-glass-header: oklch(0.178 0.012 258 / 0.72);
+    --cmdp-glass-scrim: oklch(0.065 0.008 258 / 0.62);
+    --cmdp-glass-bevel: inset 0 1px 0 oklch(1 0 0 / 0.15);
+    --cmdp-glass-shadow: var(--cmdp-glass-bevel), 0 0 0 1px oklch(1 0 0 / 0.13), 0 32px 84px -12px oklch(0 0 0 / 0.82);
+
+    --shadow-e0: none;
+    --shadow-e1: var(--bevel-top), 0 0 0 1px oklch(1 0 0 / 0.08), 0 2px 6px -1px oklch(0 0 0 / 0.44);
+    --shadow-e2: var(--bevel-top), 0 0 0 1px oklch(1 0 0 / 0.095), 0 6px 16px -4px oklch(0 0 0 / 0.56);
+    --shadow-e3: var(--bevel-top-strong), 0 0 0 1px oklch(1 0 0 / 0.12), 0 12px 28px -6px oklch(0 0 0 / 0.68);
+    --shadow-e4: var(--bevel-top-strong), 0 0 0 1px oklch(1 0 0 / 0.14), 0 20px 48px -8px oklch(0 0 0 / 0.80);
+
+    /* Surface Aliases */
+    --surface-sunken: var(--elev-0);
+    --surface-canvas: var(--elev-0);
+    --surface-raised: var(--elev-1);
+    --surface-panel: var(--elev-1);
+    --surface-inset: var(--elev-2);
+    --surface-overlay: var(--elev-2);
+    --surface-selected: var(--elev-3);
+    --surface-active: var(--elev-4);
+    --surface-whoop: oklch(0.135 0.009 258);
+    --surface-inverse: oklch(0.95 0.003 258);
+
+    /* Shadow Aliases */
+    --shadow-hairline: 0 0 0 1px oklch(1 0 0 / 0.09);
+    --shadow-card: var(--shadow-e1);
+    --shadow-soft: var(--shadow-e2);
+    --shadow-float: var(--shadow-e3);
+    --shadow-modal: var(--shadow-e4);
+    --scrim-bg: oklch(0 0 0 / 0.68);
+    --grid-line: oklch(1 0 0 / 0.038);
+    --scroll-cue-edge: oklch(1 0 0 / 0.085);
+
+    /* ------------------------------------------------------------------
+       5. Hairlines & Ink Roles (WCAG AA >= 4.5:1 on all dark planes)
+       ------------------------------------------------------------------ */
+    --border-subtle: oklch(1 0 0 / 0.06);
+    --border-hairline: oklch(1 0 0 / 0.10);
+    --border-strong: oklch(1 0 0 / 0.17);
+    --border-hover: oklch(1 0 0 / 0.26);
+    --border-focus: oklch(0.68 0.18 250);
+
+    --ink-primary: oklch(0.95 0.003 260);
+    --ink-secondary: oklch(0.79 0.005 260);
+    --ink-muted: oklch(0.68 0.006 260);
+    --text-muted: var(--ink-muted);
+    --ink-subtle: oklch(0.71 0.006 260);
+    --text-subtle: var(--ink-subtle);
+    --ink-tertiary: oklch(0.71 0.006 260);
+    --ink-faint: oklch(0.64 0.006 260);
+    --ink-disabled: oklch(0.56 0.006 260);
+    --ink-on-accent: oklch(0.12 0.004 260);
+
+    /* ------------------------------------------------------------------
+       6. Semantic Accent Palette (OKLCH Dark)
+       ------------------------------------------------------------------ */
+    --accent-blue: oklch(0.69 0.18 250);
+    --accent-green: oklch(0.70 0.15 150);
+    --accent-cyan: oklch(0.82 0.13 175);
+    --accent-violet: oklch(0.73 0.15 290);
+    --accent-amber: oklch(0.79 0.16 75);
+    --accent-magenta: oklch(0.66 0.24 355);
+    --accent-sky: oklch(0.76 0.14 230);
+    --accent-vermilion: oklch(0.65 0.22 28);
+
+    --ch-wa: var(--accent-green);
+    --ch-imsg: var(--accent-blue);
+    --ch-gmail: oklch(0.88 0.004 260);
+    --ch-tg: var(--accent-sky);
+    --ch-cal: var(--accent-violet);
+
+    --accent-cobalt: var(--accent-blue);
+    --accent-teal: var(--accent-cyan);
+    --accent-rose: var(--accent-magenta);
+    --accent-warn: var(--accent-amber);
+    --status-live: var(--accent-green);
+
+    --tint-blue-bg: oklch(0.69 0.18 250 / 0.10);
+    --tint-blue-border: oklch(0.69 0.18 250 / 0.30);
+    --tint-green-bg: oklch(0.70 0.15 150 / 0.12);
+    --tint-green-border: oklch(0.70 0.15 150 / 0.32);
+    --tint-cyan-bg: oklch(0.82 0.13 175 / 0.09);
+    --tint-cyan-border: oklch(0.82 0.13 175 / 0.30);
+    --tint-violet-bg: oklch(0.73 0.15 290 / 0.10);
+    --tint-violet-border: oklch(0.73 0.15 290 / 0.30);
+    --tint-amber-bg: oklch(0.79 0.16 75 / 0.11);
+    --tint-amber-border: oklch(0.79 0.16 75 / 0.32);
+    --tint-magenta-bg: oklch(0.66 0.24 355 / 0.10);
+    --tint-magenta-border: oklch(0.66 0.24 355 / 0.32);
+    --wm-rose: oklch(0.66 0.21 15);
+    --tint-rose-bg: oklch(0.66 0.21 15 / 0.11);
+    --tint-rose-border: oklch(0.66 0.21 15 / 0.32);
+
+    /* Primary CTA */
+    --btn-primary-bg: oklch(0.95 0.003 258);
+    --btn-primary-text: oklch(0.12 0.009 258);
+    --btn-primary-hover: oklch(0.985 0.003 258);
+    --btn-primary-active: oklch(0.87 0.005 258);
+    --btn-ghost-hover: oklch(1 0 0 / 0.06);
+
+    /* Selection */
+    --selection-bg: oklch(0.95 0.003 258);
+    --selection-fg: oklch(0.12 0.009 258);
+
+    /* People Visuals */
+    --pv-radar-fill: oklch(0.70 0.15 150 / 0.16);
+    --pv-radar-stroke: var(--accent-green);
+    --pv-grid-mesh: oklch(1 0 0 / 0.038);
+    --pv-ego-edge: oklch(1 0 0 / 0.15);
+    --pv-ego-edge-hi: oklch(0.69 0.18 250 / 0.56);
+
+    /* Hero Mesh Stops */
+    --hero-mesh-opacity: 0.07;
+    --hero-grad-a: oklch(0.62 0.19 250);
+    --hero-grad-b: oklch(0.80 0.14 185);
+    --hero-grad-c: oklch(0.56 0.21 295);
+
+    /* Replay Heatmap */
+    --replay-heat-0: oklch(0.175 0.010 258);
+    --replay-heat-0-border: oklch(1 0 0 / 0.065);
+    --replay-heat-1: oklch(0.28 0.06 150);
+    --replay-heat-1-border: oklch(0.70 0.15 150 / 0.26);
+    --replay-heat-2: oklch(0.39 0.10 150);
+    --replay-heat-2-border: oklch(0.70 0.15 150 / 0.40);
+    --replay-heat-3: oklch(0.54 0.13 150);
+    --replay-heat-3-border: oklch(0.70 0.15 150 / 0.58);
+    --replay-heat-4: oklch(0.70 0.15 150);
+    --replay-heat-4-border: oklch(0.80 0.14 150 / 0.74);
+    --replay-gps-dot: var(--accent-cyan);
+    --replay-map-hud-bg: oklch(0.145 0.010 258 / 0.88);
+
+    /* Codex Tokens */
+    --codex-emerald: oklch(0.71 0.15 162);
+    --codex-emerald-bg: oklch(0.71 0.15 162 / 0.10);
+    --codex-emerald-border: oklch(0.71 0.15 162 / 0.28);
+    --codex-red: oklch(0.64 0.22 25);
+    --codex-red-bg: oklch(0.64 0.22 25 / 0.10);
+    --codex-red-border: oklch(0.64 0.22 25 / 0.28);
+    --codex-sticky-bg: oklch(0.115 0.009 258 / 0.90);
+    --codex-stripe-philosophies: var(--accent-violet);
+    --codex-stripe-interests: var(--accent-blue);
+    --codex-stripe-hobbies: var(--accent-green);
+    --codex-stripe-ideas: var(--accent-amber);
+    --codex-stripe-actions: var(--codex-emerald);
+    --codex-card-bg: var(--elev-1);
+    --codex-card-hover-bg: var(--elev-2);
+    --codex-pinned-bg: oklch(0.185 0.011 258);
+    --codex-pinned-border: oklch(1 0 0 / 0.22);
+    --codex-track-bg: oklch(1 0 0 / 0.08);
+
+    /* Motion */
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+    --dur-fast: 120ms;
+    --dur-med: 200ms;
+
+    /* 3-Pane OS Dimensions & Z-Index Stack */
+    --os-sidebar-w: 220px;
+    --triage-pane-w: 380px;
+    --people-pane-w: 340px;
+    --bar-height: 48px;
+    --dir-width: 268px;
+    --inspector-width: 380px;
+    --vault-sidebar-width: 280px;
+    --vault-toc-width: 220px;
+
+    --z-canvas: 1;
+    --z-hud: 12;
+    --z-tooltip: 22;
+    --z-dock: 30;
+    --z-drawer: 34;
+    --z-bar: 36;
+    --z-detail-mobile: 45;
+    --z-modal: 55;
+    --z-backdrop: 58;
+    --z-mobile-nav: 60;
+    --z-toast: 70;
+  }
+
+  /* Architectural Swiss Porcelain & Graphite Ink Light Polarity */
+  html[data-theme="light"] {
+    color-scheme: light;
+
+    --elev-0: oklch(0.972 0.004 252);
+    --elev-1: oklch(0.994 0.002 252);
+    --elev-2: oklch(0.955 0.005 252);
+    --elev-3: oklch(0.934 0.006 252);
+    --elev-4: oklch(0.908 0.007 252);
+
+    --surface-0: var(--elev-0);
+    --surface-1: var(--elev-1);
+    --surface-2: var(--elev-2);
+    --surface-3: var(--elev-3);
+    --surface-4: var(--elev-4);
+
+    /* Machined Lighting, Bevels & Sculpted Keycap Tokens (Light) */
+    --bevel-top: inset 0 1px 0 oklch(1 0 0 / 0.92);
+    --bevel-top-strong: inset 0 1px 0 oklch(1 0 0 / 0.98);
+    --bevel-well: inset 0 1px 2px oklch(0.15 0.01 258 / 0.08), inset 0 -1px 0 oklch(1 0 0 / 0.85);
+    --shadow-machined-plate: var(--bevel-top), 0 0 0 1px var(--border-hairline), 0 4px 14px -6px oklch(0.18 0.015 258 / 0.10), 0 1px 2px oklch(0.18 0.015 258 / 0.05);
+    --shadow-machined-lift: var(--bevel-top-strong), 0 0 0 1px var(--border-strong), 0 10px 24px -10px oklch(0.18 0.015 258 / 0.14);
+    --keycap-bg: linear-gradient(180deg, oklch(0.996 0.002 252) 0%, oklch(0.946 0.005 252) 100%);
+    --keycap-border: rgba(15, 23, 42, 0.15);
+    --keycap-shadow: rgba(15, 23, 42, 0.19);
+    --keycap-top-glint: oklch(1 0 0 / 0.96);
+    --keycap-ink: oklch(0.32 0.008 258);
+    --chassis-ambient: radial-gradient(ellipse 80% 42% at 50% -10%, oklch(1 0 0 / 0.82), transparent 68%);
+    --chassis-rail-light: linear-gradient(180deg, oklch(1 0 0 / 0.72) 0%, transparent 240px);
+    --chassis-divider-edge: oklch(1 0 0 / 0.86);
+    --rim-specular-color: oklch(0.52 0.18 255 / 0.34);
+    --rim-specular-soft: oklch(0.52 0.18 255 / 0.06);
+    --nav-jewel: oklch(0.52 0.20 255);
+    --nav-jewel-halo: oklch(0.52 0.20 255 / 0.24);
+    --cmdp-glass-bg: oklch(0.992 0.003 252 / 0.86);
+    --cmdp-glass-header: oklch(0.962 0.005 252 / 0.78);
+    --cmdp-glass-scrim: oklch(0.18 0.015 258 / 0.24);
+    --cmdp-glass-bevel: inset 0 1px 0 oklch(1 0 0 / 0.95);
+    --cmdp-glass-shadow: var(--cmdp-glass-bevel), 0 0 0 1px rgba(15, 23, 42, 0.11), 0 28px 72px -14px oklch(0.16 0.018 258 / 0.24);
+
+    --shadow-e0: none;
+    --shadow-e1: var(--bevel-top), 0 0 0 1px rgba(15, 23, 42, 0.075), 0 1px 3px rgba(15, 23, 42, 0.045);
+    --shadow-e2: var(--bevel-top), 0 0 0 1px rgba(15, 23, 42, 0.085), 0 4px 12px -3px rgba(15, 23, 42, 0.075);
+    --shadow-e3: var(--bevel-top-strong), 0 0 0 1px rgba(15, 23, 42, 0.10), 0 10px 24px -5px rgba(15, 23, 42, 0.11);
+    --shadow-e4: var(--bevel-top-strong), 0 0 0 1px rgba(15, 23, 42, 0.11), 0 20px 40px -8px rgba(15, 23, 42, 0.15);
+
+    --surface-sunken: var(--elev-0);
+    --surface-canvas: var(--elev-0);
+    --surface-raised: var(--elev-1);
+    --surface-panel: var(--elev-1);
+    --surface-inset: var(--elev-2);
+    --surface-overlay: var(--elev-2);
+    --surface-selected: var(--elev-3);
+    --surface-active: var(--elev-4);
+    --surface-whoop: var(--elev-2);
+    --surface-inverse: oklch(0.17 0.008 258);
+
+    --border-subtle: rgba(15, 23, 42, 0.055);
+    --border-hairline: rgba(15, 23, 42, 0.085);
+    --border-strong: rgba(15, 23, 42, 0.155);
+    --border-hover: rgba(15, 23, 42, 0.26);
+    --border-focus: oklch(0.53 0.20 255);
+
+    /* WCAG AA >= 4.5:1 on porcelain and elevated slate planes */
+    --ink-primary: oklch(0.17 0.008 258);
+    --ink-secondary: oklch(0.35 0.008 258);
+    --ink-muted: oklch(0.45 0.008 258);
+    --text-muted: var(--ink-muted);
+    --ink-subtle: oklch(0.44 0.008 258);
+    --text-subtle: var(--ink-subtle);
+    --ink-tertiary: oklch(0.44 0.008 258);
+    --ink-faint: oklch(0.49 0.008 258);
+    --ink-disabled: oklch(0.52 0.007 258);
+    --ink-on-accent: oklch(0.992 0.002 252);
+
+    --accent-blue: oklch(0.52 0.20 255);
+    --accent-green: oklch(0.51 0.16 148);
+    --accent-cyan: oklch(0.50 0.12 175);
+    --accent-violet: oklch(0.48 0.21 295);
+    --accent-amber: oklch(0.52 0.16 62);
+    --accent-magenta: oklch(0.53 0.22 12);
+    --accent-sky: oklch(0.50 0.16 238);
+    --accent-vermilion: oklch(0.53 0.21 28);
+
+    --ch-wa: var(--accent-green);
+    --ch-imsg: var(--accent-blue);
+    --ch-gmail: var(--ink-muted);
+    --ch-tg: var(--accent-sky);
+    --ch-cal: var(--accent-violet);
+
+    --tint-blue-bg: oklch(0.52 0.20 255 / 0.08);
+    --tint-blue-border: oklch(0.52 0.20 255 / 0.26);
+    --tint-green-bg: oklch(0.51 0.16 148 / 0.09);
+    --tint-green-border: oklch(0.51 0.16 148 / 0.28);
+    --tint-cyan-bg: oklch(0.50 0.12 175 / 0.08);
+    --tint-cyan-border: oklch(0.50 0.12 175 / 0.26);
+    --tint-violet-bg: oklch(0.48 0.21 295 / 0.08);
+    --tint-violet-border: oklch(0.48 0.21 295 / 0.26);
+    --tint-amber-bg: oklch(0.52 0.16 62 / 0.09);
+    --tint-amber-border: oklch(0.52 0.16 62 / 0.28);
+    --tint-magenta-bg: oklch(0.53 0.22 12 / 0.08);
+    --tint-magenta-border: oklch(0.53 0.22 12 / 0.26);
+    --wm-rose: oklch(0.53 0.22 12);
+    --tint-rose-bg: oklch(0.53 0.22 12 / 0.08);
+    --tint-rose-border: oklch(0.53 0.22 12 / 0.26);
+
+    --btn-primary-bg: oklch(0.17 0.008 258);
+    --btn-primary-text: oklch(0.992 0.002 252);
+    --btn-primary-hover: oklch(0.26 0.008 258);
+    --btn-primary-active: oklch(0.11 0.007 258);
+    --btn-ghost-hover: rgba(15, 23, 42, 0.048);
+
+    --selection-bg: oklch(0.17 0.008 258);
+    --selection-fg: oklch(0.985 0.002 252);
+
+    --shadow-hairline: 0 0 0 1px rgba(15, 23, 42, 0.085);
+    --shadow-card: var(--shadow-e1);
+    --shadow-soft: var(--shadow-e2);
+    --shadow-float: var(--shadow-e3);
+    --shadow-modal: var(--shadow-e4);
+    --scrim-bg: oklch(0.18 0.015 258 / 0.28);
+    --grid-line: rgba(15, 23, 42, 0.045);
+    --scroll-cue-edge: rgba(15, 23, 42, 0.075);
+
+    --pv-radar-fill: oklch(0.51 0.16 148 / 0.14);
+    --pv-radar-stroke: var(--accent-green);
+    --pv-grid-mesh: oklch(0 0 0 / 0.042);
+    --pv-ego-edge: oklch(0 0 0 / 0.15);
+    --pv-ego-edge-hi: oklch(0.52 0.20 255 / 0.52);
+
+    --hero-mesh-opacity: 0.055;
+
+    --replay-heat-0: oklch(0.95 0.002 250);
+    --replay-heat-0-border: oklch(0 0 0 / 0.06);
+    --replay-heat-1: oklch(0.92 0.05 148);
+    --replay-heat-1-border: oklch(0.51 0.16 148 / 0.24);
+    --replay-heat-2: oklch(0.82 0.10 148);
+    --replay-heat-2-border: oklch(0.51 0.16 148 / 0.38);
+    --replay-heat-3: oklch(0.66 0.15 148);
+    --replay-heat-3-border: oklch(0.51 0.16 148 / 0.54);
+    --replay-heat-4: oklch(0.51 0.16 148);
+    --replay-heat-4-border: oklch(0.43 0.15 148 / 0.70);
+    --replay-gps-dot: oklch(0.45 0.20 258);
+    --replay-map-hud-bg: oklch(1 0 0 / 0.92);
+
+    --codex-emerald: oklch(0.51 0.15 162);
+    --codex-emerald-bg: oklch(0.51 0.15 162 / 0.08);
+    --codex-emerald-border: oklch(0.51 0.15 162 / 0.26);
+    --codex-red: oklch(0.53 0.21 25);
+    --codex-red-bg: oklch(0.53 0.21 25 / 0.08);
+    --codex-red-border: oklch(0.53 0.21 25 / 0.26);
+    --codex-sticky-bg: oklch(0.985 0.001 250 / 0.94);
+    --codex-stripe-philosophies: var(--accent-violet);
+    --codex-stripe-interests: var(--accent-blue);
+    --codex-stripe-hobbies: var(--accent-green);
+    --codex-stripe-ideas: var(--accent-amber);
+    --codex-stripe-actions: var(--codex-emerald);
+    --codex-card-bg: var(--elev-1);
+    --codex-card-hover-bg: oklch(0.99 0.001 250);
+    --codex-pinned-bg: var(--elev-1);
+    --codex-pinned-border: oklch(0.68 0.006 260);
+    --codex-track-bg: oklch(0 0 0 / 0.075);
+  }
+}

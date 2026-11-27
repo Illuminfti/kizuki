@@ -113,6 +113,10 @@ describe("the stdio process entry", () => {
       "memt_recall",
       "memt_experience",
       "memt_snapshot",
+      "ontology_status",
+      "ontology_search",
+      "ontology_check_answerable",
+      "ontology_certify",
     ]);
     expect(result.stderr.trim()).toBe(
       "kizuki-mcp ready principal=owner tools=10",

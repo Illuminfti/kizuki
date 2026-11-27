@@ -8,6 +8,7 @@ import {
 } from "../../core/test/helpers/world-correct-kit";
 import { CORRECT_INPUT } from "../src/schemas";
 import { MEMT_TOOL_NAMES } from "../src/memt";
+import { ONTOLOGY_TOOL_NAMES } from "../src/ontology";
 import { call, connectClient, envelopeOf, errorOf } from "./client";
 import { mcpFixture, type McpFixture } from "./helpers";
 
@@ -96,14 +97,14 @@ describe("the correct tool", () => {
     const { running } = await seeded();
     const client = await connectClient(running.owner(), open);
     const tools = (await client.listTools()).tools;
-    expect(tools.map((tool) => tool.name)).toEqual([...TOOLS, ...MEMT_TOOL_NAMES]);
-    expect(tools).toHaveLength(14);
+    expect(tools.map((tool) => tool.name)).toEqual([...TOOLS, ...MEMT_TOOL_NAMES, ...ONTOLOGY_TOOL_NAMES]);
+    expect(tools).toHaveLength(18);
     expect(
       tools
         .filter((tool) => tool.annotations?.readOnlyHint === false)
         .map((tool) => tool.name)
         .sort(),
-    ).toEqual(["correct", "memt_experience", "memt_snapshot", "propose"]);
+    ).toEqual(["correct", "memt_experience", "memt_snapshot", "ontology_certify", "propose"]);
     const correct = tools.find((tool) => tool.name === "correct")!;
     const properties = (
       correct.inputSchema as { properties: Record<string, { enum?: string[] }> }

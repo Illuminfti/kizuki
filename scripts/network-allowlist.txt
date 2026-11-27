@@ -145,3 +145,46 @@ packages/core/test/serve/http.test.ts:(toplevel).fetch#12:authenticated syntheti
 packages/core/test/serve/http.test.ts:(toplevel).fetch#13:authenticated synthetic loopback read against the standing serve endpoint
 packages/core/test/serve/http.test.ts:(toplevel).fetch#14:authenticated synthetic loopback read against the standing serve endpoint
 packages/memt/test/memt.test.ts:constructor.Bun.serve#1:synthetic loopback fake MemT server bound to 127.0.0.1 for engine tests
+apps/mind-explorer/explorer.test.ts:(toplevel).fetch#1:synthetic loopback smoke test against the local mind-explorer server
+apps/mind-explorer/explorer.test.ts:(toplevel).fetch#2:synthetic loopback smoke test against the local mind-explorer server
+apps/mind-explorer/explorer.test.ts:(toplevel).fetch#3:synthetic loopback smoke test against the local mind-explorer server
+apps/mind-explorer/explorer.test.ts:(toplevel).fetch#4:synthetic loopback smoke test against the local mind-explorer server
+apps/mind-explorer/explorer.test.ts:(toplevel).fetch#5:synthetic loopback smoke test against the local mind-explorer server
+apps/mind-explorer/gardener-api.ts:createDualEngineSynthesizer.fetch#1:optional operator-configured local LLM endpoint for gardener synthesis
+apps/mind-explorer/gardener-api.ts:callPrimaryLlm.fetch#1:optional operator-configured local LLM endpoint for gardener synthesis
+apps/mind-explorer/gardener-api.ts:createDualEngineSynthesizer.fetch#2:optional operator-configured local LLM fallback endpoint for gardener synthesis
+apps/mind-explorer/public/agent-board-view.js:getGlobalModule.globalThis[]#1:browser global lookup for optional sibling UI script modules
+apps/mind-explorer/public/agent-board-view.js:getGlobalModule.globalThis[]#2:browser global lookup for optional sibling UI script modules
+apps/mind-explorer/public/agent-board-view.js:getGlobalModule.globalThis[]#3:browser global lookup for optional sibling UI script modules
+apps/mind-explorer/public/app.js:apiGet.fetch#1:same-origin browser GET against local mind-explorer loopback API
+apps/mind-explorer/public/app.js:apiPost.fetch#1:same-origin browser POST against local mind-explorer loopback API
+apps/mind-explorer/public/app.js:openPersonDossier.fetch#1:same-origin browser fetch for local person dossier
+apps/mind-explorer/public/app.js:handleReplayImportFile.fetch#1:same-origin browser POST for local replay file import
+apps/mind-explorer/public/codex-view.js:fetchJson.fetch#1:same-origin browser fetch for local codex data
+apps/mind-explorer/public/ext/05-hyper-client.js:connectLive.new.EventSource#1:same-origin SSE stream for local mind-explorer live deltas
+apps/mind-explorer/public/ext/05-hyper-client.js:queryNeural.fetch#1:same-origin browser fetch for local semantic recall
+apps/mind-explorer/public/ext/85-instant-ask.js:runSuggestedAction.fetch#1:same-origin browser POST for local suggested action
+apps/mind-explorer/public/ext/85-instant-ask.js:runAskStream.fetch#1:same-origin browser streaming ask against local loopback server
+apps/mind-explorer/public/ext/85-instant-ask.js:refreshRecentCaptures.fetch#1:same-origin browser fetch for local quick captures
+apps/mind-explorer/public/ext/85-instant-ask.js:submitQuickCapture.fetch#1:same-origin browser POST saving a local quick capture
+apps/mind-explorer/public/ext/86-proactive-brief.js:api.fetch#1:same-origin browser fetch for local daily briefing
+apps/mind-explorer/public/ext/94-ui-studio-drawer.js:syncWire.fetch#1:same-origin browser fetch for local wire diagnostics
+apps/mind-explorer/public/ext/94-ui-studio-drawer.js:syncWire.fetch#2:same-origin browser fetch for local wire diagnostics
+apps/mind-explorer/public/ext/96-box-ai-observatory.js:refresh.fetch#1:same-origin browser fetch for local box AI telemetry
+apps/mind-explorer/public/ext/96-box-ai-observatory.js:startEs.new.EventSource#1:same-origin SSE stream for local box AI telemetry
+apps/mind-explorer/public/ext/command-plane.js:handleInputChange.fetch#1:same-origin browser fetch for local command palette search
+apps/mind-explorer/public/ext/command-plane.js:handleInputChange.fetch#2:same-origin browser fetch for local command palette search
+apps/mind-explorer/public/ext/command-plane.js:executeActiveCommand.fetch#1:same-origin browser POST for local command action
+apps/mind-explorer/public/ext/command-plane.js:submitAskQuestion.fetch#1:same-origin browser POST for local ask query
+apps/mind-explorer/public/ext/people-radar.js:fetchRadar.fetch#1:same-origin browser fetch for local people radar
+apps/mind-explorer/public/ext/people-radar.js:fetchPrepPack.fetch#1:same-origin browser fetch for local meeting prep pack
+apps/mind-explorer/public/ext/today-chronometer.js:fetchTelemetry.fetch#1:same-origin browser fetch for local chronometer telemetry
+apps/mind-explorer/public/ext/today-chronometer.js:fetchTelemetry.fetch#2:same-origin browser fetch for local chronometer telemetry
+apps/mind-explorer/public/ext/today-radar.js:apiJson.fetch#1:same-origin browser fetch for local today view data
+apps/mind-explorer/server.ts:rawFetchHandler.fetch#1:optional loopback proxy to local agent-board API when configured
+apps/mind-explorer/server.ts:start.Bun.serve#1:local mind-explorer HTTP server bound to 127.0.0.1 by default
+apps/mind-explorer/vault-api.ts:callPrimary.fetch#1:optional operator-configured local LLM endpoint for vault synthesis
+apps/mind-explorer/vault-api.ts:synthesizeWithDualEngine.fetch#1:optional operator-configured local LLM endpoint for vault synthesis
+apps/mind-explorer/vault-api.ts:synthesizeWithDualEngine.fetch#2:optional operator-configured local LLM fallback endpoint for vault synthesis
+apps/mind-explorer/public/ext/97-auto-ontology.js:apiJson.fetch#1:same-origin browser fetch for local auto-ontology compiler and answerability API
+apps/mind-explorer/public/ext/97-auto-ontology.js:exportYaml.fetch#1:same-origin browser fetch for local Ossie YAML ontology export

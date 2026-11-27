@@ -406,6 +406,9 @@ export function parseAlgalRunReceipt(
   const effectOutputPresent = Array.isArray(raw["effects"]) && raw["effects"].some(
     (effect) => isPlainObject(effect) && effect["output"] !== undefined,
   );
+  const configurationDigestPresent = Array.isArray(raw["effects"]) && raw["effects"].some(
+    (effect) => isPlainObject(effect) && effect["configurationDigest"] !== undefined,
+  );
   const draft: CaptureEventInput = {
     schema: "kizuki.event/v1",
     connector_id: ALGAL_RECEIPT_CONNECTOR_ID,
@@ -430,6 +433,7 @@ export function parseAlgalRunReceipt(
       `executor-reported event outcome ${eventOutcomePresent ? "present" : "absent"}; independent observation absent`,
       `executor-reported effect error message ${effectErrorMessagePresent ? "present" : "absent"}; message not copied`,
       `executor-reported effect output ${effectOutputPresent ? "present" : "absent"}; execution not conferred`,
+      `executor-reported configuration digest ${configurationDigestPresent ? "present" : "absent"}; configuration not applied`,
       `manifest ${String(manifest)}`,
       `receipt ${String(own)}`,
       "source clock absent; occurred_at is the observation time",
@@ -479,6 +483,9 @@ export function parseAlgalRunReceipt(
           executor_reported_effect_output: effectOutputPresent ? "present" : "absent",
           effect_output: "not_copied",
           effect_output_execution: "not_conferred",
+          executor_reported_configuration_digest: configurationDigestPresent ? "present" : "absent",
+          configuration_digest: configurationDigestPresent ? "format_checked_not_applied" : "absent",
+          configuration: "not_applied",
           measured_reuse: "not_conferred",
           independent_observation: "absent",
           grant: "not_conferred",

@@ -2,6 +2,8 @@ import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { TOOLS, listAudit, revokeAgent, setGrant } from "@kizuki/core";
 import { worldFixture } from "../../core/test/serving/world-fixture";
 import { WORLD_ENVELOPE, WORLD_ENVELOPE_LISTED, WORLD_VIEW_INPUT } from "../src/schemas";
+import { MEMT_TOOL_NAMES } from "../src/memt";
+import { ONTOLOGY_TOOL_NAMES } from "../src/ontology";
 import { z } from "zod";
 import { call, connectClient, envelopeOf, errorOf } from "./client";
 import { mcpFixture } from "./helpers";
@@ -136,7 +138,7 @@ describe("the advertised size", () => {
 describe("tools/list is scoped to the grant", () => {
   test("the owner is offered every tool", async () => {
     const client = await connectClient(live().owner(), open);
-    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([...TOOLS, "memt_status", "memt_recall", "memt_experience", "memt_snapshot"]);
+    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([...TOOLS, ...MEMT_TOOL_NAMES, ...ONTOLOGY_TOOL_NAMES]);
   });
 
   test("an agent is offered exactly the tools its grant allows", async () => {
@@ -151,7 +153,7 @@ describe("tools/list is scoped to the grant", () => {
   test("a grant changed mid-session changes the next listing, and revocation empties it", async () => {
     const running = live();
     const client = await connectClient(running.agent("reader-personal"), open);
-    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([...TOOLS, "memt_status", "memt_recall", "memt_experience", "memt_snapshot"]);
+    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([...TOOLS, ...MEMT_TOOL_NAMES, ...ONTOLOGY_TOOL_NAMES]);
     setGrant(running.db, "reader-personal", { tools: ["search", "timeline"] });
     expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(["search", "timeline"]);
     revokeAgent(running.db, "reader-personal");

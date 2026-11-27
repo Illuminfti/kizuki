@@ -26,6 +26,7 @@
         "@kizuki/embed-local-http": "workspace:*",
         "@kizuki/llm": "workspace:*",
         "@kizuki/memt": "workspace:*",
+        "@kizuki/ontology": "workspace:*",
         "@kizuki/retrieval-pg": "workspace:*",
         "@kizuki/tui": "workspace:*",
       },
@@ -139,6 +140,7 @@
         "@kizuki/embed-gguf": "workspace:*",
         "@kizuki/embed-local-http": "workspace:*",
         "@kizuki/memt": "workspace:*",
+        "@kizuki/ontology": "workspace:*",
         "@kizuki/retrieval-pg": "workspace:*",
         "@modelcontextprotocol/sdk": "1.30.0",
         "zod": "4.5.4",
@@ -147,6 +149,13 @@
     "packages/memt": {
       "name": "@kizuki/memt",
       "version": "1.0.0",
+    },
+    "packages/ontology": {
+      "name": "@kizuki/ontology",
+      "version": "1.0.2",
+      "dependencies": {
+        "@kizuki/core": "workspace:*",
+      },
     },
     "packages/reflex": {
       "name": "@kizuki/reflex",
@@ -214,6 +223,8 @@
     "@kizuki/mcp": ["@kizuki/mcp@workspace:packages/mcp"],
 
     "@kizuki/memt": ["@kizuki/memt@workspace:packages/memt"],
+
+    "@kizuki/ontology": ["@kizuki/ontology@workspace:packages/ontology"],
 
     "@kizuki/reflex": ["@kizuki/reflex@workspace:packages/reflex"],
 

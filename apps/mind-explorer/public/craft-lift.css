@@ -1,0 +1,1522 @@
+@layer components {
+/* ==========================================================================
+   KIZUKI MIND EXPLORER - CRAFT LIFT LAYER (craft-lift.css)
+   Vercel Geist x Linear x Palantir Visual, Badge, Data-Viz & Motion System
+   Loaded immediately after styles.css. Strict invariants:
+   - Weight ceiling: 600 (400 / 500 / 600 only)
+   - Explicit compositor/color transition property lists only
+   - Zero purple glow blobs, zero cheesy gradients, zero idle pulses
+   - Full Dark + Light + Mobile (<=960px) + detail=off + reduced-motion
+   ========================================================================== */
+
+/* ==========================================================================
+   1. OPTICAL SURFACE & HAIRLINE ELEVATION SYSTEM
+   ========================================================================== */
+
+/* Dark Polarity: 1px top-edge inner specular highlight on primary surfaces */
+.profile-banner,
+.profile-visual-card,
+.visual-panel,
+.leverage-card,
+.replay-map-shell,
+.replay-map-card,
+.replay-story-card,
+.replay-heatmap-card,
+.codex-card,
+.codex-hero-card,
+.codex-header,
+.codex-kpi-card,
+.today-card,
+.today-action-card,
+.brief-card,
+.detail-brief-card,
+.atlas-panel,
+.memt-card {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.055),
+    0 1px 2px rgba(0, 0, 0, 0.36);
+}
+
+.codex-card.is-pinned {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 4px 12px -2px rgba(0, 0, 0, 0.48);
+}
+
+/* Light Polarity: crisp stacked paper elevation */
+html[data-theme="light"] .profile-banner,
+html[data-theme="light"] .profile-visual-card,
+html[data-theme="light"] .visual-panel,
+html[data-theme="light"] .leverage-card,
+html[data-theme="light"] .replay-map-shell,
+html[data-theme="light"] .replay-map-card,
+html[data-theme="light"] .replay-story-card,
+html[data-theme="light"] .replay-heatmap-card,
+html[data-theme="light"] .codex-card,
+html[data-theme="light"] .codex-hero-card,
+html[data-theme="light"] .codex-header,
+html[data-theme="light"] .codex-kpi-card,
+html[data-theme="light"] .today-card,
+html[data-theme="light"] .today-action-card,
+html[data-theme="light"] .brief-card,
+html[data-theme="light"] .detail-brief-card,
+html[data-theme="light"] .atlas-panel,
+html[data-theme="light"] .memt-card {
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 0 0 1px rgba(0, 0, 0, 0.03);
+}
+
+html[data-theme="light"] .codex-card.is-pinned {
+  box-shadow:
+    0 2px 6px -1px rgba(0, 0, 0, 0.06),
+    0 0 0 1px rgba(0, 0, 0, 0.05);
+}
+
+/* Pointer-Tracked Whisper-Subtle Specular Edge Light (detail=on + hover only) */
+.profile-banner,
+.codex-hero-card,
+.codex-header {
+  position: relative;
+  overflow: hidden;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  html[data-detail="on"] .profile-banner::after,
+  html[data-detail="on"] .codex-hero-card::after,
+  html[data-detail="on"] .codex-header::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    z-index: 1;
+    background: radial-gradient(
+      360px circle at var(--spot-x, -999px) var(--spot-y, -999px),
+      rgba(255, 255, 255, 0.045),
+      transparent 60%
+    );
+    opacity: 1;
+    transition: opacity 220ms cubic-bezier(0.23, 1, 0.32, 1);
+  }
+
+  html[data-theme="light"][data-detail="on"] .profile-banner::after,
+  html[data-theme="light"][data-detail="on"] .codex-hero-card::after,
+  html[data-theme="light"][data-detail="on"] .codex-header::after {
+    background: radial-gradient(
+      360px circle at var(--spot-x, -999px) var(--spot-y, -999px),
+      rgba(0, 0, 0, 0.028),
+      transparent 60%
+    );
+  }
+}
+
+/* ==========================================================================
+   2. BESPOKE ICON, CHANNEL PILL, ARCHETYPE CHIP & STAGE PILL SYSTEM
+   ========================================================================== */
+
+/* 2.1 Optical SVG Icon Container (.k-icon) */
+.k-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  line-height: 1;
+  color: currentColor;
+  vertical-align: middle;
+}
+
+.k-icon > svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  flex-shrink: 0;
+}
+
+.k-icon-xs {
+  width: 12px;
+  height: 12px;
+}
+
+.k-icon-sm {
+  width: 14px;
+  height: 14px;
+}
+
+.k-icon-md {
+  width: 16px;
+  height: 16px;
+}
+
+.k-icon-lg {
+  width: 18px;
+  height: 18px;
+}
+
+/* 2.2 Semantic Channel Pills (.k-channel-pill) */
+.k-channel-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-hairline);
+  background-color: var(--surface-inset);
+  color: var(--ink-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  letter-spacing: 0.015em;
+  line-height: 1;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  transition:
+    transform 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    border-color 140ms ease,
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.k-channel-pill .k-icon {
+  width: 12px;
+  height: 12px;
+  opacity: 0.92;
+}
+
+.k-channel-pill.is-compact {
+  height: 19px;
+  padding: 0 6px;
+  font-size: var(--t-xs);
+  gap: 4px;
+}
+
+/* Dark Polarity Semantic Channel Tints (WCAG AA+ contrast on dark) */
+.k-channel-pill.k-ch-whatsapp,
+.k-channel-pill.is-whatsapp,
+.k-channel-pill[data-channel="whatsapp"],
+.k-channel-pill[data-ch="whatsapp"] {
+  color: #6ee7b7;
+  background-color: rgba(70, 167, 88, 0.12);
+  border-color: rgba(70, 167, 88, 0.34);
+}
+
+.k-channel-pill.k-ch-telegram,
+.k-channel-pill.is-telegram,
+.k-channel-pill[data-channel="telegram"],
+.k-channel-pill[data-ch="telegram"] {
+  color: #7dd3fc;
+  background-color: rgba(56, 189, 248, 0.11);
+  border-color: rgba(56, 189, 248, 0.34);
+}
+
+.k-channel-pill.k-ch-imessage,
+.k-channel-pill.is-imessage,
+.k-channel-pill[data-channel="imessage"],
+.k-channel-pill[data-ch="imessage"] {
+  color: #7cc0ff;
+  background-color: rgba(50, 145, 255, 0.12);
+  border-color: rgba(50, 145, 255, 0.36);
+}
+
+.k-channel-pill.k-ch-gmail,
+.k-channel-pill.is-gmail,
+.k-channel-pill.is-email,
+.k-channel-pill[data-channel="gmail"],
+.k-channel-pill[data-channel="email"],
+.k-channel-pill[data-ch="gmail"] {
+  color: #fda4af;
+  background-color: rgba(244, 63, 94, 0.11);
+  border-color: rgba(244, 63, 94, 0.34);
+}
+
+.k-channel-pill.k-ch-calendar,
+.k-channel-pill.is-calendar,
+.k-channel-pill[data-channel="calendar"],
+.k-channel-pill[data-channel="gcal"],
+.k-channel-pill[data-ch="calendar"] {
+  color: #c4b5fd;
+  background-color: rgba(167, 139, 250, 0.11);
+  border-color: rgba(167, 139, 250, 0.34);
+}
+
+.k-channel-pill.k-ch-wispr,
+.k-channel-pill.is-wispr,
+.k-channel-pill[data-channel="wispr"],
+.k-channel-pill[data-channel="voice"],
+.k-channel-pill[data-ch="wispr"] {
+  color: #67f3d4;
+  background-color: rgba(80, 227, 194, 0.10);
+  border-color: rgba(80, 227, 194, 0.34);
+}
+
+.k-channel-pill.k-ch-whoop,
+.k-channel-pill.is-whoop,
+.k-channel-pill[data-channel="whoop"],
+.k-channel-pill[data-ch="whoop"] {
+  color: #fbbf24;
+  background-color: rgba(245, 166, 35, 0.11);
+  border-color: rgba(245, 166, 35, 0.34);
+}
+
+.k-channel-pill.k-ch-whoop.is-green,
+.k-channel-pill[data-channel="whoop"][data-zone="green"] {
+  color: #6ee7b7;
+  background-color: rgba(70, 167, 88, 0.12);
+  border-color: rgba(70, 167, 88, 0.34);
+}
+
+.k-channel-pill.k-ch-x,
+.k-channel-pill.is-x,
+.k-channel-pill[data-channel="x"],
+.k-channel-pill[data-channel="twitter"],
+.k-channel-pill[data-ch="x"] {
+  color: #e5e5e5;
+  background-color: rgba(255, 255, 255, 0.065);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.k-channel-pill.k-ch-github,
+.k-channel-pill.is-github,
+.k-channel-pill[data-channel="github"],
+.k-channel-pill[data-ch="github"] {
+  color: #d4d4d8;
+  background-color: rgba(255, 255, 255, 0.045);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+/* Light Polarity Semantic Channel Tints (WCAG AA+ >= 5:1 on light paper) */
+html[data-theme="light"] .k-channel-pill.k-ch-whatsapp,
+html[data-theme="light"] .k-channel-pill.is-whatsapp,
+html[data-theme="light"] .k-channel-pill[data-channel="whatsapp"],
+html[data-theme="light"] .k-channel-pill[data-ch="whatsapp"] {
+  color: #15803d;
+  background-color: rgba(22, 163, 74, 0.08);
+  border-color: rgba(22, 163, 74, 0.28);
+}
+
+html[data-theme="light"] .k-channel-pill.k-ch-telegram,
+html[data-theme="light"] .k-channel-pill.is-telegram,
+html[data-theme="light"] .k-channel-pill[data-channel="telegram"],
+html[data-theme="light"] .k-channel-pill[data-ch="telegram"] {
+  color: #0369a1;
+  background-color: rgba(2, 132, 199, 0.08);
+  border-color: rgba(2, 132, 199, 0.28);
+}
+
+html[data-theme="light"] .k-channel-pill.k-ch-imessage,
+html[data-theme="light"] .k-channel-pill.is-imessage,
+html[data-theme="light"] .k-channel-pill[data-channel="imessage"],
+html[data-theme="light"] .k-channel-pill[data-ch="imessage"] {
+  color: #005cc5;
+  background-color: rgba(0, 112, 243, 0.08);
+  border-color: rgba(0, 112, 243, 0.28);
+}
+
+html[data-theme="light"] .k-channel-pill.k-ch-gmail,
+html[data-theme="light"] .k-channel-pill.is-gmail,
+html[data-theme="light"] .k-channel-pill.is-email,
+html[data-theme="light"] .k-channel-pill[data-channel="gmail"],
+html[data-theme="light"] .k-channel-pill[data-channel="email"],
+html[data-theme="light"] .k-channel-pill[data-ch="gmail"] {
+  color: #be123c;
+  background-color: rgba(225, 29, 72, 0.075);
+  border-color: rgba(225, 29, 72, 0.26);
+}
+
+html[data-theme="light"] .k-channel-pill.k-ch-calendar,
+html[data-theme="light"] .k-channel-pill.is-calendar,
+html[data-theme="light"] .k-channel-pill[data-channel="calendar"],
+html[data-theme="light"] .k-channel-pill[data-channel="gcal"],
+html[data-theme="light"] .k-channel-pill[data-ch="calendar"] {
+  color: #6d28d9;
+  background-color: rgba(121, 40, 202, 0.075);
+  border-color: rgba(121, 40, 202, 0.26);
+}
+
+html[data-theme="light"] .k-channel-pill.k-ch-wispr,
+html[data-theme="light"] .k-channel-pill.is-wispr,
+html[data-theme="light"] .k-channel-pill[data-channel="wispr"],
+html[data-theme="light"] .k-channel-pill[data-channel="voice"],
+html[data-theme="light"] .k-channel-pill[data-ch="wispr"] {
+  color: #0f766e;
+  background-color: rgba(14, 159, 130, 0.08);
+  border-color: rgba(14, 159, 130, 0.28);
+}
+
+html[data-theme="light"] .k-channel-pill.k-ch-whoop,
+html[data-theme="light"] .k-channel-pill.is-whoop,
+html[data-theme="light"] .k-channel-pill[data-channel="whoop"],
+html[data-theme="light"] .k-channel-pill[data-ch="whoop"] {
+  color: #92400e;
+  background-color: rgba(180, 83, 9, 0.08);
+  border-color: rgba(180, 83, 9, 0.28);
+}
+
+html[data-theme="light"] .k-channel-pill.k-ch-whoop.is-green,
+html[data-theme="light"] .k-channel-pill[data-channel="whoop"][data-zone="green"] {
+  color: #15803d;
+  background-color: rgba(22, 163, 74, 0.08);
+  border-color: rgba(22, 163, 74, 0.28);
+}
+
+html[data-theme="light"] .k-channel-pill.k-ch-x,
+html[data-theme="light"] .k-channel-pill.is-x,
+html[data-theme="light"] .k-channel-pill[data-channel="x"],
+html[data-theme="light"] .k-channel-pill[data-channel="twitter"],
+html[data-theme="light"] .k-channel-pill[data-ch="x"] {
+  color: #171717;
+  background-color: rgba(0, 0, 0, 0.055);
+  border-color: rgba(0, 0, 0, 0.16);
+}
+
+html[data-theme="light"] .k-channel-pill.k-ch-github,
+html[data-theme="light"] .k-channel-pill.is-github,
+html[data-theme="light"] .k-channel-pill[data-channel="github"],
+html[data-theme="light"] .k-channel-pill[data-ch="github"] {
+  color: #262626;
+  background-color: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.14);
+}
+
+/* 2.3 Tactile Archetype Chips (.k-archetype-chip) */
+.k-archetype-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-strong);
+  background-color: var(--surface-inset);
+  color: var(--ink-primary);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  transition:
+    transform 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    border-color 140ms ease,
+    background-color 140ms ease;
+}
+
+.k-archetype-chip .k-icon {
+  width: 11px;
+  height: 11px;
+  color: var(--ink-secondary);
+}
+
+html[data-theme="light"] .k-archetype-chip {
+  background-color: #ffffff;
+  border-color: var(--border-strong);
+  color: var(--ink-primary);
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.03);
+}
+
+.k-archetype-chip.is-inner,
+.k-archetype-chip.is-core,
+.k-archetype-chip[data-archetype="core"] {
+  color: #6ee7b7;
+  background-color: rgba(70, 167, 88, 0.10);
+  border-color: rgba(70, 167, 88, 0.30);
+}
+
+.k-archetype-chip.is-inner .k-icon,
+.k-archetype-chip.is-core .k-icon,
+.k-archetype-chip[data-archetype="core"] .k-icon {
+  color: currentColor;
+}
+
+html[data-theme="light"] .k-archetype-chip.is-inner,
+html[data-theme="light"] .k-archetype-chip.is-core,
+html[data-theme="light"] .k-archetype-chip[data-archetype="core"] {
+  color: #15803d;
+  background-color: rgba(22, 163, 74, 0.08);
+  border-color: rgba(22, 163, 74, 0.26);
+}
+
+.k-archetype-chip.is-builder,
+.k-archetype-chip[data-archetype="builder"] {
+  color: #7cc0ff;
+  background-color: rgba(50, 145, 255, 0.10);
+  border-color: rgba(50, 145, 255, 0.30);
+}
+
+html[data-theme="light"] .k-archetype-chip.is-builder,
+html[data-theme="light"] .k-archetype-chip[data-archetype="builder"] {
+  color: #005cc5;
+  background-color: rgba(0, 112, 243, 0.08);
+  border-color: rgba(0, 112, 243, 0.26);
+}
+
+.k-archetype-chip.is-investor,
+.k-archetype-chip[data-archetype="investor"] {
+  color: #fbbf24;
+  background-color: rgba(245, 166, 35, 0.10);
+  border-color: rgba(245, 166, 35, 0.30);
+}
+
+html[data-theme="light"] .k-archetype-chip.is-investor,
+html[data-theme="light"] .k-archetype-chip[data-archetype="investor"] {
+  color: #92400e;
+  background-color: rgba(180, 83, 9, 0.08);
+  border-color: rgba(180, 83, 9, 0.26);
+}
+
+.k-archetype-chip.is-creative,
+.k-archetype-chip[data-archetype="creative"] {
+  color: #c4b5fd;
+  background-color: rgba(167, 139, 250, 0.10);
+  border-color: rgba(167, 139, 250, 0.30);
+}
+
+html[data-theme="light"] .k-archetype-chip.is-creative,
+html[data-theme="light"] .k-archetype-chip[data-archetype="creative"] {
+  color: #6d28d9;
+  background-color: rgba(121, 40, 202, 0.08);
+  border-color: rgba(121, 40, 202, 0.26);
+}
+
+/* 2.4 Stage Pills (.k-stage-pill: spark, validating, building, shipped, parked) */
+.k-stage-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 21px;
+  padding: 0 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-hairline);
+  background-color: var(--surface-inset);
+  color: var(--ink-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+  line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.k-stage-pill .k-icon {
+  width: 11px;
+  height: 11px;
+}
+
+/* Spark */
+.k-stage-pill.is-spark,
+.k-stage-pill.k-stage-spark,
+.k-stage-pill[data-stage="spark"] {
+  color: #fbbf24;
+  background-color: rgba(245, 166, 35, 0.11);
+  border-color: rgba(245, 166, 35, 0.34);
+}
+
+html[data-theme="light"] .k-stage-pill.is-spark,
+html[data-theme="light"] .k-stage-pill.k-stage-spark,
+html[data-theme="light"] .k-stage-pill[data-stage="spark"] {
+  color: #92400e;
+  background-color: rgba(180, 83, 9, 0.08);
+  border-color: rgba(180, 83, 9, 0.28);
+}
+
+/* Validating */
+.k-stage-pill.is-validating,
+.k-stage-pill.k-stage-validating,
+.k-stage-pill[data-stage="validating"] {
+  color: #67f3d4;
+  background-color: rgba(80, 227, 194, 0.10);
+  border-color: rgba(80, 227, 194, 0.32);
+}
+
+html[data-theme="light"] .k-stage-pill.is-validating,
+html[data-theme="light"] .k-stage-pill.k-stage-validating,
+html[data-theme="light"] .k-stage-pill[data-stage="validating"] {
+  color: #0f766e;
+  background-color: rgba(14, 159, 130, 0.08);
+  border-color: rgba(14, 159, 130, 0.28);
+}
+
+/* Building */
+.k-stage-pill.is-building,
+.k-stage-pill.k-stage-building,
+.k-stage-pill[data-stage="building"] {
+  color: #7cc0ff;
+  background-color: rgba(50, 145, 255, 0.12);
+  border-color: rgba(50, 145, 255, 0.36);
+}
+
+html[data-theme="light"] .k-stage-pill.is-building,
+html[data-theme="light"] .k-stage-pill.k-stage-building,
+html[data-theme="light"] .k-stage-pill[data-stage="building"] {
+  color: #005cc5;
+  background-color: rgba(0, 112, 243, 0.08);
+  border-color: rgba(0, 112, 243, 0.28);
+}
+
+/* Shipped */
+.k-stage-pill.is-shipped,
+.k-stage-pill.k-stage-shipped,
+.k-stage-pill[data-stage="shipped"] {
+  color: #6ee7b7;
+  background-color: rgba(70, 167, 88, 0.12);
+  border-color: rgba(70, 167, 88, 0.34);
+}
+
+html[data-theme="light"] .k-stage-pill.is-shipped,
+html[data-theme="light"] .k-stage-pill.k-stage-shipped,
+html[data-theme="light"] .k-stage-pill[data-stage="shipped"] {
+  color: #15803d;
+  background-color: rgba(22, 163, 74, 0.08);
+  border-color: rgba(22, 163, 74, 0.28);
+}
+
+/* Parked */
+.k-stage-pill.is-parked,
+.k-stage-pill.k-stage-parked,
+.k-stage-pill[data-stage="parked"] {
+  color: var(--ink-muted);
+  background-color: rgba(255, 255, 255, 0.035);
+  border-color: var(--border-hairline);
+}
+
+html[data-theme="light"] .k-stage-pill.is-parked,
+html[data-theme="light"] .k-stage-pill.k-stage-parked,
+html[data-theme="light"] .k-stage-pill[data-stage="parked"] {
+  color: #525252;
+  background-color: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+/* ==========================================================================
+   3. 120 FPS TACTILE MOTION PRIMITIVES
+   ========================================================================== */
+
+/* Crisp Tactile Press Feedback (0.975 scale) on Interactive Controls */
+.btn-primary,
+.btn-secondary,
+.btn-ghost,
+.os-nav-btn,
+.filter-pill,
+.channel-pill,
+.action-chip,
+.triage-tab,
+.replay-subtab,
+.comp-tab,
+.dir-tab,
+.sub-tab,
+.hud-btn,
+.trip-chip {
+  transition:
+    transform 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    border-color 140ms ease,
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.btn-primary:active:not(:disabled),
+.btn-secondary:active:not(:disabled),
+.btn-ghost:active:not(:disabled),
+.os-nav-btn:active:not(:disabled),
+.filter-pill:active:not(:disabled),
+.channel-pill:active:not(:disabled),
+.k-channel-pill:active:not(:disabled),
+.action-chip:active:not(:disabled),
+.triage-tab:active:not(:disabled),
+.replay-subtab:active:not(:disabled),
+.comp-tab:active:not(:disabled),
+.dir-tab:active:not(:disabled),
+.sub-tab:active:not(:disabled),
+.hud-btn:active:not(:disabled),
+.trip-chip:active:not(:disabled) {
+  transform: scale(0.975);
+}
+
+/* Precision Hover Micro-Lift (strictly gated on fine hover pointers) */
+@media (hover: hover) and (pointer: fine) {
+  .codex-card,
+  .trip-chip,
+  .today-action-card,
+  .codex-kpi-card {
+    transition:
+      transform 160ms cubic-bezier(0.23, 1, 0.32, 1),
+      border-color 140ms ease,
+      background-color 140ms ease,
+      box-shadow 160ms ease;
+  }
+
+  .codex-card:hover,
+  .trip-chip:hover,
+  .today-action-card:hover {
+    transform: translateY(-1px);
+  }
+
+  .codex-card:hover {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.075),
+      0 6px 16px -4px rgba(0, 0, 0, 0.55);
+  }
+
+  html[data-theme="light"] .codex-card:hover,
+  html[data-theme="light"] .today-action-card:hover {
+    box-shadow:
+      0 4px 10px -2px rgba(0, 0, 0, 0.065),
+      0 0 0 1px rgba(0, 0, 0, 0.06);
+  }
+}
+
+/* Sliding Active Tab Indicator Hairline (.motion-tab-ink) */
+.triage-tabs,
+.replay-subtabs,
+.composer-tabs,
+.dir-tabs,
+.atlas-tabs,
+.codex-tabs {
+  position: relative;
+}
+
+.motion-tab-ink {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 1.5px;
+  background-color: var(--ink-primary);
+  border-radius: 1px;
+  transform-origin: left center;
+  transition:
+    transform 220ms cubic-bezier(0.23, 1, 0.32, 1),
+    width 220ms cubic-bezier(0.23, 1, 0.32, 1),
+    opacity 140ms ease;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Interactive SVG Data-Viz Hover Tooltip (.k-viz-tooltip) */
+.k-viz-tooltip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 75;
+  min-width: 120px;
+  max-width: 260px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background-color: #0b0b0d;
+  color: var(--ink-primary);
+  font-family: var(--font-sans);
+  font-size: var(--t-sm);
+  font-weight: 400;
+  line-height: 1.38;
+  font-variant-numeric: tabular-nums;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 8px 24px -4px rgba(0, 0, 0, 0.72);
+  pointer-events: none;
+  opacity: 0;
+  transform: translate3d(0, 4px, 0);
+  transition:
+    opacity 120ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.k-viz-tooltip.is-visible,
+.k-viz-tooltip[data-visible="true"] {
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+}
+
+html[data-theme="light"] .k-viz-tooltip {
+  background-color: #ffffff;
+  color: #171717;
+  border-color: rgba(0, 0, 0, 0.14);
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.06),
+    0 10px 24px -6px rgba(0, 0, 0, 0.12);
+}
+
+.k-viz-tooltip-title {
+  font-size: var(--t-xs);
+  font-weight: 600;
+  color: var(--ink-primary);
+  letter-spacing: -0.01em;
+  margin-bottom: 3px;
+}
+
+.k-viz-tooltip-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--t-xs);
+  color: var(--ink-secondary);
+}
+
+.k-viz-tooltip-val {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  color: var(--ink-primary);
+}
+
+.k-viz-tooltip-meta {
+  margin-top: 3px;
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  color: var(--ink-muted);
+}
+
+/* ==========================================================================
+   4. NEW DATA-VIZ COMPONENT STYLES (charts.js)
+   ========================================================================== */
+
+/* 4.1 Whoop Recovery Radial Arc Gauge (Today + Replay) */
+.whoop-gauge-wrap {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-hairline);
+  background-color: var(--surface-raised);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  min-width: 0;
+}
+
+html[data-theme="light"] .whoop-gauge-wrap {
+  background-color: #ffffff;
+  border-color: var(--border-hairline);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 0 0 1px rgba(0, 0, 0, 0.03);
+}
+
+.whoop-gauge-svg {
+  display: block;
+  width: 68px;
+  height: 68px;
+  flex-shrink: 0;
+  overflow: visible;
+}
+
+.whoop-gauge-track {
+  fill: none;
+  stroke: var(--border-hairline);
+  stroke-width: 5.5;
+  stroke-linecap: round;
+}
+
+.whoop-gauge-arc {
+  fill: none;
+  stroke: var(--accent-green);
+  stroke-width: 5.5;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 420ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.whoop-gauge-wrap.is-yellow .whoop-gauge-arc,
+.whoop-gauge-wrap[data-zone="yellow"] .whoop-gauge-arc {
+  stroke: var(--accent-amber);
+}
+
+.whoop-gauge-wrap.is-red .whoop-gauge-arc,
+.whoop-gauge-wrap[data-zone="red"] .whoop-gauge-arc {
+  stroke: var(--wm-rose);
+}
+
+.whoop-gauge-value {
+  font-family: var(--font-mono);
+  font-size: var(--t-md);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  fill: var(--ink-primary);
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+.whoop-gauge-unit {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  fill: var(--ink-muted);
+  text-anchor: middle;
+}
+
+.whoop-gauge-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.whoop-gauge-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.whoop-gauge-title {
+  font-size: var(--t-sm);
+  font-weight: 600;
+  color: var(--ink-primary);
+  letter-spacing: -0.01em;
+}
+
+.whoop-gauge-sub {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.whoop-gauge-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.whoop-gauge-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 7px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-subtle);
+  background-color: var(--surface-inset);
+  min-width: 0;
+}
+
+.whoop-gauge-stat-key {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.whoop-gauge-stat-val {
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 4.2 24-Hour Day Rhythm Waveform (Replay above Timeline) */
+.replay-rhythm-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-hairline);
+  background-color: var(--surface-raised);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  min-width: 0;
+}
+
+html[data-theme="light"] .replay-rhythm-bar {
+  background-color: #ffffff;
+  border-color: var(--border-hairline);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 0 0 1px rgba(0, 0, 0, 0.03);
+}
+
+.replay-rhythm-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.replay-rhythm-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+}
+
+.replay-rhythm-svg {
+  display: block;
+  width: 100%;
+  height: 76px;
+  overflow: visible;
+}
+
+.replay-rhythm-svg .rhythm-grid-line {
+  stroke: var(--border-subtle);
+  stroke-width: 1;
+}
+
+.replay-rhythm-svg .rhythm-axis-label {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  fill: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.replay-rhythm-svg .rhythm-bar,
+.replay-rhythm-svg rect[data-hour] {
+  cursor: pointer;
+  transition: opacity 120ms ease, transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .replay-rhythm-svg .rhythm-bar:hover,
+  .replay-rhythm-svg rect[data-hour]:hover {
+    opacity: 0.92;
+  }
+}
+
+.replay-rhythm-legend {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-subtle);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.replay-rhythm-legend-items {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.replay-rhythm-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink-secondary);
+}
+
+.replay-rhythm-swatch {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+/* 4.3 Codex Life Balance Matrix Bar & Stage Funnel Strip */
+.codex-matrix-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-hairline);
+  background-color: var(--surface-raised);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  min-width: 0;
+}
+
+html[data-theme="light"] .codex-matrix-bar {
+  background-color: #ffffff;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 0 0 1px rgba(0, 0, 0, 0.03);
+}
+
+.codex-matrix-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+}
+
+.codex-matrix-track {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  height: 8px;
+  gap: 2px;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  background-color: var(--surface-inset);
+}
+
+.codex-matrix-seg {
+  height: 100%;
+  min-width: 4px;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: opacity 140ms ease, transform 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .codex-matrix-seg:hover {
+    opacity: 0.85;
+  }
+}
+
+.codex-matrix-legend {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-secondary);
+}
+
+.codex-matrix-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.codex-funnel-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-hairline);
+  background-color: var(--surface-raised);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  min-width: 0;
+}
+
+html[data-theme="light"] .codex-funnel-strip {
+  background-color: #ffffff;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 0 0 1px rgba(0, 0, 0, 0.03);
+}
+
+.codex-funnel-step {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background-color: var(--surface-inset);
+  min-width: 0;
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease,
+    transform 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.codex-funnel-step:hover {
+  border-color: var(--border-strong);
+  background-color: var(--surface-overlay);
+}
+
+.codex-funnel-step.is-active {
+  border-color: var(--border-strong);
+  background-color: var(--surface-selected);
+}
+
+.codex-funnel-step:active {
+  transform: scale(0.975);
+}
+
+.codex-funnel-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.codex-funnel-label {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.codex-funnel-count {
+  font-family: var(--font-mono);
+  font-size: var(--t-md);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: var(--ink-primary);
+}
+
+.codex-funnel-bar {
+  width: 100%;
+  height: 3px;
+  border-radius: var(--radius-pill);
+  background-color: var(--border-subtle);
+  overflow: hidden;
+}
+
+.codex-funnel-fill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background-color: var(--ink-primary);
+  transition: width 260ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.codex-funnel-step[data-stage="spark"] .codex-funnel-fill { background-color: var(--accent-amber); }
+.codex-funnel-step[data-stage="validating"] .codex-funnel-fill { background-color: var(--accent-cyan); }
+.codex-funnel-step[data-stage="building"] .codex-funnel-fill { background-color: var(--accent-blue); }
+.codex-funnel-step[data-stage="shipped"] .codex-funnel-fill { background-color: var(--accent-green); }
+.codex-funnel-step[data-stage="parked"] .codex-funnel-fill { background-color: var(--ink-muted); }
+
+/* ==========================================================================
+   5. GLOBAL CRAFT POLISH (SCROLLBARS, FOCUS RINGS, SIDEBAR NAV, TABLES)
+   ========================================================================== */
+
+/* 5.1 Ultra-Thin Refined Scrollbars (6px, transparent track, subtle thumb on hover) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+*:hover {
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.10);
+  border-radius: var(--radius-pill);
+  border: 1px solid transparent;
+  background-clip: padding-box;
+}
+
+*:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.22);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.34);
+}
+
+html[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.10);
+}
+
+html[data-theme="light"] *:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.22);
+}
+
+html[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 0, 0, 0.34);
+}
+
+/* 5.2 Crisp Keyboard Focus Rings (:focus-visible) */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[tabindex]:focus-visible,
+[role="tab"]:focus-visible,
+[role="button"]:focus-visible,
+.codex-card:focus-visible,
+.trip-chip:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
+}
+
+.btn-primary:focus-visible,
+.os-nav-btn:focus-visible {
+  outline: 2px solid var(--ink-primary);
+  outline-offset: 2px;
+}
+
+/* 5.3 Refined Sidebar Active Nav Indicator (2px left vertical bar + subtle tint) */
+.os-nav-btn {
+  position: relative;
+}
+
+.os-nav-btn::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 50%;
+  width: 2px;
+  height: 16px;
+  border-radius: 0 2px 2px 0;
+  background-color: var(--ink-primary);
+  transform: translateY(-50%) scaleY(0);
+  opacity: 0;
+  transition:
+    transform 180ms cubic-bezier(0.23, 1, 0.32, 1),
+    opacity 160ms ease;
+}
+
+.os-nav-btn.is-active {
+  background-color: rgba(255, 255, 255, 0.055);
+  border-color: var(--border-hairline);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
+}
+
+.os-nav-btn.is-active::before {
+  transform: translateY(-50%) scaleY(1);
+  opacity: 1;
+}
+
+html[data-theme="light"] .os-nav-btn.is-active {
+  background-color: rgba(0, 0, 0, 0.045);
+  border-color: rgba(0, 0, 0, 0.08);
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.025);
+}
+
+/* 5.4 Precision Table Refinement */
+.md-table,
+.gfm-table,
+.wm-kv-table,
+.markdown-prose table {
+  font-variant-numeric: tabular-nums;
+}
+
+.md-table thead th,
+.gfm-table thead th,
+.markdown-prose table thead th {
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  border-bottom: 1px solid var(--border-strong);
+}
+
+.md-table tbody tr,
+.gfm-table tbody tr,
+.markdown-prose table tbody tr {
+  transition: background-color 120ms ease;
+}
+
+.md-table tbody tr:hover td,
+.gfm-table tbody tr:hover td,
+.markdown-prose table tbody tr:hover td {
+  background-color: rgba(255, 255, 255, 0.025);
+}
+
+html[data-theme="light"] .md-table tbody tr:hover td,
+html[data-theme="light"] .gfm-table tbody tr:hover td,
+html[data-theme="light"] .markdown-prose table tbody tr:hover td {
+  background-color: rgba(0, 0, 0, 0.022);
+}
+
+/* ==========================================================================
+   6. SUBTRACTION PROOF MODE (html[data-detail="off"])
+   ========================================================================== */
+
+html[data-detail="off"] .profile-banner,
+html[data-detail="off"] .codex-hero-card,
+html[data-detail="off"] .codex-header {
+  background-image: none;
+}
+
+html[data-detail="off"] .profile-banner::after,
+html[data-detail="off"] .codex-hero-card::after,
+html[data-detail="off"] .codex-header::after,
+html[data-detail="off"] [data-tactile] {
+  display: none;
+  opacity: 0;
+}
+
+html[data-detail="off"] .profile-banner,
+html[data-detail="off"] .profile-visual-card,
+html[data-detail="off"] .visual-panel,
+html[data-detail="off"] .leverage-card,
+html[data-detail="off"] .replay-map-shell,
+html[data-detail="off"] .replay-map-card,
+html[data-detail="off"] .replay-story-card,
+html[data-detail="off"] .replay-heatmap-card,
+html[data-detail="off"] .codex-card,
+html[data-detail="off"] .codex-hero-card,
+html[data-detail="off"] .codex-header,
+html[data-detail="off"] .codex-kpi-card,
+html[data-detail="off"] .today-card,
+html[data-detail="off"] .today-action-card,
+html[data-detail="off"] .brief-card,
+html[data-detail="off"] .detail-brief-card,
+html[data-detail="off"] .atlas-panel,
+html[data-detail="off"] .memt-card,
+html[data-detail="off"] .whoop-gauge-wrap,
+html[data-detail="off"] .replay-rhythm-bar,
+html[data-detail="off"] .codex-matrix-bar,
+html[data-detail="off"] .codex-funnel-strip {
+  box-shadow: none;
+}
+
+html[data-detail="off"] .motion-tab-ink {
+  transition: none;
+}
+
+/* ==========================================================================
+   7. MOBILE RESPONSIVE ADJUSTMENTS (<= 960px & <= 640px)
+   ========================================================================== */
+
+@media (max-width: 960px) {
+  .codex-funnel-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .whoop-gauge-wrap {
+    padding: 10px 12px;
+    gap: 12px;
+  }
+
+  .whoop-gauge-svg {
+    width: 60px;
+    height: 60px;
+  }
+
+  .replay-rhythm-bar {
+    padding: 10px 12px;
+  }
+
+  .replay-rhythm-svg {
+    height: 68px;
+  }
+}
+
+@media (max-width: 640px) {
+  .whoop-gauge-wrap {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .whoop-gauge-svg {
+    align-self: center;
+  }
+
+  .whoop-gauge-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .codex-funnel-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .k-channel-pill,
+  .k-archetype-chip,
+  .k-stage-pill {
+    max-width: 100%;
+  }
+
+  .replay-rhythm-legend {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+}
+
+/* ==========================================================================
+   8. PREFERS-REDUCED-MOTION (DISABLE TRANSFORMS, TRANSITIONS & ANIMATIONS)
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  .profile-banner::after,
+  .codex-hero-card::after,
+  .codex-header::after,
+  .k-channel-pill,
+  .k-archetype-chip,
+  .k-stage-pill,
+  .btn-primary,
+  .btn-secondary,
+  .btn-ghost,
+  .os-nav-btn,
+  .os-nav-btn::before,
+  .filter-pill,
+  .channel-pill,
+  .action-chip,
+  .triage-tab,
+  .replay-subtab,
+  .comp-tab,
+  .dir-tab,
+  .sub-tab,
+  .hud-btn,
+  .trip-chip,
+  .codex-card,
+  .today-action-card,
+  .codex-kpi-card,
+  .motion-tab-ink,
+  .k-viz-tooltip,
+  .whoop-gauge-arc,
+  .replay-rhythm-svg .rhythm-bar,
+  .codex-matrix-seg,
+  .codex-funnel-step,
+  .codex-funnel-fill {
+    transition: none;
+    animation: none;
+  }
+
+  .btn-primary:active,
+  .btn-secondary:active,
+  .btn-ghost:active,
+  .os-nav-btn:active,
+  .filter-pill:active,
+  .channel-pill:active,
+  .k-channel-pill:active,
+  .action-chip:active,
+  .triage-tab:active,
+  .replay-subtab:active,
+  .comp-tab:active,
+  .dir-tab:active,
+  .sub-tab:active,
+  .hud-btn:active,
+  .trip-chip:active,
+  .codex-card:hover,
+  .trip-chip:hover,
+  .today-action-card:hover,
+  .codex-funnel-step:active {
+    transform: none;
+  }
+}
+}

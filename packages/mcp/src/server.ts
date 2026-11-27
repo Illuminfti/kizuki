@@ -17,6 +17,11 @@ import {
   MEMT_RECALL_INPUT,
   MEMT_SNAPSHOT_INPUT,
   MEMT_STATUS_INPUT,
+  ONTOLOGY_CERTIFY_INPUT,
+  ONTOLOGY_CHECK_ANSWERABLE_INPUT,
+  ONTOLOGY_GENERIC_OUTPUT,
+  ONTOLOGY_SEARCH_INPUT,
+  ONTOLOGY_STATUS_INPUT,
   PACKET_INPUT,
   PACKET_INPUT_V2,
   PROPOSE_INPUT,
@@ -26,6 +31,7 @@ import {
 } from "./schemas";
 import type { MemtEngine } from "@kizuki/memt";
 import { createMemtBridge, isMemtToolName, memtToolAllowed } from "./memt";
+import { createOntologyBridge, isOntologyToolName, ontologyToolAllowed } from "./ontology";
 import { SERVER_VERSION } from "./version";
 import { compactToolSchema } from "./compact-schema";
 import type { McpWorldOp } from "./world/ops";
@@ -320,7 +326,15 @@ function listOnlyGrantedTools(server: McpServer, ctx: ServeContext, shareCompact
     const principal = resolvePrincipal(ctx.db, ctx.principal);
     const compacted = await loadCompacted(request, extra);
     return {
-      tools: compacted.filter((tool) => principal !== null && (isMemtToolName(tool.name) ? memtToolAllowed(principal, tool.name) : toolAllowed(principal.grant, tool.name as Tool))),
+      tools: compacted.filter(
+        (tool) =>
+          principal !== null &&
+          (isMemtToolName(tool.name)
+            ? memtToolAllowed(principal, tool.name)
+            : isOntologyToolName(tool.name)
+              ? ontologyToolAllowed(principal, tool.name)
+              : toolAllowed(principal.grant, tool.name as Tool)),
+      ),
     };
   });
 }
@@ -334,6 +348,7 @@ export interface ServerOptions {
 export function createServer(ctx: ServeContext, options: ServerOptions = {}): McpServer {
   const world = options.worldOps === undefined ? WORLD : buildWorldSurface(options.worldOps);
   const memt = createMemtBridge(ctx, options.memtEngine);
+  const ontology = createOntologyBridge(ctx);
   const memtCtx: ServeContext = {
     ...ctx,
     memtHealth: (liveCtx) => {
@@ -563,6 +578,54 @@ export function createServer(ctx: ServeContext, options: ServerOptions = {}): Mc
     (args) => respond(() => memt.handleSnapshot(args)),
   );
 
+  server.registerTool(
+    "ontology_status",
+    {
+      title: "Ontology status",
+      description: `Read local semantic ontology counts and compile status without mutating the vault. ${TAINT_RULE}`,
+      inputSchema: ONTOLOGY_STATUS_INPUT,
+      outputSchema: ONTOLOGY_GENERIC_OUTPUT,
+      annotations: READ_ONLY,
+    },
+    (args) => respond(() => ontology.handleStatus(args)),
+  );
+
+  server.registerTool(
+    "ontology_search",
+    {
+      title: "Search semantic ontology",
+      description: `Retrieve grounded semantic ontology terms, join paths, and metrics within caller scope. ${TAINT_RULE}`,
+      inputSchema: ONTOLOGY_SEARCH_INPUT,
+      outputSchema: ONTOLOGY_GENERIC_OUTPUT,
+      annotations: READ_ONLY,
+    },
+    (args) => respond(() => ontology.handleSearch(args)),
+  );
+
+  server.registerTool(
+    "ontology_check_answerable",
+    {
+      title: "Check question answerability",
+      description: `Run pre-flight semantic ontology coverage check, join paths, and gap analysis. ${TAINT_RULE}`,
+      inputSchema: ONTOLOGY_CHECK_ANSWERABLE_INPUT,
+      outputSchema: ONTOLOGY_GENERIC_OUTPUT,
+      annotations: READ_ONLY,
+    },
+    (args) => respond(() => ontology.handleCheckAnswerable(args)),
+  );
+
+  server.registerTool(
+    "ontology_certify",
+    {
+      title: "Certify ontology term",
+      description: `Certify a visible semantic ontology term with an auditable sticky receipt. ${TAINT_RULE}`,
+      inputSchema: ONTOLOGY_CERTIFY_INPUT,
+      outputSchema: ONTOLOGY_GENERIC_OUTPUT,
+      annotations: WRITE,
+    },
+    (args) => respond(() => ontology.handleCertify(args)),
+  );
+
   listOnlyGrantedTools(server, ctx, options.worldOps === undefined);
   negotiateBeforeParsing(server, ctx);
   const closeServer = server.close.bind(server);
@@ -570,7 +633,11 @@ export function createServer(ctx: ServeContext, options: ServerOptions = {}): Mc
     try {
       await memt.close();
     } finally {
-      await closeServer();
+      try {
+        ontology.close();
+      } finally {
+        await closeServer();
+      }
     }
   };
   return server;

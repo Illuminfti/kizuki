@@ -1,0 +1,1198 @@
+/* ==========================================================================
+   KIZUKI MIND OS - KINETIC DEPTH & LIVING MOTION LAYER (kinetic-depth.css)
+   5-Plane Machined Depth Ladder (Dark + Archival Paper Light)
+   Today 64px System Pulse Strip, People 52-Week Butterfly + 4 Signal Meters,
+   Board Visual Thread Spine & Collapsible Cards, 1px Specular Edge-Light Ring.
+
+   Strict Invariants:
+   - Weight ceiling: 600 (400 / 500 / 600 only)
+   - Zero wildcard transitions (explicit property lists only)
+   - Zero em-dashes anywhere
+   - Zero looping idle glow or bounce animations
+   - Backdrop blur ONLY on P4 overlay tier
+   - Subtraction proof (html[data-detail="off"]): 0.000px CLS
+   - Full prefers-reduced-motion: reduce safety
+   ========================================================================== */
+
+/* ==========================================================================
+   1. 5-PLANE MACHINED DEPTH TOKENS (DARK + ARCHIVAL PAPER LIGHT)
+   ========================================================================== */
+
+:root,
+html[data-theme="dark"] {
+  /* 5-Plane Surface Ladder (Dark - consumes Area 8 C6 tokens with safe fallbacks) */
+  --kos-p0: var(--surface-0, #0a0a0c);
+  --kos-p1: var(--surface-1, #111114);
+  --kos-p2: var(--surface-2, #17171b);
+  --kos-p3: var(--surface-3, #1d1d22);
+  --kos-p4: var(--surface-overlay, rgba(28, 28, 34, 0.92));
+
+  /* Plane Hairlines */
+  --kos-p1-border: rgba(255, 255, 255, 0.06);
+  --kos-p2-border: rgba(255, 255, 255, 0.075);
+  --kos-p3-border: rgba(255, 255, 255, 0.105);
+  --kos-p4-border: rgba(255, 255, 255, 0.13);
+  --kos-hairline: rgba(255, 255, 255, 0.065);
+
+  /* Machined Depth Shadows */
+  --kos-p1-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --kos-p2-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.075),
+    0 1px 0 rgba(0, 0, 0, 0.50),
+    0 8px 24px -12px rgba(0, 0, 0, 0.60);
+  --kos-p3-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.10),
+    0 2px 0 rgba(0, 0, 0, 0.50),
+    0 16px 40px -16px rgba(0, 0, 0, 0.70);
+  --kos-p4-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 4px 12px rgba(0, 0, 0, 0.55),
+    0 24px 56px -16px rgba(0, 0, 0, 0.82);
+
+  /* Specular 1px Edge-Light Spotlight Color */
+  --kos-spot-ring: rgba(255, 255, 255, 0.28);
+  --kos-spot-ring-soft: rgba(255, 255, 255, 0.08);
+  --kos-sweep-edge: rgba(255, 255, 255, 0.42);
+
+  /* Instrument Signal Palette (Dark) */
+  --kos-emerald: #34d399;
+  --kos-emerald-dim: rgba(52, 211, 153, 0.18);
+  --kos-amber: #f5a623;
+  --kos-amber-dim: rgba(245, 166, 35, 0.18);
+  --kos-vermilion: #f43f5e;
+  --kos-vermilion-dim: rgba(244, 63, 94, 0.18);
+  --kos-sky: #38bdf8;
+  --kos-sky-dim: rgba(56, 189, 248, 0.18);
+  --kos-violet: #a78bfa;
+  --kos-violet-dim: rgba(167, 139, 250, 0.18);
+
+  /* Telemetry Ink & Tracks */
+  --kos-ink-1: #ededed;
+  --kos-ink-2: #a1a1aa;
+  --kos-ink-3: #71717a;
+  --kos-track-bg: rgba(255, 255, 255, 0.06);
+  --kos-track-bar: rgba(255, 255, 255, 0.16);
+  --kos-spine-line: rgba(255, 255, 255, 0.11);
+  --kos-collapse-fade: linear-gradient(to bottom, rgba(23, 23, 27, 0), rgba(23, 23, 27, 0.96));
+
+  /* Motion Timing */
+  --kos-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --kos-ease-snap: cubic-bezier(0.2, 0.9, 0.25, 1);
+}
+
+html[data-theme="light"] {
+  /* 5-Plane Surface Ladder (Archival Paper Light) */
+  --kos-p0: #f1f2f4;
+  --kos-p1: #f8f8f9;
+  --kos-p2: #ffffff;
+  --kos-p3: #ffffff;
+  --kos-p4: rgba(255, 255, 255, 0.94);
+
+  /* Plane Hairlines */
+  --kos-p1-border: rgba(15, 23, 42, 0.075);
+  --kos-p2-border: rgba(15, 23, 42, 0.085);
+  --kos-p3-border: rgba(15, 23, 42, 0.125);
+  --kos-p4-border: rgba(15, 23, 42, 0.14);
+  --kos-hairline: rgba(15, 23, 42, 0.08);
+
+  /* Archival Paper Depth Shadows */
+  --kos-p1-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  --kos-p2-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.05),
+    0 6px 20px -12px rgba(15, 23, 42, 0.10);
+  --kos-p3-shadow:
+    0 2px 6px rgba(15, 23, 42, 0.06),
+    0 10px 28px -12px rgba(15, 23, 42, 0.14);
+  --kos-p4-shadow:
+    0 4px 12px rgba(15, 23, 42, 0.08),
+    0 20px 44px -14px rgba(15, 23, 42, 0.18);
+
+  /* Specular 1px Edge-Light Spotlight Color (Light) */
+  --kos-spot-ring: rgba(15, 23, 42, 0.22);
+  --kos-spot-ring-soft: rgba(15, 23, 42, 0.06);
+  --kos-sweep-edge: rgba(0, 112, 243, 0.48);
+
+  /* Instrument Signal Palette (Light) */
+  --kos-emerald: #15803d;
+  --kos-emerald-dim: rgba(21, 128, 61, 0.12);
+  --kos-amber: #b45309;
+  --kos-amber-dim: rgba(180, 83, 9, 0.12);
+  --kos-vermilion: #e11d48;
+  --kos-vermilion-dim: rgba(225, 29, 72, 0.12);
+  --kos-sky: #0284c7;
+  --kos-sky-dim: rgba(2, 132, 199, 0.12);
+  --kos-violet: #7c3aed;
+  --kos-violet-dim: rgba(124, 58, 237, 0.12);
+
+  /* Telemetry Ink & Tracks */
+  --kos-ink-1: #141416;
+  --kos-ink-2: #4b5563;
+  --kos-ink-3: #6b7280;
+  --kos-track-bg: rgba(15, 23, 42, 0.065);
+  --kos-track-bar: rgba(15, 23, 42, 0.20);
+  --kos-spine-line: rgba(15, 23, 42, 0.13);
+  --kos-collapse-fade: linear-gradient(to bottom, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.96));
+}
+
+/* ==========================================================================
+   2. GLOBAL 5-PLANE ARCHITECTURAL STEPPING ACROSS MIND OS
+   ========================================================================== */
+
+/* Plane 0: Recessed Well */
+body,
+.os-shell,
+.app-shell,
+.os-workspace,
+.master-detail-shell {
+  background-color: var(--kos-p0);
+}
+
+/* Plane 1: Machined Deck (Rails, Panes, Section Enclosures, Board Stages) */
+.os-sidebar,
+.triage-pane,
+.people-pane,
+.brief-section,
+.eb-center-stage,
+.eb-right-stage {
+  background-color: var(--kos-p1);
+  border-color: var(--kos-p1-border);
+  box-shadow: var(--kos-p1-shadow);
+}
+
+.brief-section {
+  border-radius: 10px;
+}
+
+/* Plane 2: Elevated Physical Cards */
+.triage-card,
+.eb-msg-card,
+.eb-thread-root,
+.eb-thread-reply-card,
+.taste-question-card,
+.codex-card,
+.profile-banner,
+.dossier-stat-card,
+.dossier-stat,
+.replay-kpi,
+.replay-kpi-card,
+.brief-hero,
+.detail-brief-card,
+.kos-pulse-strip,
+.kos-people-telemetry {
+  background-color: var(--kos-p2);
+  border: 1px solid var(--kos-p2-border);
+  box-shadow: var(--kos-p2-shadow);
+  transition:
+    background-color 160ms var(--kos-ease-out),
+    border-color 160ms var(--kos-ease-out),
+    box-shadow 180ms var(--kos-ease-out),
+    transform 180ms var(--kos-ease-out);
+}
+
+/* Anodized Board Thread Plates (Refined top keylight, quiet side/bottom hairline) */
+.eb-thread-card {
+  background-color: var(--eb-plate-bg, var(--kos-p2));
+  border: 1px solid var(--eb-plate-border, oklch(1 0 0 / 0.055));
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.06),
+    0 1px 2px rgba(0, 0, 0, 0.28);
+  transition:
+    background-color 160ms var(--kos-ease-out),
+    border-color 160ms var(--kos-ease-out),
+    box-shadow 180ms var(--kos-ease-out);
+}
+
+html[data-theme="light"] .eb-thread-card {
+  background-color: #ffffff;
+  border-color: rgba(15, 23, 42, 0.068);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 1px 2px rgba(15, 23, 42, 0.038);
+}
+
+/* Plane 3: Lifted Focus, Selection & Hover Cards */
+.triage-card:hover,
+.triage-card.is-selected,
+.triage-card.is-active,
+.eb-msg-card:hover,
+.eb-msg-card.is-selected,
+.codex-card:hover,
+.codex-card.is-pinned,
+.dossier-stat-card:hover,
+.replay-kpi:hover,
+[data-kos-plane="p3"] {
+  background-color: var(--kos-p3);
+  border-color: var(--kos-p3-border);
+  box-shadow: var(--kos-p3-shadow);
+}
+
+.eb-thread-card:hover,
+.eb-thread-card.is-selected {
+  background-color: var(--kos-p3);
+  border-color: oklch(1 0 0 / 0.115);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.095),
+    0 8px 22px -12px rgba(0, 0, 0, 0.62);
+}
+
+html[data-theme="light"] .eb-thread-card:hover,
+html[data-theme="light"] .eb-thread-card.is-selected {
+  background-color: #ffffff;
+  border-color: rgba(15, 23, 42, 0.14);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    0 6px 18px -10px rgba(15, 23, 42, 0.11);
+}
+
+/* Plane 4: Translucent Overlays (Backdrop Blur ONLY on P4 Tier) */
+.cmdk-modal,
+.kbd-atlas-modal,
+.eb-popover,
+.eb-command-popover,
+.kos-overlay-surface,
+[data-kos-plane="p4"] {
+  background-color: var(--kos-p4);
+  border: 1px solid var(--kos-p4-border);
+  box-shadow: var(--kos-p4-shadow);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+/* ==========================================================================
+   3. 1PX SPECULAR EDGE-LIGHT SPOTLIGHT (ZERO FILL WASH)
+   ========================================================================== */
+
+.kos-spot-surface,
+.triage-card,
+.eb-msg-card,
+.eb-thread-card,
+.codex-card,
+.taste-question-card,
+.profile-banner,
+.dossier-stat-card,
+.replay-kpi,
+.kos-pulse-strip,
+.kos-people-telemetry {
+  position: relative;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  html[data-detail="on"] .kos-spot-surface::after,
+  html[data-detail="on"] .triage-card::after,
+  html[data-detail="on"] .eb-msg-card::after,
+  html[data-detail="on"] .eb-thread-card::after,
+  html[data-detail="on"] .codex-card::after,
+  html[data-detail="on"] .taste-question-card::after,
+  html[data-detail="on"] .dossier-stat-card::after,
+  html[data-detail="on"] .replay-kpi::after,
+  html[data-detail="on"] .kos-pulse-strip::after,
+  html[data-detail="on"] .kos-people-telemetry::after {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    pointer-events: none;
+    z-index: 3;
+    opacity: var(--spot-opacity, 0);
+    background: radial-gradient(
+      220px circle at var(--spot-x, 50%) var(--spot-y, 50%),
+      var(--kos-spot-ring) 0%,
+      var(--kos-spot-ring-soft) 45%,
+      transparent 72%
+    );
+    -webkit-mask:
+      linear-gradient(#ffffff 0 0) content-box,
+      linear-gradient(#ffffff 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#ffffff 0 0) content-box,
+      linear-gradient(#ffffff 0 0);
+    mask-composite: exclude;
+    transition: opacity 180ms var(--kos-ease-out);
+  }
+}
+
+/* ==========================================================================
+   4. SLIDING P3 TAB INK & WORKSPACE CROSS-DISSOLVE
+   ========================================================================== */
+
+.kos-tab-ink,
+.motion-tab-ink {
+  background-color: var(--kos-ink-1);
+  border-radius: 999px;
+  transition:
+    transform 190ms var(--kos-ease-out),
+    opacity 150ms var(--kos-ease-out);
+  will-change: transform;
+}
+
+.triage-tabs .triage-tab.is-active,
+.dossier-subtabs .dossier-subtab.is-active,
+.composer-tabs .comp-tab.is-active,
+.eb-stage-tab.is-active {
+  background-color: var(--kos-p3);
+  border-color: var(--kos-p3-border);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    0 2px 8px -4px rgba(0, 0, 0, 0.45);
+}
+
+html[data-theme="light"] .triage-tabs .triage-tab.is-active,
+html[data-theme="light"] .dossier-subtabs .dossier-subtab.is-active,
+html[data-theme="light"] .composer-tabs .comp-tab.is-active,
+html[data-theme="light"] .eb-stage-tab.is-active {
+  background-color: var(--kos-p3);
+  border-color: var(--kos-p3-border);
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.06),
+    0 4px 12px -6px rgba(15, 23, 42, 0.14);
+}
+
+@keyframes kos-view-rise {
+  0% {
+    opacity: 0.01;
+    transform: translate3d(0, 8px, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.view-panel.kos-view-enter {
+  animation: kos-view-rise 200ms var(--kos-ease-out) both;
+}
+
+/* ==========================================================================
+   5. TODAY 64PX LIVE SYSTEM PULSE STRIP (.kos-pulse-strip)
+   ========================================================================== */
+
+.kos-pulse-strip {
+  display: grid;
+  grid-template-columns: 1.15fr 0.95fr 1fr 1.25fr;
+  align-items: stretch;
+  min-height: 64px;
+  width: 100%;
+  margin: 12px 0;
+  border-radius: 10px;
+  overflow: hidden;
+  font-family: var(--font-sans, system-ui, sans-serif);
+  color: var(--kos-ink-1);
+}
+
+.kos-pulse-cell {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 5px;
+  min-width: 0;
+  min-height: 64px;
+  padding: 8px 12px;
+  border-right: 1px solid var(--kos-hairline);
+  background: transparent;
+}
+
+.kos-pulse-cell:last-child {
+  border-right: 0;
+}
+
+.kos-pulse-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+  line-height: 1;
+}
+
+.kos-pulse-label {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--t-xs, 11px);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--kos-ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kos-pulse-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--t-xs, 11px);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--kos-ink-1);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.kos-pulse-badge.is-ok {
+  color: var(--kos-emerald);
+}
+
+.kos-pulse-badge.is-warn {
+  color: var(--kos-amber);
+}
+
+.kos-pulse-badge.is-crit {
+  color: var(--kos-vermilion);
+}
+
+.kos-pulse-sub {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--t-xs, 11px);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: var(--kos-ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Cell 1: Host Mini-Oscilloscope */
+.kos-scope-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 38px;
+  overflow: hidden;
+}
+
+.kos-scope-canvas {
+  display: block;
+  width: 100%;
+  height: 38px;
+}
+
+/* Cell 2: Pipelines 10x2 Dot Matrix */
+.kos-pipe-matrix {
+  display: grid;
+  grid-template-columns: repeat(10, 6px);
+  grid-template-rows: repeat(2, 6px);
+  gap: 4px 5px;
+  align-items: center;
+  justify-content: start;
+  padding: 4px 0 2px;
+}
+
+@keyframes kos-dot-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.kos-pipe-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  box-sizing: border-box;
+  animation: kos-dot-in 180ms var(--kos-ease-out) both;
+  animation-delay: calc(var(--kos-stagger-idx, 0) * 14ms);
+}
+
+.kos-pipe-dot.is-ok {
+  background-color: var(--kos-emerald);
+  border: 1px solid var(--kos-emerald);
+}
+
+.kos-pipe-dot.is-fail {
+  background-color: transparent;
+  border: 1.5px solid var(--kos-vermilion);
+}
+
+.kos-pipe-dot.is-muted {
+  background-color: var(--kos-track-bg);
+  border: 1px solid var(--kos-hairline);
+}
+
+/* Cell 3: 24H Hourly Activity Histogram */
+.kos-hist-bars {
+  display: grid;
+  grid-template-columns: repeat(24, minmax(2px, 1fr));
+  align-items: end;
+  gap: 2px;
+  height: 34px;
+  padding-top: 2px;
+}
+
+.kos-hist-bar {
+  width: 3px;
+  justify-self: center;
+  min-height: 2px;
+  border-radius: 1.5px 1.5px 0 0;
+  background-color: var(--kos-track-bar);
+  transition:
+    background-color 140ms var(--kos-ease-out),
+    transform 160ms var(--kos-ease-out);
+}
+
+.kos-hist-bar.has-events {
+  background-color: var(--kos-sky);
+  opacity: 0.72;
+}
+
+.kos-hist-bar.is-now {
+  background-color: var(--kos-emerald);
+  opacity: 1;
+}
+
+/* Cell 4: Day 06:00 - 22:00 Horizontal Timeline */
+.kos-day-body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.kos-day-track {
+  position: relative;
+  height: 16px;
+  border-radius: 4px;
+  background-color: var(--kos-track-bg);
+  border: 1px solid var(--kos-hairline);
+  overflow: hidden;
+}
+
+.kos-day-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background-color: var(--kos-hairline);
+  pointer-events: none;
+}
+
+.kos-day-block {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  min-width: 4px;
+  border-radius: 2px;
+  border: 0;
+  padding: 0;
+  background-color: var(--kos-sky);
+  opacity: 0.78;
+  cursor: pointer;
+  transition:
+    opacity 120ms var(--kos-ease-out),
+    background-color 120ms var(--kos-ease-out);
+}
+
+.kos-day-block:hover {
+  opacity: 1;
+}
+
+.kos-day-block.is-now {
+  background-color: var(--kos-emerald);
+  opacity: 1;
+}
+
+.kos-day-now-needle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background-color: var(--kos-vermilion);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.kos-day-now-needle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -2px;
+  width: 5px;
+  height: 3px;
+  border-radius: 1px;
+  background-color: var(--kos-vermilion);
+}
+
+.kos-day-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.kos-day-countdown {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--kos-ink-2);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.kos-day-countdown.is-live {
+  color: var(--kos-emerald);
+}
+
+.kos-day-next-title {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--kos-ink-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* ==========================================================================
+   6. PEOPLE 52-WEEK BUTTERFLY BAR & 4 SIGNAL METERS (.kos-people-telemetry)
+   ========================================================================== */
+
+.kos-people-telemetry {
+  display: grid;
+  grid-template-columns: 1.55fr 1fr;
+  gap: 0;
+  width: 100%;
+  margin: 12px 0;
+  border-radius: 10px;
+  overflow: hidden;
+  color: var(--kos-ink-1);
+}
+
+.kos-butterfly-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-right: 1px solid var(--kos-hairline);
+  min-width: 0;
+}
+
+.kos-telemetry-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.kos-telemetry-title {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--kos-ink-3);
+}
+
+.kos-butterfly-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--kos-ink-2);
+}
+
+.kos-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.kos-legend-swatch {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.kos-legend-swatch.is-out {
+  background-color: var(--kos-sky);
+}
+
+.kos-legend-swatch.is-in {
+  background-color: var(--kos-amber);
+}
+
+.kos-butterfly-stage {
+  position: relative;
+  width: 100%;
+  height: 68px;
+  overflow: hidden;
+}
+
+@keyframes kos-butterfly-draw {
+  0% {
+    clip-path: inset(0 100% 0 0);
+  }
+  100% {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+.kos-butterfly-svg {
+  display: block;
+  width: 100%;
+  height: 68px;
+}
+
+.kos-butterfly-svg.is-animated {
+  animation: kos-butterfly-draw 420ms var(--kos-ease-out) both;
+}
+
+.kos-butterfly-axis {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  color: var(--kos-ink-3);
+}
+
+/* Right Pane: 4 Signal Strength Meters */
+.kos-signal-pane {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px;
+  min-width: 0;
+}
+
+.kos-signal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.kos-signal-row {
+  display: grid;
+  grid-template-columns: minmax(76px, 1fr) 48px minmax(42px, auto);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.kos-signal-name {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--kos-ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kos-sig-bar {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 2px;
+  width: 48px;
+  height: 4px;
+  flex-shrink: 0;
+}
+
+.kos-sig-seg {
+  height: 4px;
+  border-radius: 1px;
+  background-color: var(--kos-track-bg);
+}
+
+.kos-sig-seg.is-lit {
+  background-color: var(--kos-emerald);
+}
+
+.kos-sig-bar.is-amber .kos-sig-seg.is-lit {
+  background-color: var(--kos-amber);
+}
+
+.kos-sig-bar.is-sky .kos-sig-seg.is-lit {
+  background-color: var(--kos-sky);
+}
+
+.kos-sig-bar.is-violet .kos-sig-seg.is-lit {
+  background-color: var(--kos-violet);
+}
+
+.kos-sig-bar.is-vermilion .kos-sig-seg.is-lit {
+  background-color: var(--kos-vermilion);
+}
+
+.kos-signal-val {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--kos-ink-1);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* ==========================================================================
+   7. BOARD VISUAL THREAD SPINE, AVATAR STACK & COLLAPSIBLE CARDS
+   ========================================================================== */
+
+.eb-thread-replies-spine {
+  position: relative;
+  padding-left: 20px;
+}
+
+.eb-thread-replies-spine::before {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 8px;
+  bottom: 8px;
+  width: 1px;
+  background-color: var(--kos-spine-line);
+}
+
+.eb-thread-replies-spine > .eb-thread-reply-card,
+.eb-thread-replies-spine > .eb-msg-card {
+  position: relative;
+}
+
+.eb-thread-replies-spine > .eb-thread-reply-card::before,
+.eb-thread-replies-spine > .eb-msg-card::before {
+  content: "";
+  position: absolute;
+  left: -13px;
+  top: 16px;
+  width: 10px;
+  height: 1px;
+  background-color: var(--kos-spine-line);
+}
+
+/* Overlapping Actor Avatar Stack */
+.eb-avatar-stack {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.eb-avatar-stack > * {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 2px solid var(--kos-p2);
+  margin-left: -6px;
+  font-size: 9px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 140ms var(--kos-ease-out);
+}
+
+.eb-avatar-stack > *:first-child {
+  margin-left: 0;
+}
+
+.eb-avatar-stack:hover > * {
+  transform: translateX(2px);
+}
+
+/* Collapsible Verbose Log / Artifact Body */
+.eb-log-collapse {
+  position: relative;
+  max-height: 148px;
+  overflow: hidden;
+  border-radius: 6px;
+  transition: max-height 220ms var(--kos-ease-out);
+}
+
+.eb-log-collapse::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 44px;
+  background: var(--kos-collapse-fade);
+  pointer-events: none;
+  transition: opacity 160ms var(--kos-ease-out);
+}
+
+.eb-log-collapse.is-expanded {
+  max-height: 2400px;
+}
+
+.eb-log-collapse.is-expanded::after {
+  opacity: 0;
+}
+
+/* 240ms Top Edge Sweep on Newly Arrived Live Board Messages (One-Shot) */
+@keyframes kos-arrived-sweep {
+  0% {
+    opacity: 0.95;
+    transform: scaleX(0);
+  }
+  70% {
+    opacity: 0.95;
+    transform: scaleX(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scaleX(1);
+  }
+}
+
+.eb-just-arrived {
+  position: relative;
+  overflow: hidden;
+}
+
+.eb-just-arrived::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  transform-origin: 0 50%;
+  background: linear-gradient(90deg, var(--kos-emerald), var(--kos-sweep-edge));
+  pointer-events: none;
+  z-index: 4;
+  animation: kos-arrived-sweep 240ms var(--kos-ease-out) forwards;
+}
+
+/* ==========================================================================
+   8. STALE WHOOP 45% DEMOTION, SCHEDULE NOWRAP, CLOCK COLON & SSE HEARTBEAT
+   ========================================================================== */
+
+.whoop-pod.is-stale-old,
+.brief-whoop-pod.is-stale-old,
+.rail-whoop.is-stale-old {
+  opacity: 0.62;
+  filter: saturate(0.45);
+  transition:
+    opacity 180ms var(--kos-ease-out),
+    filter 180ms var(--kos-ease-out);
+}
+
+.whoop-pod.is-stale-old:hover,
+.brief-whoop-pod.is-stale-old:hover,
+.rail-whoop.is-stale-old:hover {
+  opacity: 0.78;
+  filter: saturate(0.65);
+}
+
+/* Schedule Time Non-Wrapping Guard */
+.schedule-time,
+.sched-time,
+.brief-sched-time,
+.triage-row-time,
+.triage-row-age,
+.rail-next-time,
+.rail-next-up-time,
+[data-schedule-time] {
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Live 1Hz Stepping London Clock Colon */
+.kos-clock-colon {
+  display: inline-block;
+  transition: opacity 90ms linear;
+}
+
+.kos-clock-colon.is-dim {
+  opacity: 0.28;
+}
+
+/* SSE-Driven Live Heartbeat Dot (One-Shot Per Real Event) */
+@keyframes kos-sse-heartbeat {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  35% {
+    transform: scale(1.65);
+    opacity: 0.95;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.tailnet-dot.kos-sse-beat,
+#tailnet-pill .tailnet-dot.kos-sse-beat,
+#tailnet-badge .status-dot.kos-sse-beat {
+  animation: kos-sse-heartbeat 420ms var(--kos-ease-out) 1;
+}
+
+/* ==========================================================================
+   9. MOBILE RESPONSIVE LAYOUT (390x844 & <= 760px)
+   ========================================================================== */
+
+@media (max-width: 760px) {
+  .kos-pulse-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    min-height: 120px;
+  }
+
+  .kos-pulse-cell {
+    min-height: 60px;
+    padding: 8px 10px;
+    border-right: 1px solid var(--kos-hairline);
+    border-bottom: 1px solid var(--kos-hairline);
+  }
+
+  .kos-pulse-cell:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .kos-pulse-cell:nth-child(n + 3) {
+    border-bottom: 0;
+  }
+
+  .kos-people-telemetry {
+    grid-template-columns: 1fr;
+  }
+
+  .kos-butterfly-pane {
+    border-right: 0;
+    border-bottom: 1px solid var(--kos-hairline);
+  }
+}
+
+/* ==========================================================================
+   10. STRICT SUBTRACTION PROOF (html[data-detail="off"]) - 0.000px CLS
+   Strips ONLY box-shadow, backdrop-filter, specular bevels & edge-light ring.
+   ========================================================================== */
+
+html[data-detail="off"] .os-sidebar,
+html[data-detail="off"] .triage-pane,
+html[data-detail="off"] .people-pane,
+html[data-detail="off"] .brief-section,
+html[data-detail="off"] .eb-center-stage,
+html[data-detail="off"] .eb-right-stage,
+html[data-detail="off"] .triage-card,
+html[data-detail="off"] .eb-msg-card,
+html[data-detail="off"] .eb-thread-card,
+html[data-detail="off"] .eb-thread-card:hover,
+html[data-detail="off"] .eb-thread-card.is-selected,
+html[data-detail="off"] .eb-composer,
+html[data-detail="off"] .eb-composer:focus-within,
+html[data-detail="off"] .eb-composer-dock,
+html[data-detail="off"] .eb-composer-dock:focus-within,
+html[data-detail="off"] .eb-event-tape,
+html[data-detail="off"] .eb-roster-compact-row,
+html[data-detail="off"] .eb-thread-root,
+html[data-detail="off"] .eb-thread-reply-card,
+html[data-detail="off"] .taste-question-card,
+html[data-detail="off"] .codex-card,
+html[data-detail="off"] .profile-banner,
+html[data-detail="off"] .dossier-stat-card,
+html[data-detail="off"] .dossier-stat,
+html[data-detail="off"] .replay-kpi,
+html[data-detail="off"] .replay-kpi-card,
+html[data-detail="off"] .brief-hero,
+html[data-detail="off"] .detail-brief-card,
+html[data-detail="off"] .kos-pulse-strip,
+html[data-detail="off"] .kos-people-telemetry,
+html[data-detail="off"] .cmdk-modal,
+html[data-detail="off"] .kbd-atlas-modal,
+html[data-detail="off"] .eb-popover,
+html[data-detail="off"] .eb-command-popover,
+html[data-detail="off"] .kos-overlay-surface,
+html[data-detail="off"] .triage-tabs .triage-tab.is-active,
+html[data-detail="off"] .dossier-subtabs .dossier-subtab.is-active,
+html[data-detail="off"] .composer-tabs .comp-tab.is-active,
+html[data-detail="off"] .eb-stage-tab.is-active,
+html[data-detail="off"] [data-kos-plane="p3"],
+html[data-detail="off"] [data-kos-plane="p4"] {
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+html[data-detail="off"] .kos-spot-surface::after,
+html[data-detail="off"] .triage-card::after,
+html[data-detail="off"] .eb-msg-card::after,
+html[data-detail="off"] .eb-thread-card::after,
+html[data-detail="off"] .codex-card::after,
+html[data-detail="off"] .taste-question-card::after,
+html[data-detail="off"] .profile-banner::after,
+html[data-detail="off"] .dossier-stat-card::after,
+html[data-detail="off"] .replay-kpi::after,
+html[data-detail="off"] .kos-pulse-strip::after,
+html[data-detail="off"] .kos-people-telemetry::after {
+  opacity: 0;
+  display: none;
+}
+
+html[data-detail="off"] .profile-banner::before,
+html[data-detail="off"] .taste-question-card::before,
+html[data-detail="off"] .eb-just-arrived::before {
+  display: none;
+}
+
+html[data-detail="off"] .kos-butterfly-svg.is-animated,
+html[data-detail="off"] .kos-pipe-dot,
+html[data-detail="off"] .view-panel.kos-view-enter {
+  animation: none;
+}
+
+/* ==========================================================================
+   11. PREFERS REDUCED MOTION SAFETY
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  .triage-card,
+  .eb-msg-card,
+  .eb-thread-card,
+  .eb-thread-root,
+  .eb-thread-reply-card,
+  .taste-question-card,
+  .codex-card,
+  .profile-banner,
+  .dossier-stat-card,
+  .dossier-stat,
+  .replay-kpi,
+  .replay-kpi-card,
+  .brief-hero,
+  .detail-brief-card,
+  .kos-pulse-strip,
+  .kos-people-telemetry,
+  .kos-tab-ink,
+  .motion-tab-ink,
+  .kos-hist-bar,
+  .kos-day-block,
+  .eb-avatar-stack > *,
+  .eb-log-collapse,
+  .eb-log-collapse::after,
+  .whoop-pod.is-stale-old,
+  .brief-whoop-pod.is-stale-old,
+  .rail-whoop.is-stale-old,
+  .kos-clock-colon {
+    transition: none;
+  }
+
+  .kos-pipe-dot,
+  .kos-butterfly-svg.is-animated,
+  .eb-just-arrived::before,
+  .view-panel.kos-view-enter,
+  .tailnet-dot.kos-sse-beat,
+  #tailnet-pill .tailnet-dot.kos-sse-beat,
+  #tailnet-badge .status-dot.kos-sse-beat {
+    animation: none;
+  }
+
+  .kos-clock-colon.is-dim {
+    opacity: 1;
+  }
+}

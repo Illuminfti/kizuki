@@ -1,0 +1,33 @@
+[package]
+name = "kizuki-mind-rune"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Kizuki Mind OS native GPU-rendered desktop app built with Anomaly Rune."
+
+[dependencies]
+rune = { git = "https://github.com/anomalyco/rune", rev = "d8285c3a5d5c014bdab0a8fb8a4c23f5e15fd887", features = ["tooling"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "2", default-features = false, features = ["tls", "json"] }
+
+[patch.crates-io]
+wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "d8285c3a5d5c014bdab0a8fb8a4c23f5e15fd887" }
+naga = { git = "https://github.com/anomalyco/rune", rev = "d8285c3a5d5c014bdab0a8fb8a4c23f5e15fd887" }
+winit = { git = "https://github.com/anomalyco/rune", rev = "d8285c3a5d5c014bdab0a8fb8a4c23f5e15fd887" }
+sctk-adwaita = { git = "https://github.com/anomalyco/rune", rev = "d8285c3a5d5c014bdab0a8fb8a4c23f5e15fd887" }
+parley_engine = { git = "https://github.com/anomalyco/rune", rev = "d8285c3a5d5c014bdab0a8fb8a4c23f5e15fd887" }
+accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "d8285c3a5d5c014bdab0a8fb8a4c23f5e15fd887" }
+accesskit_atspi_common = { git = "https://github.com/anomalyco/rune", rev = "d8285c3a5d5c014bdab0a8fb8a4c23f5e15fd887" }
+accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "d8285c3a5d5c014bdab0a8fb8a4c23f5e15fd887" }
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+opt-level = 2
+
+[profile.release]
+codegen-units = 16
+incremental = true

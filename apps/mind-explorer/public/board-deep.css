@@ -1,0 +1,2094 @@
+/* ==========================================================================
+   KIZUKI MIND OS - AGENT BOARD DEEP TACTILE & SPATIAL CSS SYSTEM
+   (/public/board-deep.css)
+   Wave 2 & Wave 3 Companion Layer loaded after agent-board.css.
+   Aesthetic: Evil Rabbit Matte Graphite Obsidian (Dark) + Crisp Paper (Light)
+   Typography: Geist (400 / 500 / 600 ceiling) + Geist Mono (400 / 500)
+
+   Strict Invariants:
+   - WCAG AA contrast >= 4.69:1 across all agent chips & mind pills (Dark + Light)
+   - Zero literal em-dashes, explicit transition properties only, weight ceiling 600
+   - One-shot mechanical keyframe enters only (no looping idle animations)
+   - Subtraction Proof (html[data-detail="off"]): 0.000px CLS surface-only strip
+   ========================================================================== */
+
+/* ==========================================================================
+   1. LIGHT CONTRAST OVERRIDES & NEW DEEP TACTILE TOKENS
+   ========================================================================== */
+:root,
+html[data-theme="dark"] {
+  /* Concentric Radii Ladder (consumes Area 8 C6 tokens with safe fallbacks) */
+  --eb-r-shell: var(--radius-lg, 16px);
+  --eb-r-card: var(--radius-md, 12px);
+  --eb-r-pill: var(--radius-sm, 8px);
+  --eb-r-micro: var(--radius-xs, 5px);
+
+  /* Machined Specular Bevels (stripped cleanly in data-detail="off") */
+  --eb-bevel-top: inset 0 1px 0 oklch(1 0 0 / 0.06);
+  --eb-bevel-card: inset 0 1px 0 oklch(1 0 0 / 0.06), 0 1px 2px rgba(0, 0, 0, 0.32);
+  --eb-bevel-card-hover: inset 0 1px 0 oklch(1 0 0 / 0.095), 0 6px 18px -10px rgba(0, 0, 0, 0.58);
+  --eb-bevel-composer: inset 0 1px 0 oklch(1 0 0 / 0.095), 0 12px 32px -6px rgba(0, 0, 0, 0.62), 0 2px 6px rgba(0, 0, 0, 0.36);
+  --eb-bevel-composer-focus: inset 0 1px 0 oklch(1 0 0 / 0.12), 0 0 0 1px var(--border-focus), 0 8px 28px -6px rgba(0, 0, 0, 0.60);
+  --eb-plate-bg: #151519;
+  --eb-plate-border: oklch(1 0 0 / 0.055);
+  --eb-plate-border-hover: oklch(1 0 0 / 0.115);
+  --eb-well-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.36), inset 0 -1px 0 oklch(1 0 0 / 0.04);
+
+  /* Mechanical Motion Tokens */
+  --eb-dur-snap: 110ms;
+  --eb-dur-panel: 160ms;
+  --eb-ease-snap: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Recessed & Spatial Instrument Surfaces */
+  --eb-recessed-bg: #111114;
+  --eb-recessed-border: rgba(255, 255, 255, 0.075);
+  --eb-mesh-bg: #111114;
+  --eb-mesh-grid: rgba(255, 255, 255, 0.036);
+
+  /* Monospace Keycap Tokens */
+  --eb-keycap-bg: rgba(255, 255, 255, 0.065);
+  --eb-keycap-border: rgba(255, 255, 255, 0.14);
+  --eb-keycap-ink: #c4c4cc;
+
+  /* Unified Git Diff Tokens (Dark: emerald >= 10.5:1, rose >= 8.9:1) */
+  --eb-diff-bg: #111114;
+  --eb-diff-head-bg: #16161a;
+  --eb-diff-add-bg: rgba(34, 197, 94, 0.11);
+  --eb-diff-add-gutter: rgba(34, 197, 94, 0.16);
+  --eb-diff-add-rail: #22c55e;
+  --eb-diff-add-ink: #6ee7b7;
+  --eb-diff-del-bg: rgba(244, 63, 94, 0.12);
+  --eb-diff-del-gutter: rgba(244, 63, 94, 0.17);
+  --eb-diff-del-rail: #f43f5e;
+  --eb-diff-del-ink: #fda4af;
+  --eb-diff-hunk-bg: rgba(56, 189, 248, 0.08);
+  --eb-diff-hunk-ink: #7dd3fc;
+
+  /* Inline Kizuki Mind Pill Tokens (Dark: all >= 7.8:1) */
+  --eb-mind-person-ink: #5eead4;
+  --eb-mind-person-bg: rgba(45, 212, 191, 0.12);
+  --eb-mind-person-border: rgba(45, 212, 191, 0.28);
+  --eb-mind-person-border-hover: rgba(45, 212, 191, 0.52);
+
+  --eb-mind-vault-ink: #7dd3fc;
+  --eb-mind-vault-bg: rgba(56, 189, 248, 0.12);
+  --eb-mind-vault-border: rgba(56, 189, 248, 0.28);
+  --eb-mind-vault-border-hover: rgba(56, 189, 248, 0.52);
+
+  --eb-mind-codex-ink: #c4b5fd;
+  --eb-mind-codex-bg: rgba(167, 139, 250, 0.13);
+  --eb-mind-codex-border: rgba(167, 139, 250, 0.28);
+  --eb-mind-codex-border-hover: rgba(167, 139, 250, 0.54);
+
+  --eb-mind-taste-ink: #fcd34d;
+  --eb-mind-taste-bg: rgba(245, 158, 11, 0.13);
+  --eb-mind-taste-border: rgba(245, 158, 11, 0.30);
+  --eb-mind-taste-border-hover: rgba(245, 158, 11, 0.55);
+
+  --eb-mind-replay-ink: #fda4af;
+  --eb-mind-replay-bg: rgba(244, 63, 94, 0.13);
+  --eb-mind-replay-border: rgba(244, 63, 94, 0.28);
+  --eb-mind-replay-border-hover: rgba(244, 63, 94, 0.52);
+
+  --eb-mind-commit-ink: #d4d4d8;
+  --eb-mind-commit-bg: rgba(255, 255, 255, 0.065);
+  --eb-mind-commit-border: rgba(255, 255, 255, 0.14);
+  --eb-mind-commit-border-hover: rgba(255, 255, 255, 0.30);
+
+  /* Decision & Status Accent Tokens (Dark) */
+  --eb-revise-ink: #fcd34d;
+  --eb-revise-bg: rgba(245, 158, 11, 0.12);
+  --eb-revise-border: rgba(245, 158, 11, 0.32);
+}
+
+html[data-theme="light"] {
+  /* Mathematically WCAG AA Tightened Agent Polarity Overrides */
+  --eb-claude: #b54822;
+  --eb-claude-glyph: #b54822;
+  --eb-claude-bg: #fdf6f3;
+  --eb-claude-border: rgba(181, 72, 34, 0.28);
+
+  --eb-codex: #0369a1;
+  --eb-codex-glyph: #0369a1;
+  --eb-codex-bg: #f0f8fd;
+  --eb-codex-border: rgba(3, 105, 161, 0.26);
+
+  --eb-brain: #15803d;
+  --eb-brain-glyph: #15803d;
+  --eb-brain-bg: #f2faf5;
+  --eb-brain-border: rgba(21, 128, 61, 0.26);
+
+  --eb-designer: #6d28d9;
+  --eb-designer-glyph: #6d28d9;
+  --eb-designer-bg: #f6f3fd;
+  --eb-designer-border: rgba(109, 40, 217, 0.25);
+
+  --eb-worker: #4338ca;
+  --eb-worker-glyph: #4338ca;
+  --eb-worker-bg: #f3f4fd;
+  --eb-worker-border: rgba(67, 56, 202, 0.25);
+
+  /* Light Bevels */
+  --eb-bevel-top: inset 0 1px 0 rgba(255, 255, 255, 0.94);
+  --eb-bevel-card: inset 0 1px 0 rgba(255, 255, 255, 0.92), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --eb-bevel-card-hover: inset 0 1px 0 rgba(255, 255, 255, 0.96), 0 6px 18px -10px rgba(15, 23, 42, 0.11);
+  --eb-bevel-composer: inset 0 1px 0 rgba(255, 255, 255, 0.98), 0 12px 28px -8px rgba(15, 23, 42, 0.14), 0 2px 6px rgba(15, 23, 42, 0.06);
+  --eb-bevel-composer-focus: inset 0 1px 0 rgba(255, 255, 255, 0.98), 0 0 0 1px var(--border-focus), 0 8px 24px -6px rgba(37, 99, 235, 0.18);
+  --eb-plate-bg: #ffffff;
+  --eb-plate-border: rgba(15, 23, 42, 0.068);
+  --eb-plate-border-hover: rgba(15, 23, 42, 0.14);
+  --eb-well-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.065), inset 0 -1px 0 rgba(255, 255, 255, 0.8);
+
+  /* Light Recessed & Spatial Instrument Surfaces */
+  --eb-recessed-bg: #f2f2f5;
+  --eb-recessed-border: rgba(0, 0, 0, 0.085);
+  --eb-mesh-bg: #fafafb;
+  --eb-mesh-grid: rgba(15, 23, 42, 0.052);
+
+  /* Light Monospace Keycaps */
+  --eb-keycap-bg: #f4f4f6;
+  --eb-keycap-border: rgba(0, 0, 0, 0.15);
+  --eb-keycap-ink: #3f3f46;
+
+  /* Unified Git Diff Tokens (Light: emerald >= 8.2:1, rose >= 7.0:1) */
+  --eb-diff-bg: #ffffff;
+  --eb-diff-head-bg: #f6f6f8;
+  --eb-diff-add-bg: rgba(22, 163, 74, 0.09);
+  --eb-diff-add-gutter: rgba(22, 163, 74, 0.14);
+  --eb-diff-add-rail: #16a34a;
+  --eb-diff-add-ink: #14532d;
+  --eb-diff-del-bg: rgba(225, 29, 72, 0.08);
+  --eb-diff-del-gutter: rgba(225, 29, 72, 0.13);
+  --eb-diff-del-rail: #e11d48;
+  --eb-diff-del-ink: #9f1239;
+  --eb-diff-hunk-bg: rgba(3, 105, 161, 0.07);
+  --eb-diff-hunk-ink: #0369a1;
+
+  /* Inline Kizuki Mind Pill Tokens (Light: all >= 5.10:1 on solid crisp tint) */
+  --eb-mind-person-ink: #115e59;
+  --eb-mind-person-bg: #f0fdfa;
+  --eb-mind-person-border: rgba(17, 94, 89, 0.24);
+  --eb-mind-person-border-hover: rgba(17, 94, 89, 0.50);
+
+  --eb-mind-vault-ink: #0369a1;
+  --eb-mind-vault-bg: #f0f9ff;
+  --eb-mind-vault-border: rgba(3, 105, 161, 0.24);
+  --eb-mind-vault-border-hover: rgba(3, 105, 161, 0.50);
+
+  --eb-mind-codex-ink: #6d28d9;
+  --eb-mind-codex-bg: #f5f3ff;
+  --eb-mind-codex-border: rgba(109, 40, 217, 0.24);
+  --eb-mind-codex-border-hover: rgba(109, 40, 217, 0.50);
+
+  --eb-mind-taste-ink: #92400e;
+  --eb-mind-taste-bg: #fffbeb;
+  --eb-mind-taste-border: rgba(146, 64, 14, 0.26);
+  --eb-mind-taste-border-hover: rgba(146, 64, 14, 0.52);
+
+  --eb-mind-replay-ink: #be123c;
+  --eb-mind-replay-bg: #fff1f2;
+  --eb-mind-replay-border: rgba(190, 18, 60, 0.24);
+  --eb-mind-replay-border-hover: rgba(190, 18, 60, 0.50);
+
+  --eb-mind-commit-ink: #3f3f46;
+  --eb-mind-commit-bg: #f4f4f6;
+  --eb-mind-commit-border: rgba(63, 63, 70, 0.20);
+  --eb-mind-commit-border-hover: rgba(63, 63, 70, 0.42);
+
+  /* Decision & Status Accent Tokens (Light) */
+  --eb-revise-ink: #92400e;
+  --eb-revise-bg: #fffbeb;
+  --eb-revise-border: rgba(180, 83, 9, 0.30);
+}
+
+/* Tactile Bevel Upgrade for Core Board Shells (Anodized Plates + Machined Composer) */
+.eb-center-stage,
+.eb-right-stage {
+  box-shadow: var(--eb-bevel-top);
+}
+
+.eb-thread-card {
+  background: var(--eb-plate-bg);
+  border-color: var(--eb-plate-border);
+  box-shadow: var(--eb-bevel-card);
+}
+
+.eb-thread-card:hover,
+.eb-thread-card.is-selected {
+  border-color: var(--eb-plate-border-hover);
+  box-shadow: var(--eb-bevel-card-hover);
+}
+
+.eb-composer,
+.eb-composer-dock {
+  box-shadow: var(--eb-bevel-composer);
+}
+
+.eb-composer:focus-within,
+.eb-composer-dock:focus-within {
+  box-shadow: var(--eb-bevel-composer-focus);
+}
+
+/* Linear-Grade Hierarchy: Primary Executive Headline vs Quiet Recessed Secondary Wells */
+.eb-exec-preview {
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: -0.011em;
+  color: var(--ink-primary);
+}
+
+.eb-exec-preview .eb-rich-p {
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--ink-primary);
+}
+
+.eb-exec-kv-table {
+  border-color: var(--eb-recessed-border);
+  background: var(--eb-recessed-bg);
+  box-shadow: var(--eb-well-shadow);
+}
+
+.eb-exec-kv-label {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.065em;
+  color: var(--ink-muted);
+}
+
+.eb-exec-kv-val {
+  font-size: 11.5px;
+  line-height: 1.44;
+  color: var(--ink-secondary);
+}
+
+.eb-collapsible-toggle {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--eb-r-micro);
+  border: 1px solid var(--eb-recessed-border);
+  background: var(--eb-recessed-bg);
+  color: var(--ink-muted);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+
+.eb-collapsible-toggle:hover {
+  border-color: var(--eb-border-strong);
+  background: var(--eb-card-hover);
+  color: var(--ink-primary);
+}
+
+.eb-thread-spine {
+  border-color: var(--eb-recessed-border);
+  background: var(--eb-recessed-bg);
+  box-shadow: var(--eb-well-shadow);
+}
+
+/* Live Event Tape: Recessed Instrument Well + Alternating Hairline Cadence + Luminous Badges */
+.eb-event-tape {
+  border-radius: var(--eb-r-card);
+  border: 1px solid var(--eb-recessed-border);
+  background: var(--eb-recessed-bg);
+  box-shadow: var(--eb-well-shadow);
+  overflow-x: hidden;
+}
+
+.eb-event-tape-row {
+  min-height: 29px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--eb-border-subtle);
+  transition: background-color var(--eb-dur-snap) var(--eb-ease-snap),
+    color var(--eb-dur-snap) var(--eb-ease-snap);
+}
+
+.eb-event-tape-row:nth-child(even) {
+  background: rgba(255, 255, 255, 0.018);
+}
+
+html[data-theme="light"] .eb-event-tape-row:nth-child(even) {
+  background: rgba(15, 23, 42, 0.022);
+}
+
+.eb-event-tape-row.is-clickable:hover {
+  background: var(--eb-card-hover);
+}
+
+.eb-event-tape-row.is-fresh {
+  background: rgba(52, 211, 153, 0.08);
+}
+
+html[data-theme="light"] .eb-event-tape-row.is-fresh {
+  background: rgba(21, 128, 61, 0.075);
+}
+
+.eb-event-tape-time {
+  color: var(--ink-muted);
+  font-size: 10px;
+}
+
+.eb-event-tape-kind {
+  height: 17px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.045em;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
+}
+
+html[data-theme="light"] .eb-event-tape-kind {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+}
+
+.eb-event-tape-kind.is-telemetry,
+.eb-event-tape-kind.is-hello {
+  color: var(--eb-brain);
+  background: var(--eb-brain-bg);
+  border-color: var(--eb-brain-border);
+}
+
+.eb-event-tape-kind.is-board,
+.eb-event-tape-kind.is-decision {
+  color: var(--eb-revise-ink);
+  background: var(--eb-revise-bg);
+  border-color: var(--eb-revise-border);
+}
+
+.eb-event-tape-kind.is-action,
+.eb-event-tape-kind.is-debate {
+  color: var(--eb-codex);
+  background: var(--eb-codex-bg);
+  border-color: var(--eb-codex-border);
+}
+
+.eb-event-tape-actor {
+  color: var(--ink-primary);
+  font-weight: 500;
+}
+
+.eb-event-tape-chan {
+  color: var(--ink-muted);
+}
+
+.eb-event-tape-msg {
+  color: var(--ink-secondary);
+}
+
+.eb-roster-compact-row {
+  background: var(--eb-plate-bg);
+  border-color: var(--eb-plate-border);
+  box-shadow: var(--eb-bevel-card);
+}
+
+.eb-roster-compact-row:hover {
+  background: var(--eb-card-hover);
+  border-color: var(--eb-plate-border-hover);
+}
+
+/* One-Shot Knife-Blade & Panel Enters (single-shot only) */
+@keyframes eb-knife-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.992);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes eb-modal-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.988);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Shared Tactile Monospace Keycap */
+.eb-keycap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 4px;
+  border: 1px solid var(--eb-keycap-border);
+  background: var(--eb-keycap-bg);
+  color: var(--eb-keycap-ink);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+/* ==========================================================================
+   2. SIGNAL VS TELEMETRY RIBBON & ROLLUP DRAWER
+   Matches board-artifacts.js (.eb-telemetry-ribbon, .eb-ribbon-tabs,
+   .eb-ribbon-tab, .eb-telemetry-rollup, .eb-telemetry-rollup-btn) &
+   agent-board-view.js (.eb-telemetry-drawer, .eb-telemetry-toggle,
+   .eb-telemetry-chips, .eb-telemetry-chip).
+   ========================================================================== */
+.eb-telemetry-ribbon,
+.eb-signal-ribbon {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 32px;
+  padding: 3px 10px;
+  background: var(--eb-recessed-bg);
+  border-bottom: 1px solid var(--eb-border);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+/* Recessed 3-Way Mechanical Toggle (Signal | All | Telemetry) */
+.eb-ribbon-tabs,
+.eb-telemetry-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 24px;
+  padding: 2px;
+  border-radius: var(--eb-r-pill);
+  background: var(--eb-frame-bg);
+  border: 1px solid var(--eb-recessed-border);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.22);
+  flex-shrink: 0;
+}
+
+html[data-theme="light"] .eb-ribbon-tabs,
+html[data-theme="light"] .eb-telemetry-tabs {
+  background: #e9e9ee;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.eb-ribbon-tab,
+.eb-telemetry-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 18px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-muted);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--eb-dur-snap) var(--eb-ease-snap),
+    border-color var(--eb-dur-snap) var(--eb-ease-snap),
+    color var(--eb-dur-snap) var(--eb-ease-snap),
+    transform var(--eb-dur-snap) var(--eb-ease-snap);
+}
+
+.eb-ribbon-tab:hover,
+.eb-telemetry-tab:hover {
+  color: var(--ink-primary);
+}
+
+.eb-ribbon-tab:active,
+.eb-telemetry-tab:active {
+  transform: translateY(0.5px);
+}
+
+.eb-ribbon-tab.is-active,
+.eb-ribbon-tab[aria-selected="true"],
+.eb-telemetry-tab.is-active,
+.eb-telemetry-tab[aria-selected="true"] {
+  background: var(--eb-card-selected);
+  border-color: var(--eb-border-strong);
+  color: var(--ink-primary);
+  box-shadow: var(--eb-bevel-card);
+}
+
+html[data-theme="light"] .eb-ribbon-tab.is-active,
+html[data-theme="light"] .eb-ribbon-tab[aria-selected="true"],
+html[data-theme="light"] .eb-telemetry-tab.is-active,
+html[data-theme="light"] .eb-telemetry-tab[aria-selected="true"] {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+.eb-ribbon-tab:focus-visible,
+.eb-telemetry-tab:focus-visible {
+  outline: 2px solid var(--eb-border-focus);
+  outline-offset: 1px;
+}
+
+.eb-ribbon-count {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.eb-ribbon-tab.is-active .eb-ribbon-count,
+.eb-telemetry-tab.is-active .eb-ribbon-count {
+  color: var(--ink-secondary);
+}
+
+.eb-telemetry-rollup {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.eb-telemetry-rollup-btn,
+.eb-telemetry-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  max-width: 100%;
+  padding: 0 8px;
+  border-radius: var(--eb-r-micro);
+  border: 1px solid var(--eb-border);
+  background: var(--eb-pill-bg);
+  color: var(--ink-secondary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: background-color var(--eb-dur-snap) var(--eb-ease-snap),
+    border-color var(--eb-dur-snap) var(--eb-ease-snap),
+    color var(--eb-dur-snap) var(--eb-ease-snap);
+}
+
+.eb-telemetry-rollup-btn:hover,
+.eb-telemetry-rollup-btn.is-expanded,
+.eb-telemetry-toggle:hover,
+.eb-telemetry-toggle[aria-expanded="true"] {
+  background: var(--eb-pill-hover);
+  border-color: var(--eb-border-strong);
+  color: var(--ink-primary);
+}
+
+.eb-telemetry-rollup-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--eb-live);
+  flex-shrink: 0;
+}
+
+.eb-telemetry-rollup-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.eb-telemetry-rollup-cta {
+  color: var(--ink-primary);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.eb-telemetry-quiet {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+
+/* Collapsible Telemetry Rollup Drawer */
+.eb-telemetry-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--eb-recessed-bg);
+  border-bottom: 1px solid var(--eb-border);
+  animation: eb-knife-reveal var(--eb-dur-snap) var(--eb-ease-snap) both;
+}
+
+.eb-telemetry-drawer[hidden] {
+  display: none;
+}
+
+.eb-telemetry-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.eb-telemetry-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+.eb-telemetry-chip,
+.eb-telemetry-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--eb-r-micro);
+  border: 1px solid var(--eb-border);
+  background: var(--eb-card-bg);
+  color: var(--ink-secondary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  transition: background-color var(--eb-dur-snap) var(--eb-ease-snap),
+    border-color var(--eb-dur-snap) var(--eb-ease-snap),
+    color var(--eb-dur-snap) var(--eb-ease-snap);
+}
+
+.eb-telemetry-chip:hover,
+.eb-telemetry-item:hover {
+  background: var(--eb-card-hover);
+  border-color: var(--eb-border-strong);
+  color: var(--ink-primary);
+}
+
+.eb-telemetry-chip-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+  flex-shrink: 0;
+}
+
+.eb-telemetry-chip.is-live .eb-telemetry-chip-dot {
+  background: var(--eb-live);
+}
+
+.eb-telemetry-chip.is-warn .eb-telemetry-chip-dot {
+  background: var(--eb-warn);
+}
+
+.eb-telemetry-chip.is-crit .eb-telemetry-chip-dot {
+  background: var(--eb-danger);
+}
+
+/* ==========================================================================
+   3. RICH MULTIPLAYER ARTIFACTS (1:1 WITH board-artifacts.js)
+   ========================================================================== */
+
+/* 3.0 Rich Message Typography & Structured Prose */
+.eb-rich-message {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.eb-rich-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.eb-rich-p {
+  margin: 0;
+  line-height: 1.54;
+  word-break: break-word;
+}
+
+.eb-rich-heading {
+  margin: 4px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-primary);
+  letter-spacing: -0.01em;
+}
+
+.eb-rich-list {
+  margin: 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  line-height: 1.48;
+}
+
+.eb-rich-quote {
+  margin: 2px 0;
+  padding: 5px 10px;
+  border-left: 2px solid var(--eb-border-strong);
+  background: var(--eb-recessed-bg);
+  border-radius: 0 var(--eb-r-micro) var(--eb-r-micro) 0;
+  color: var(--ink-secondary);
+}
+
+.eb-lint-callout {
+  padding: 8px 10px;
+  border-radius: var(--eb-r-pill);
+  border: 1px solid var(--eb-revise-border);
+  background: var(--eb-revise-bg);
+  color: var(--eb-revise-ink);
+  font-size: 12px;
+}
+
+.eb-section-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-muted);
+  margin-top: 4px;
+}
+
+.eb-kv-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  min-width: 0;
+}
+
+.eb-kv-key {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  flex-shrink: 0;
+}
+
+.eb-kv-val {
+  color: var(--ink-primary);
+  min-width: 0;
+  word-break: break-word;
+}
+
+.eb-inline-code {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--eb-pill-bg);
+  border: 1px solid var(--eb-border-subtle);
+  color: var(--ink-primary);
+}
+
+.eb-inline-link {
+  color: var(--eb-codex);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* 3.1 Colored Inline Agent Mention Chips (>= 4.69:1 dual-polarity) */
+.eb-mention-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px 0 5px;
+  margin: 0 1px;
+  border-radius: var(--eb-r-micro);
+  border: 1px solid var(--eb-border);
+  background: var(--eb-pill-bg);
+  color: var(--ink-primary);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1;
+  vertical-align: -1px;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background-color var(--eb-dur-snap) var(--eb-ease-snap),
+    border-color var(--eb-dur-snap) var(--eb-ease-snap),
+    transform var(--eb-dur-snap) var(--eb-ease-snap);
+}
+
+.eb-mention-chip:hover {
+  border-color: var(--eb-border-strong);
+  transform: translateY(-0.5px);
+}
+
+.eb-mention-chip:active {
+  transform: translateY(0.5px);
+}
+
+.eb-mention-glyph,
+.eb-mention-chip-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  opacity: 0.92;
+}
+
+.eb-mention-label {
+  white-space: nowrap;
+}
+
+.eb-mention-chip.is-claude {
+  color: var(--eb-claude);
+  background: var(--eb-claude-bg);
+  border-color: var(--eb-claude-border);
+}
+
+.eb-mention-chip.is-codex {
+  color: var(--eb-codex);
+  background: var(--eb-codex-bg);
+  border-color: var(--eb-codex-border);
+}
+
+.eb-mention-chip.is-designer,
+.eb-mention-chip.is-neon {
+  color: var(--eb-designer);
+  background: var(--eb-designer-bg);
+  border-color: var(--eb-designer-border);
+}
+
+.eb-mention-chip.is-brain,
+.eb-mention-chip.is-orchestrator,
+.eb-mention-chip.is-daemon {
+  color: var(--eb-brain);
+  background: var(--eb-brain-bg);
+  border-color: var(--eb-brain-border);
+}
+
+.eb-mention-chip.is-worker {
+  color: var(--eb-worker);
+  background: var(--eb-worker-bg);
+  border-color: var(--eb-worker-border);
+}
+
+.eb-mention-chip.is-owner,
+.eb-mention-chip.is-human {
+  color: var(--eb-owner-ink);
+  background: var(--eb-owner-bg);
+  border-color: transparent;
+}
+
+/* 3.2 Compact Metadata & Signal Pills */
+.eb-meta-pill-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+.eb-meta-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: var(--eb-r-micro);
+  border: 1px solid var(--eb-border);
+  background: var(--eb-pill-bg);
+  color: var(--ink-secondary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.eb-meta-pill.is-live,
+.eb-meta-pill.is-ok,
+.eb-meta-pill.is-debrief {
+  color: var(--eb-brain);
+  background: var(--eb-brain-bg);
+  border-color: var(--eb-brain-border);
+}
+
+.eb-meta-pill.is-warn,
+.eb-meta-pill.is-lint,
+.eb-meta-pill.is-rsi-medium {
+  color: var(--eb-revise-ink);
+  background: var(--eb-revise-bg);
+  border-color: var(--eb-revise-border);
+}
+
+.eb-meta-pill.is-danger,
+.eb-meta-pill.is-error,
+.eb-meta-pill.is-rsi-high {
+  color: var(--eb-danger);
+  background: var(--eb-diff-del-bg);
+  border-color: rgba(244, 63, 94, 0.30);
+}
+
+.eb-meta-pill.is-taste {
+  color: var(--eb-mind-taste-ink);
+  background: var(--eb-mind-taste-bg);
+  border-color: var(--eb-mind-taste-border);
+}
+
+.eb-meta-pill.is-dream {
+  color: var(--eb-mind-replay-ink);
+  background: var(--eb-mind-replay-bg);
+  border-color: var(--eb-mind-replay-border);
+}
+
+.eb-meta-pill.is-accent,
+.eb-meta-pill.is-rsi-low {
+  color: var(--eb-codex);
+  background: var(--eb-codex-bg);
+  border-color: var(--eb-codex-border);
+}
+
+.eb-confidence-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--eb-r-micro);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  border: 1px solid var(--eb-border);
+  background: var(--eb-pill-bg);
+  color: var(--ink-secondary);
+}
+
+.eb-confidence-chip.is-high {
+  color: var(--eb-brain);
+  background: var(--eb-brain-bg);
+  border-color: var(--eb-brain-border);
+}
+
+.eb-confidence-chip.is-medium {
+  color: var(--eb-revise-ink);
+  background: var(--eb-revise-bg);
+  border-color: var(--eb-revise-border);
+}
+
+/* 3.3 Inline Agent Run Telemetry Strip */
+.eb-run-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 7px 10px;
+  margin-top: 4px;
+  border-radius: var(--eb-r-pill);
+  border: 1px solid var(--eb-border);
+  background: var(--eb-recessed-bg);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-secondary);
+  font-variant-numeric: tabular-nums;
+  min-width: 0;
+}
+
+.eb-run-strip.is-ok {
+  border-left: 2px solid var(--eb-diff-add-rail);
+}
+
+.eb-run-strip.is-fail,
+.eb-run-strip.is-failed {
+  border-left: 2px solid var(--eb-diff-del-rail);
+}
+
+.eb-run-strip.is-running {
+  border-left: 2px solid var(--eb-codex);
+}
+
+.eb-run-strip-main,
+.eb-run-strip-meta,
+.eb-run-strip-left,
+.eb-run-strip-right {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.eb-run-id {
+  color: var(--ink-primary);
+  font-weight: 500;
+}
+
+.eb-run-seat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--eb-r-micro);
+  border: 1px solid var(--eb-border);
+  background: var(--eb-pill-bg);
+  color: var(--ink-primary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.eb-run-seat.is-claude { color: var(--eb-claude); background: var(--eb-claude-bg); border-color: var(--eb-claude-border); }
+.eb-run-seat.is-codex { color: var(--eb-codex); background: var(--eb-codex-bg); border-color: var(--eb-codex-border); }
+.eb-run-seat.is-designer { color: var(--eb-designer); background: var(--eb-designer-bg); border-color: var(--eb-designer-border); }
+.eb-run-seat.is-brain { color: var(--eb-brain); background: var(--eb-brain-bg); border-color: var(--eb-brain-border); }
+.eb-run-seat.is-worker { color: var(--eb-worker); background: var(--eb-worker-bg); border-color: var(--eb-worker-border); }
+
+.eb-run-model,
+.eb-run-status,
+.eb-run-duration,
+.eb-run-strip-metric {
+  color: var(--ink-muted);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.eb-run-exit {
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.eb-run-exit.is-ok {
+  color: var(--eb-diff-add-ink);
+  background: var(--eb-diff-add-bg);
+}
+
+.eb-run-exit.is-fail {
+  color: var(--eb-diff-del-ink);
+  background: var(--eb-diff-del-bg);
+}
+
+.eb-run-worktree {
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--eb-r-micro);
+  border: 1px solid var(--eb-border);
+  background: var(--eb-card-bg);
+  color: var(--ink-secondary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.eb-run-worktree:hover {
+  border-color: var(--eb-border-strong);
+  color: var(--ink-primary);
+}
+
+/* 3.4 Cross-Thread Reference Chip */
+.eb-thread-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: var(--eb-r-micro);
+  border: 1px solid var(--eb-border);
+  background: var(--eb-card-bg);
+  color: var(--ink-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  vertical-align: middle;
+  transition: background-color var(--eb-dur-snap) var(--eb-ease-snap),
+    border-color var(--eb-dur-snap) var(--eb-ease-snap),
+    color var(--eb-dur-snap) var(--eb-ease-snap);
+}
+
+.eb-thread-ref:hover {
+  background: var(--eb-card-hover);
+  border-color: var(--eb-border-strong);
+  color: var(--ink-primary);
+}
+
+/* 3.5 Structured Spec Card (Debrief & Taste Cards from board-artifacts.js) */
+.eb-spec-card {
+  display: flex;
+  flex-direction: column;
+  margin-top: 6px;
+  border-radius: var(--eb-r-card);
+  border: 1px solid var(--eb-border);
+  background: var(--eb-recessed-bg);
+  box-shadow: var(--eb-bevel-card);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.eb-spec-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 32px;
+  padding: 6px 10px;
+  background: var(--eb-diff-head-bg);
+  border-bottom: 1px solid var(--eb-border);
+  cursor: pointer;
+  list-style: none;
+}
+
+.eb-spec-summary::-webkit-details-marker {
+  display: none;
+}
+
+.eb-spec-card:not([open]) .eb-spec-summary {
+  border-bottom: 0;
+}
+
+.eb-spec-summary-left,
+.eb-spec-summary-right {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.eb-spec-counts,
+.eb-spec-preview {
+  font-size: 11.5px;
+  color: var(--ink-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.eb-spec-body {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 10px 12px;
+  background: var(--eb-recessed-bg);
+  min-width: 0;
+}
+
+.eb-spec-did,
+.eb-taste-source {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.eb-spec-k {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-faint);
+}
+
+.eb-spec-v {
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: 1.48;
+  color: var(--ink-primary);
+  word-break: break-word;
+}
+
+.eb-spec-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 7px;
+  border-top: 1px solid var(--eb-border-subtle);
+  min-width: 0;
+}
+
+.eb-spec-section:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.eb-spec-section-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-muted);
+}
+
+.eb-spec-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-faint);
+}
+
+.eb-spec-list {
+  margin: 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  line-height: 1.46;
+  color: var(--ink-secondary);
+}
+
+.eb-taste-pref {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.eb-taste-pref-val {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.48;
+  color: var(--ink-primary);
+  word-break: break-word;
+}
+
+.eb-taste-evidence {
+  margin: 0;
+  padding: 7px 10px;
+  border-left: 2px solid var(--eb-mind-taste-border);
+  border-radius: 0 var(--eb-r-micro) var(--eb-r-micro) 0;
+  background: var(--eb-card-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.eb-taste-evidence p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.48;
+  color: var(--ink-secondary);
+}
+
+/* 3.6 Unified Git Diff Block */
+.eb-diff-block {
+  display: flex;
+  flex-direction: column;
+  margin-top: 6px;
+  border-radius: var(--eb-r-card);
+  border: 1px solid var(--eb-border);
+  background: var(--eb-diff-bg);
+  box-shadow: var(--eb-bevel-card);
+  overflow: hidden;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.eb-diff-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px 0 10px;
+  background: var(--eb-diff-head-bg);
+  border-bottom: 1px solid var(--eb-border);
+  min-width: 0;
+}
+
+.eb-diff-head-left,
+.eb-diff-head-right,
+.eb-code-head-left,
+.eb-code-head-right {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.eb-diff-head-right,
+.eb-code-head-right {
+  flex-shrink: 0;
+}
+
+.eb-diff-file {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eb-diff-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.eb-diff-stat.is-add {
+  color: var(--eb-diff-add-ink);
+}
+
+.eb-diff-stat.is-del {
+  color: var(--eb-diff-del-ink);
+}
+
+.eb-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: var(--eb-r-micro);
+  border: 1px solid var(--eb-border);
+  background: var(--eb-pill-bg);
+  color: var(--ink-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color var(--eb-dur-snap) var(--eb-ease-snap),
+    border-color var(--eb-dur-snap) var(--eb-ease-snap),
+    color var(--eb-dur-snap) var(--eb-ease-snap);
+}
+
+.eb-copy-btn:hover {
+  background: var(--eb-pill-hover);
+  border-color: var(--eb-border-strong);
+  color: var(--ink-primary);
+}
+
+.eb-copy-btn.is-copied {
+  color: var(--eb-brain);
+  border-color: var(--eb-brain-border);
+  background: var(--eb-brain-bg);
+}
+
+.eb-diff-body {
+  width: 100%;
+  max-height: 320px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  font-variant-numeric: tabular-nums;
+}
+
+.eb-diff-line {
+  display: grid;
+  grid-template-columns: 36px 36px 16px minmax(0, 1fr);
+  align-items: stretch;
+  min-width: max-content;
+  border-left: 2px solid transparent;
+}
+
+.eb-diff-ln,
+.eb-diff-ln-old,
+.eb-diff-ln-new {
+  padding: 1px 6px;
+  text-align: right;
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  user-select: none;
+  border-right: 1px solid var(--eb-border-subtle);
+}
+
+.eb-diff-sign {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 0;
+  color: var(--ink-faint);
+  user-select: none;
+}
+
+.eb-diff-code {
+  padding: 1px 10px 1px 4px;
+  white-space: pre;
+  color: var(--ink-secondary);
+}
+
+.eb-diff-line.is-add {
+  background: var(--eb-diff-add-bg);
+  border-left-color: var(--eb-diff-add-rail);
+}
+
+.eb-diff-line.is-add .eb-diff-ln,
+.eb-diff-line.is-add .eb-diff-ln-old,
+.eb-diff-line.is-add .eb-diff-ln-new {
+  background: var(--eb-diff-add-gutter);
+  color: var(--eb-diff-add-ink);
+}
+
+.eb-diff-line.is-add .eb-diff-sign,
+.eb-diff-line.is-add .eb-diff-code {
+  color: var(--eb-diff-add-ink);
+}
+
+.eb-diff-line.is-del {
+  background: var(--eb-diff-del-bg);
+  border-left-color: var(--eb-diff-del-rail);
+}
+
+.eb-diff-line.is-del .eb-diff-ln,
+.eb-diff-line.is-del .eb-diff-ln-old,
+.eb-diff-line.is-del .eb-diff-ln-new {
+  background: var(--eb-diff-del-gutter);
+  color: var(--eb-diff-del-ink);
+}
+
+.eb-diff-line.is-del .eb-diff-sign,
+.eb-diff-line.is-del .eb-diff-code {
+  color: var(--eb-diff-del-ink);
+}
+
+.eb-diff-line.is-hunk {
+  background: var(--eb-diff-hunk-bg);
+  border-left-color: var(--eb-codex);
+}
+
+.eb-diff-line.is-hunk .eb-diff-code,
+.eb-diff-line.is-hunk .eb-diff-sign {
+  color: var(--eb-diff-hunk-ink);
+}
+
+/* 3.7 Monospace Code Block */
+.eb-code-block {
+  display: flex;
+  flex-direction: column;
+  margin-top: 6px;
+  border-radius: var(--eb-r-card);
+  border: 1px solid var(--eb-border);
+  background: var(--eb-diff-bg);
+  box-shadow: var(--eb-bevel-card);
+  overflow: hidden;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.eb-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px 0 10px;
+  background: var(--eb-diff-head-bg);
+  border-bottom: 1px solid var(--eb-border);
+}
+
+.eb-code-lang {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-muted);
+}
+
+.eb-code-meta {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.eb-code-body,
+.eb-code-block pre {
+  margin: 0;
+  padding: 9px 10px;
+  max-height: 300px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--ink-primary);
+  background: transparent;
+}
+
+.eb-code-block code {
+  font-family: var(--font-mono);
+  font-size: inherit;
+  background: transparent;
+  padding: 0;
+}
+
+.eb-code-line {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.eb-code-ln {
+  text-align: right;
+  color: var(--ink-faint);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.eb-code-text {
+  white-space: pre;
+}
+
+/* 3.8 Artifact Strip */
+.eb-artifact-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  min-width: 0;
+}
+
+.eb-artifact-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: var(--eb-r-micro);
+  border: 1px solid var(--eb-recessed-border);
+  background: var(--eb-recessed-bg);
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background-color var(--eb-dur-snap) var(--eb-ease-snap),
+    border-color var(--eb-dur-snap) var(--eb-ease-snap),
+    color var(--eb-dur-snap) var(--eb-ease-snap);
+}
+
+.eb-artifact-pill:hover {
+  background: var(--eb-card-hover);
+  border-color: var(--eb-border-strong);
+  color: var(--ink-primary);
+}
+
+.eb-artifact-tag {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.045em;
+  color: var(--ink-faint);
+  flex-shrink: 0;
+}
+
+.eb-artifact-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 3.9 Inline Multi-Agent Reply Preview Strip inside Stream Cards */
+.eb-reply-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 6px 9px;
+  border-radius: var(--eb-r-pill);
+  border: 1px solid var(--eb-border-subtle);
+  background: var(--eb-recessed-bg);
+  color: var(--ink-secondary);
+  cursor: pointer;
+  min-width: 0;
+  transition: background-color var(--eb-dur-snap) var(--eb-ease-snap),
+    border-color var(--eb-dur-snap) var(--eb-ease-snap);
+}
+
+.eb-reply-strip:hover {
+  background: var(--eb-card-hover);
+  border-color: var(--eb-border-strong);
+}
+
+.eb-reply-avatars {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.eb-reply-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 1px solid var(--eb-recessed-bg);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  margin-left: -4px;
+}
+
+.eb-reply-avatar:first-child {
+  margin-left: 0;
+}
+
+.eb-reply-latest {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.eb-reply-author {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-primary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.eb-reply-excerpt {
+  font-size: 12px;
+  color: var(--ink-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.eb-reply-view-all {
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--eb-codex);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.eb-reply-view-all:hover {
+  text-decoration: underline;
+}
+
+/* ==========================================================================
+   4. INLINE KIZUKI MIND PILLS (WCAG AA >= 4.79:1 DUAL-POLARITY)
+   ========================================================================== */
+.eb-mind-pills {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 4px;
+  min-width: 0;
+}
+
+.eb-mind-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  max-width: 240px;
+  padding: 0 7px;
+  margin: 0 1px;
+  border-radius: var(--eb-r-micro);
+  border: 1px solid var(--eb-border);
+  background: var(--eb-pill-bg);
+  color: var(--ink-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  vertical-align: -1px;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: border-color var(--eb-dur-snap) var(--eb-ease-snap),
+    background-color var(--eb-dur-snap) var(--eb-ease-snap),
+    transform var(--eb-dur-snap) var(--eb-ease-snap);
+}
+
+.eb-mind-pill:hover {
+  transform: translateY(-0.5px);
+}
+
+.eb-mind-pill:active {
+  transform: translateY(0.5px);
+}
+
+.eb-mind-pill:focus-visible {
+  outline: 2px solid var(--eb-border-focus);
+  outline-offset: 1px;
+}
+
+.eb-mind-pill-icon,
+.eb-mind-pill-prefix {
+  font-size: 10px;
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.eb-mind-pill-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eb-mind-pill.is-person,
+.eb-mind-pill[data-eb-mind-kind="person"] {
+  color: var(--eb-mind-person-ink);
+  background: var(--eb-mind-person-bg);
+  border-color: var(--eb-mind-person-border);
+}
+
+.eb-mind-pill.is-person:hover,
+.eb-mind-pill[data-eb-mind-kind="person"]:hover {
+  border-color: var(--eb-mind-person-border-hover);
+}
+
+.eb-mind-pill.is-vault,
+.eb-mind-pill[data-eb-mind-kind="vault"] {
+  color: var(--eb-mind-vault-ink);
+  background: var(--eb-mind-vault-bg);
+  border-color: var(--eb-mind-vault-border);
+}
+
+.eb-mind-pill.is-vault:hover,
+.eb-mind-pill[data-eb-mind-kind="vault"]:hover {
+  border-color: var(--eb-mind-vault-border-hover);
+}
+
+.eb-mind-pill.is-codex,
+.eb-mind-pill[data-eb-mind-kind="codex"] {
+  color: var(--eb-mind-codex-ink);
+  background: var(--eb-mind-codex-bg);
+  border-color: var(--eb-mind-codex-border);
+}
+
+.eb-mind-pill.is-codex:hover,
+.eb-mind-pill[data-eb-mind-kind="codex"]:hover {
+  border-color: var(--eb-mind-codex-border-hover);
+}
+
+.eb-mind-pill.is-taste,
+.eb-mind-pill[data-eb-mind-kind="taste"] {
+  color: var(--eb-mind-taste-ink);
+  background: var(--eb-mind-taste-bg);
+  border-color: var(--eb-mind-taste-border);
+}
+
+.eb-mind-pill.is-taste:hover,
+.eb-mind-pill[data-eb-mind-kind="taste"]:hover {
+  border-color: var(--eb-mind-taste-border-hover);
+}
+
+.eb-mind-pill.is-replay,
+.eb-mind-pill[data-eb-mind-kind="replay"] {
+  color: var(--eb-mind-replay-ink);
+  background: var(--eb-mind-replay-bg);
+  border-color: var(--eb-mind-replay-border);
+}
+
+.eb-mind-pill.is-replay:hover,
+.eb-mind-pill[data-eb-mind-kind="replay"]:hover {
+  border-color: var(--eb-mind-replay-border-hover);
+}
+
+.eb-mind-pill.is-commit,
+.eb-mind-pill[data-eb-mind-kind="commit"] {
+  color: var(--eb-mind-commit-ink);
+  background: var(--eb-mind-commit-bg);
+  border-color: var(--eb-mind-commit-border);
+}
+
+.eb-mind-pill.is-commit:hover,
+.eb-mind-pill[data-eb-mind-kind="commit"]:hover {
+  border-color: var(--eb-mind-commit-border-hover);
+}
+
+/* ==========================================================================
+   5. SPATIAL MULTI-AGENT MESH SHELL (.eb-mesh-shell)
+   ========================================================================== */
+.eb-mesh-shell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--eb-r-card);
+  border: 1px solid var(--eb-border);
+  background-color: var(--eb-mesh-bg);
+  background-image: radial-gradient(var(--eb-mesh-grid) 1px, transparent 1px);
+  background-size: 18px 18px;
+  box-shadow: var(--eb-bevel-card);
+  overflow: hidden;
+  min-width: 0;
+  transition: border-color var(--eb-dur-panel) var(--eb-ease-snap),
+    box-shadow var(--eb-dur-panel) var(--eb-ease-snap);
+}
+
+.eb-mesh-shell::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.14) 24%,
+    rgba(255, 255, 255, 0.14) 76%,
+    transparent 100%
+  );
+  pointer-events: none;
+  z-index: 4;
+}
+
+html[data-theme="light"] .eb-mesh-shell::before {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.95) 20%,
+    rgba(255, 255, 255, 0.95) 80%,
+    transparent 100%
+  );
+}
+
+.eb-mesh-shell.is-expanded {
+  position: fixed;
+  inset: 16px;
+  width: auto;
+  height: auto;
+  min-height: 0;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  z-index: 56;
+  border-radius: var(--eb-r-shell);
+  border-color: var(--eb-border-strong);
+  box-shadow: 0 0 0 100vmax rgba(5, 5, 8, 0.72), var(--shadow-modal);
+  animation: eb-modal-enter var(--eb-dur-panel) var(--eb-ease-snap) both;
+}
+
+html[data-theme="light"] .eb-mesh-shell.is-expanded {
+  box-shadow: 0 0 0 100vmax rgba(15, 23, 42, 0.36), var(--shadow-modal);
+}
+
+/* Flow Deck Mobile 5-Lane Snapping Deck Bar & Focus Ring */
+.eb-mesh-shell .kbm-mobile-lanes {
+  background: var(--eb-recessed-bg);
+  border-bottom-color: var(--eb-border);
+}
+
+.eb-mesh-shell .kbm-lane-pill {
+  font-size: var(--t-xs, 11px);
+  border-radius: var(--eb-r-micro);
+}
+
+.eb-mesh-shell .kbm-canvas:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--eb-border-focus, rgba(56, 189, 248, 0.65));
+}
+
+/* ==========================================================================
+   6. COMPOSER 2.0 SDK POPUPS & ATTACHMENTS STRIP
+   Note: board-composer-sdk.js positions .eb-sdk-popup with position: fixed
+   and inline top/left coordinates. Never override with position: absolute
+   or bottom: calc(...).
+   ========================================================================== */
+.eb-sdk-popup {
+  bottom: auto;
+  z-index: 420;
+}
+
+.eb-slash-popup[hidden],
+.eb-context-popup[hidden] {
+  display: none;
+}
+
+/* Composer Attachments Strip */
+.eb-composer-attachments {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 0 4px;
+  border-bottom: 1px solid var(--eb-border-subtle);
+  min-width: 0;
+}
+
+.eb-composer-attachments[hidden],
+.eb-composer-attachments:empty {
+  display: none;
+}
+
+/* ==========================================================================
+   7. MOBILE RESPONSIVE (<= 768px & <= 640px, 0px HORIZONTAL OVERFLOW)
+   ========================================================================== */
+@media (max-width: 768px) {
+  .eb-telemetry-ribbon,
+  .eb-signal-ribbon {
+    flex-wrap: wrap;
+    padding: 5px 8px;
+    gap: 6px;
+  }
+
+  .eb-telemetry-chips {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+
+  .eb-telemetry-chips::-webkit-scrollbar {
+    display: none;
+  }
+
+  .eb-mesh-shell.is-expanded {
+    inset: 8px;
+    max-width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+  }
+
+  .eb-sdk-popup {
+    max-width: calc(100vw - 24px);
+  }
+}
+
+@media (max-width: 640px) {
+  .eb-ribbon-tab,
+  .eb-telemetry-tab {
+    padding: 0 6px;
+    font-size: 10.5px;
+  }
+
+  .eb-diff-line {
+    grid-template-columns: 28px 28px 14px minmax(0, 1fr);
+  }
+
+  .eb-diff-ln,
+  .eb-diff-ln-old,
+  .eb-diff-ln-new {
+    padding: 1px 4px;
+    font-size: 10px;
+  }
+}
+
+/* ==========================================================================
+   8. STRICT SUBTRACTION PROOF (html[data-detail="off"]: 0.000px CLS)
+      Strips ONLY non-layout surface craft (shadows, blur, specular hairlines,
+      tactical dot grid). All dimensions, radii, padding, and borders stay
+      byte-for-byte identical. Pure cascade specificity only.
+   ========================================================================== */
+html[data-detail="off"] #view-board .eb-center-stage,
+html[data-detail="off"] #view-board .eb-right-stage,
+html[data-detail="off"] #view-board .eb-thread-card,
+html[data-detail="off"] #view-board .eb-thread-card:hover,
+html[data-detail="off"] #view-board .eb-thread-card.is-selected,
+html[data-detail="off"] #view-board .eb-composer,
+html[data-detail="off"] #view-board .eb-composer:focus-within,
+html[data-detail="off"] #view-board .eb-composer-dock,
+html[data-detail="off"] #view-board .eb-composer-dock:focus-within,
+html[data-detail="off"] #view-board .eb-send-btn,
+html[data-detail="off"] #view-board .eb-exec-kv-table,
+html[data-detail="off"] #view-board .eb-thread-spine,
+html[data-detail="off"] #view-board .eb-event-tape,
+html[data-detail="off"] #view-board .eb-event-tape-kind,
+html[data-detail="off"] #view-board .eb-roster-compact-row,
+html[data-detail="off"] #view-board .eb-ribbon-tabs,
+html[data-detail="off"] #view-board .eb-telemetry-tabs,
+html[data-detail="off"] #view-board .eb-ribbon-tab.is-active,
+html[data-detail="off"] #view-board .eb-telemetry-tab.is-active,
+html[data-detail="off"] #view-board .eb-spec-card,
+html[data-detail="off"] #view-board .eb-diff-block,
+html[data-detail="off"] #view-board .eb-code-block,
+html[data-detail="off"] #view-board .eb-mesh-shell,
+html[data-detail="off"] #view-board .eb-mesh-shell.is-expanded,
+html[data-detail="off"] .eb-sdk-popup {
+  box-shadow: none;
+}
+
+html[data-detail="off"] #view-board .eb-composer,
+html[data-detail="off"] #view-board .eb-composer-dock,
+html[data-detail="off"] .eb-sdk-popup {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+html[data-detail="off"] #view-board .eb-mesh-shell {
+  background-image: none;
+}
+
+html[data-detail="off"] #view-board .eb-mesh-shell::before {
+  opacity: 0;
+  background: none;
+}
+
+/* ==========================================================================
+   9. REDUCED MOTION ACCESSIBILITY
+   ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  html #view-board .eb-telemetry-ribbon,
+  html #view-board .eb-telemetry-ribbon *,
+  html #view-board .eb-telemetry-drawer,
+  html #view-board .eb-telemetry-drawer *,
+  html #view-board .eb-mention-chip,
+  html #view-board .eb-mind-pill,
+  html #view-board .eb-mesh-shell,
+  html #view-board .eb-mesh-shell *,
+  html #view-board .eb-event-tape-row,
+  html #view-board .eb-composer,
+  html #view-board .eb-composer-dock,
+  html .eb-sdk-popup,
+  html .eb-sdk-popup *,
+  html #view-board .eb-composer-attachments,
+  html #view-board .eb-composer-attachments * {
+    transition-duration: 0.01ms;
+    animation-duration: 0.01ms;
+  }
+
+  html #view-board .eb-mention-chip:hover,
+  html #view-board .eb-mind-pill:hover,
+  html #view-board .eb-ribbon-tab:active,
+  html #view-board .eb-telemetry-tab:active {
+    transform: none;
+  }
+}

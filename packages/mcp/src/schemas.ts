@@ -598,3 +598,35 @@ export const MEMT_SNAPSHOT_INPUT = z.strictObject({
 export const MEMT_GENERIC_OUTPUT = z.looseObject({
   schema: z.string(),
 });
+
+export const ONTOLOGY_STATUS_INPUT = z.strictObject({});
+
+export const ONTOLOGY_SEARCH_INPUT = z.strictObject({
+  query: memtText(1, 512),
+  purpose: z.enum(["information", "relations", "metrics", "all"]).optional(),
+  max_chars: memtInt(64, 16000).optional(),
+  limit: memtInt(1, 50).optional(),
+  full_hits: memtInt(0, 10).optional(),
+  max_join_hops: memtInt(1, 12).optional(),
+});
+
+export const ONTOLOGY_CHECK_ANSWERABLE_INPUT = z.strictObject({
+  question: memtText(1, 1024),
+  max_join_hops: memtInt(1, 12).optional(),
+  min_token_overlap: memtUnit().optional(),
+});
+
+export const ONTOLOGY_CERTIFY_INPUT = z.strictObject({
+  term_id: memtText(1, 256).optional(),
+  normalized_key: memtText(1, 256).optional(),
+  canonical_name: memtText(1, 256).optional(),
+  description: memtText(0, 2048).optional(),
+  synonyms: memtStrings(32, 256).optional(),
+  domain: memtText(1, 128).optional(),
+  kind: memtText(1, 128).optional(),
+  certification: z.enum(["certified", "draft"]).optional(),
+});
+
+export const ONTOLOGY_GENERIC_OUTPUT = z.looseObject({
+  schema: z.string(),
+});

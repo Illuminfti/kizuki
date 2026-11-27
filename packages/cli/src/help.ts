@@ -9,7 +9,7 @@ export type HelpTopic = Pick<Command, "name" | "usage" | "summary" | "schema">;
 
 const GROUPS: readonly { title: string; names: readonly string[] }[] = [
   { title: "Start", names: ["app", "init", "import", "doctor"] },
-  { title: "Recall", names: ["query", "context", "world", "memt", "attention", "reflex"] },
+  { title: "Recall", names: ["query", "context", "world", "memt", "ontology", "attention", "reflex"] },
   { title: "Sources", names: ["connect", "backfill", "sync"] },
   { title: "Correct", names: ["tell", "undo", "audit"] },
   { title: "Run", names: ["serve", "models", "agent", "hook"] },
@@ -44,6 +44,17 @@ const EXAMPLES: Readonly<Record<string, readonly string[]>> = {
     `${INVOCATION} memt sync --dry-run`,
     `${INVOCATION} memt snapshot list`,
     `${INVOCATION} memt deploy-check`,
+  ],
+  ontology: [
+    `${INVOCATION} ontology status`,
+    `${INVOCATION} ontology compile`,
+    `${INVOCATION} ontology search "project" --purpose all`,
+    `${INVOCATION} ontology term ada`,
+    `${INVOCATION} ontology path ada acme`,
+    `${INVOCATION} ontology check "How does Ada connect to Acme?"`,
+    `${INVOCATION} ontology certify term:ada --description "Lead engineer"`,
+    `${INVOCATION} ontology export --format ossie-yaml --out ./ontology.yaml`,
+    `${INVOCATION} ontology import --file ./ontology.yaml`,
   ],
   attention: [
     `${INVOCATION} attention`,

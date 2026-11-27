@@ -1703,3 +1703,35 @@ Dual-system procedural memory (`@kizuki/memt`):
 - `memt deploy-check [--url URL] [--model memt-nano|memt-flash|memt-pro] [--require-online] [--json]`:
   checks optional RunPod/SGLang GPU tunnel readiness while preserving automatic
   `local-hybrid` fallback when offline.
+
+## ontology
+
+```text
+usage: kizuki ontology <status|compile|search|term|path|check|certify|export|import> [options] [--json]
+```
+
+Compiled local-first semantic ontology (`@kizuki/ontology`), stored as a
+rebuildable SQLite layer at `<vault>/.kizuki/ontology.sqlite`:
+
+- `ontology status [--json]`: strictly read-only inspection of compiled term,
+  certified, term-family, data-confirmed relation, and metric counts. Never
+  creates `.kizuki/ontology.sqlite` on an untouched vault.
+- `ontology compile [--json]`: compiles vault canon pages, entities, claims,
+  and links into terms, twin term families, data-confirmed relations, and
+  derived metrics while preserving sticky owner certifications.
+- `ontology search "<query>" [--purpose information|relations|metrics|all] [--max-chars N] [--limit N] [--json]`:
+  two-tier budget-bounded semantic retrieval ranking certified terms first.
+- `ontology term "<id-or-name>" [--json]`: inspects one canonical term, its
+  synonyms, family, attributes, confirmed relations, and certification status.
+- `ontology path "<from>" "<to>" [--max-hops N] [--json]`: computes the
+  shortest data-confirmed multi-hop semantic join path between two terms.
+- `ontology check "<question>" [--json]`: pre-flight answerability and coverage
+  grader returning verdict (`answerable|partial|unanswerable`), coverage ratio,
+  resolved terms, join paths, missing gaps, and clarification prompt.
+- `ontology certify <term-id> [--name NAME] [--description TEXT] [--synonym TEXT]... [--json]`:
+  certifies or refines a term with an auditable receipt that survives
+  incremental recompilations.
+- `ontology export [--format ossie-yaml|json] [--out FILE]`: exports the
+  compiled ontology in Apache Ossie-compatible YAML or JSON.
+- `ontology import --file FILE [--json]`: imports an Ossie YAML or JSON
+  semantic model into the local ontology store.

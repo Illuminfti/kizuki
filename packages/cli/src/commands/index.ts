@@ -416,6 +416,46 @@ const memtCommand: Command = lazyCommand(
   () => import("./memt").then((mod) => mod.memtCommand),
 );
 
+const ontologyCommand: Command = lazyCommand(
+  {
+    name: "ontology",
+    usage: "ontology <status|compile|search|term|path|check|certify|export|import> [options] [--json]",
+    summary: "compile, query, certify, check answerability, and export/import the local semantic ontology",
+    schema: {
+      options: [
+        "--purpose",
+        "--max-chars",
+        "--limit",
+        "--max-hops",
+        "--description",
+        "--synonym",
+        "--name",
+        "--domain",
+        "--kind",
+        "--format",
+        "--out",
+        "--file",
+      ],
+      flags: ["--json", "--replace"],
+      defaults: {
+        "--purpose": "all",
+        "--max-chars": "4000",
+        "--limit": "20",
+        "--max-hops": "6",
+        "--format": "ossie-yaml",
+      },
+      bounds: {
+        "--purpose": "information|relations|metrics|all",
+        "--max-chars": "64..32000",
+        "--limit": "1..100",
+        "--max-hops": "1..12",
+        "--format": "ossie-yaml|json",
+      },
+    },
+  },
+  () => import("./ontology").then((mod) => mod.ontologyCommand),
+);
+
 const attentionCommand: Command = lazyCommand(
   {
     name: "attention",
@@ -646,6 +686,7 @@ export const COMMANDS: readonly Command[] = [
   hookCommand,
   worldCommand,
   memtCommand,
+  ontologyCommand,
   attentionCommand,
   verifyCommand,
   doctorCommand,
