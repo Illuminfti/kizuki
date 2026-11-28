@@ -31,7 +31,7 @@ const r=+rec;return{status:'live',tone:!fin(r)?'stale':r>=67?'green':r>=34?'ambe
 }
 function mkDeck(o){
 const maxV=o?.maxVisible||3,now=o?.now||Date.now,st=o?.setTimeout||sT,ct=o?.clearTimeout||cT,xs=[];
-let seq=0,pd=0,ex=0,lD=-Infinity,dk=null,ls=null;
+let seq=0,pd=0,ex=0,dk=null,ls=null;
 const clr=x=>{if(x?.q!=null)ct(x.q),x.q=null;},drp=x=>{clr(x);x?.e?.remove();},
 arm=x=>{clr(x);if(!pd&&fin(x.r)&&x.r>0)x.s=now(),x.q=st(()=>dismiss(x.id),x.r);},
 pause=()=>{if(pd)return;pd=1;const t=now();for(const x of xs)if(x.q!=null)x.r=M.max(250,x.r-M.max(0,t-x.s)),clr(x);},
@@ -45,9 +45,8 @@ tg(dk,'is-exp',ex);
 },
 push=s0=>{const s=s0&&typeof s0=='object'?s0:{title:s0},t=trm(s.title||'Notice');if(!t)return null;const tk=String(s.tone||'info').toLowerCase(),r=s.durationMs===0||s.durationMs===Infinity?Infinity:(+s.durationMs>0?+s.durationMs:4600),x={id:'t-'+(++seq),t,d:trm(s.detail),n:T[tk]?tk:'info',a:trm(s.actionLabel),f:typeof s.onAction=='function'?s.onAction:0,r,s:now(),q:null,e:null};xs.unshift(x);while(xs.length>maxV)drp(xs.pop());arm(x);sync();return x.id;},
 dismiss=id=>{const i=xs.findIndex(x=>x.id===id);if(i<0)return false;drp(xs.splice(i,1)[0]);sync();return true;},
-clear=()=>{while(xs.length)drp(xs.pop());sync();},
-onLiveDelta=d=>{const t=now(),sc=isA(d?.scopes)?d.scopes.filter(Boolean):[];if(t-lD<12e3||!sc.length)return null;lD=t;return push({title:'Live sync',detail:sc.slice(0,4).join(', '),tone:'info',durationMs:3600});};
-return{push,dismiss,clear,pause,resume,onLiveDelta,setExpanded:v=>(ex=v?1:0,sync()),getItems:()=>xs.map((x,idx)=>({id:x.id,idx,title:x.t,detail:x.d,tone:x.n,actionLabel:x.a})),demo:()=>['Saved','Stamped','Synced'].forEach((t,i)=>push({title:t,tone:['ok','accent','info'][i],actionLabel:i-1?'':'Undo'}))};
+clear=()=>{while(xs.length)drp(xs.pop());sync();};
+return{push,dismiss,clear,pause,resume,setExpanded:v=>(ex=v?1:0,sync()),getItems:()=>xs.map((x,idx)=>({id:x.id,idx,title:x.t,detail:x.d,tone:x.n,actionLabel:x.a})),demo:()=>['Saved','Stamped','Synced'].forEach((t,i)=>push({title:t,tone:['ok','accent','info'][i],actionLabel:i-1?'':'Undo'}))};
 }
 const toast=mkDeck(),pc=new Map(),ENT='[data-person-key],[data-open-person],[data-thread-id],.iask-cite-pill,.iask-cit-pill';
 let pe=null,dw=null,cl=null,aa=null,ab=null;
@@ -79,7 +78,7 @@ keydown:e=>{const b=clz(e,'.sfd-drag-handle');if(!b)return e.key==='Escape'&&cP(
 [P+'down']:e=>{const b=clz(e,'.sfd-drag-handle');if(!b||e.button)return;const it=b.closest(DI),l=it?.closest(DL);if(!l)return;stp(e);let sy=e.clientY;sG(b,it,'is-dr',1);drg(b,e.pointerId,ev=>{it.style.transform=`translate3d(0,${clp(ev.clientY-sy,-48,48)}px,0)`;const s=kids(l),i=s.indexOf(it);for(let k=0;k<s.length;k++){if(s[k]===it)continue;const rc=s[k].getBoundingClientRect(),md=rc.top+rc.height/2;if((k<i&&ev.clientY<md)||(k>i&&ev.clientY>md)){mI(l,it,s,i,k);sy=ev.clientY;break;}}},()=>{it.style.transform='';sG(b,it,'is-dr',0);sO(l);det('stamp');});}
 });
 on(W,'scroll',cP,{capture:1,passive:1});
-evs(W,{resize:()=>{aa&&pe?.classList.contains('is-open')&&pP(aa);},'kizuki:live-delta':e=>{const d=dt(e);toast.onLiveDelta(d);isA(d.scopes)&&d.scopes.includes('today')&&fE();},'kizuki:decision-stamped':e=>{const d=dt(e);toast.push({title:d.retracted?'Retracted':'Stamped '+String(d.verdict||'ok').toUpperCase(),detail:d.threadId?'#'+d.threadId:'',tone:d.retracted?'warn':'ok'});},'kizuki:capture-saved':e=>{const d=dt(e);toast.push({title:d.title||'Captured',detail:d.detail||'',tone:'ok'});}});
+evs(W,{resize:()=>{aa&&pe?.classList.contains('is-open')&&pP(aa);},'kizuki:live-delta':e=>{const d=dt(e);isA(d.scopes)&&d.scopes.includes('today')&&fE();},'kizuki:decision-stamped':e=>{const d=dt(e);toast.push({title:d.retracted?'Retracted':'Stamped '+String(d.verdict||'ok').toUpperCase(),detail:d.threadId?'#'+d.threadId:'',tone:d.retracted?'warn':'ok'});},'kizuki:capture-saved':e=>{const d=dt(e);toast.push({title:d.title||'Captured',detail:d.detail||'',tone:'ok'});}});
 scD();rE(ecg);fE();
 let rf=0;G.MutationObserver&&D.body&&new G.MutationObserver(()=>{if(!rf)rf=rAF(()=>{rf=0;scD();});}).observe(D.body,{childList:1,subtree:1});
 };

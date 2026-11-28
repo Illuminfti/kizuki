@@ -397,8 +397,6 @@ html[data-theme="light"] .k-channel-pill[data-ch="github"] {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   line-height: 1;
   white-space: nowrap;
   flex-shrink: 0;
@@ -500,8 +498,6 @@ html[data-theme="light"] .k-archetype-chip[data-archetype="creative"] {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  letter-spacing: 0.045em;
-  text-transform: uppercase;
   line-height: 1;
   white-space: nowrap;
   flex-shrink: 0;
@@ -907,8 +903,6 @@ html[data-theme="light"] .whoop-gauge-wrap {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -960,8 +954,6 @@ html[data-theme="light"] .replay-rhythm-bar {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   color: var(--ink-secondary);
 }
 
@@ -1060,8 +1052,6 @@ html[data-theme="light"] .codex-matrix-bar {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   color: var(--ink-secondary);
 }
 
@@ -1168,8 +1158,6 @@ html[data-theme="light"] .codex-funnel-strip {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   color: var(--ink-muted);
   white-space: nowrap;
   overflow: hidden;

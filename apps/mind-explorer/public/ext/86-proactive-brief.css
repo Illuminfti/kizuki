@@ -29,7 +29,7 @@
   font-family: var(--font-mono); font-size: var(--t-xs);
 }
 .pb-eyebrow, .pb-tag, .pb-sec-label, .pb-draft-badge { font-weight: 600; }
-.pb-eyebrow, .pb-tag, .pb-chevron { text-transform: uppercase; }
+.pb-eyebrow, .pb-tag, .pb-chevron { }
 .pb-eyebrow { letter-spacing: 0.08em; color: var(--ink-secondary); white-space: nowrap; }
 
 .pb-tabs { gap: 3px; padding: 2px; border-radius: var(--r-sm); border: 1px solid var(--border-subtle); background: var(--elev-0); max-width: 100%; }

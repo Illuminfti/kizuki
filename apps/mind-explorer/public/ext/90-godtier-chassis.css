@@ -7,80 +7,17 @@
    ========================================================================== */
 
 @layer overrides {
-  /* ------------------------------------------------------------------------
-     1. ARCHITECTURAL CHASSIS STUDIO LIGHT & MACHINED DIVIDERS
-     ------------------------------------------------------------------------ */
-  #app-shell,
-  .os-main,
-  .main-stage {
-    background-color: var(--elev-0);
-    background-image: var(--chassis-ambient);
-    background-repeat: no-repeat;
-  }
-
-  .os-sidebar {
-    background-color: var(--elev-1);
-    background-image: var(--chassis-rail-light);
-    background-repeat: no-repeat;
-    border-right: 1px solid var(--border-hairline);
-    box-shadow: inset -1px 0 0 var(--chassis-divider-edge);
-  }
-
-  .os-brand-bar {
-    border-bottom: 1px solid var(--border-hairline);
-    box-shadow: inset 0 -1px 0 var(--chassis-divider-edge);
-  }
-
-  .os-rail-bottom {
-    background-color: var(--elev-1);
-    border-top: 1px solid var(--border-hairline);
-    box-shadow: inset 0 1px 0 var(--chassis-divider-edge);
-  }
-
-  html[data-theme="light"] .os-sidebar {
-    background-color: var(--elev-1);
-    border-right-color: var(--border-hairline);
-  }
-
-  /* ------------------------------------------------------------------------
-     2. SIDEBAR RECESSED INSTRUMENT SEARCH SLOT (Search Cmd+K)
-     ------------------------------------------------------------------------ */
-  .os-search-trigger {
-    background-color: var(--elev-0);
-    border: 1px solid var(--border-hairline);
-    border-radius: var(--r-sm);
-    box-shadow: var(--bevel-well);
-    color: var(--ink-secondary);
-    transition:
-      border-color var(--dur-fast) var(--ease-out),
-      background-color var(--dur-fast) var(--ease-out),
-      box-shadow var(--dur-fast) var(--ease-out),
-      color var(--dur-fast) var(--ease-out);
-  }
-
-  .os-search-trigger:hover {
-    background-color: var(--elev-1);
-    border-color: var(--border-strong);
-    box-shadow: var(--bevel-top), 0 1px 3px oklch(0 0 0 / 0.24);
-    color: var(--ink-primary);
-  }
-
-  .os-search-trigger:active {
-    background-color: var(--elev-0);
-    box-shadow: var(--bevel-well);
-  }
-
-  html[data-theme="light"] .os-search-trigger {
-    background-color: var(--elev-2);
-    border-color: var(--border-hairline);
-    box-shadow: var(--bevel-well);
-  }
-
-  html[data-theme="light"] .os-search-trigger:hover {
-    background-color: var(--elev-1);
-    border-color: var(--border-strong);
-    box-shadow: var(--bevel-top), 0 1px 3px rgba(15, 23, 42, 0.08);
-  }
+  /* 1. ARCHITECTURAL CHASSIS STUDIO LIGHT & MACHINED DIVIDERS */
+  #app-shell,.os-main,.main-stage{background-color:var(--elev-0);background-image:var(--chassis-ambient);background-repeat:no-repeat;}
+  .os-sidebar{background-color:var(--elev-1);background-image:var(--chassis-rail-light);background-repeat:no-repeat;border-right:1px solid var(--border-hairline);box-shadow:inset -1px 0 0 var(--chassis-divider-edge);}
+  .os-brand-bar{border-bottom:1px solid var(--border-hairline);box-shadow:inset 0 -1px 0 var(--chassis-divider-edge);}
+  .os-rail-bottom{background-color:var(--elev-1);border-top:1px solid var(--border-hairline);box-shadow:inset 0 1px 0 var(--chassis-divider-edge);}
+  /* 2. SIDEBAR RECESSED INSTRUMENT SEARCH SLOT */
+  .os-search-trigger{background-color:var(--elev-0);border:1px solid var(--border-hairline);border-radius:var(--r-sm);box-shadow:var(--bevel-well);color:var(--ink-secondary);transition:border-color var(--dur-fast) var(--ease-out),background-color var(--dur-fast) var(--ease-out),box-shadow var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out);}
+  .os-search-trigger:hover{background-color:var(--elev-1);border-color:var(--border-strong);box-shadow:var(--bevel-top),0 1px 3px oklch(0 0 0 / 0.24);color:var(--ink-primary);}
+  .os-search-trigger:active{background-color:var(--elev-0);box-shadow:var(--bevel-well);}
+  html[data-theme="light"] .os-search-trigger{background-color:var(--elev-2);}
+  html[data-theme="light"] .os-search-trigger:hover{background-color:var(--elev-1);box-shadow:var(--bevel-top),0 1px 3px rgba(15,23,42,0.08);}
 
   /* ------------------------------------------------------------------------
      3. NAVIGATION RAIL CRAFT (Luminous Left Jewel Pip + Anodized Plate)
@@ -308,33 +245,12 @@
       0 0 0 var(--keycap-shadow);
   }
 
-  /* ------------------------------------------------------------------------
-     6. POINTER-TRACKED 1PX SPECULAR RIM HIGHLIGHT (Hover-Capable, Detail On)
-     ------------------------------------------------------------------------ */
+  /* 6. POINTER-TRACKED 1PX SPECULAR RIM HIGHLIGHT */
   @media (hover: hover) and (pointer: fine) {
-    html:not([data-detail="off"]) [data-tactile-rim],
-    html:not([data-detail="off"]) .brief-hero,
-    html:not([data-detail="off"]) .dossier-hero,
-    html:not([data-detail="off"]) .tr-radar-shell,
-    html:not([data-detail="off"]) .tr-card,
-    html:not([data-detail="off"]) .codex-card,
-    html:not([data-detail="off"]) .taste-card,
-    html:not([data-detail="off"]) .taste-option-card,
-    html:not([data-detail="off"]) .eb-mesh-shell,
-    html:not([data-detail="off"]) .cmdp-modal {
+    html:not([data-detail="off"]) :is([data-tactile-rim], .brief-hero, .dossier-hero, .tr-radar-shell, .tr-card, .codex-card, .taste-card, .taste-option-card, .eb-mesh-shell, .cmdp-modal) {
       position: relative;
     }
-
-    html:not([data-detail="off"]) [data-tactile-rim]::after,
-    html:not([data-detail="off"]) .brief-hero::after,
-    html:not([data-detail="off"]) .dossier-hero::after,
-    html:not([data-detail="off"]) .tr-radar-shell::after,
-    html:not([data-detail="off"]) .tr-card::after,
-    html:not([data-detail="off"]) .codex-card::after,
-    html:not([data-detail="off"]) .taste-card::after,
-    html:not([data-detail="off"]) .taste-option-card::after,
-    html:not([data-detail="off"]) .eb-mesh-shell::after,
-    html:not([data-detail="off"]) .cmdp-modal::after {
+    html:not([data-detail="off"]) :is([data-tactile-rim], .brief-hero, .dossier-hero, .tr-radar-shell, .tr-card, .codex-card, .taste-card, .taste-option-card, .eb-mesh-shell, .cmdp-modal)::after {
       content: "";
       position: absolute;
       inset: -1px;
@@ -343,139 +259,40 @@
       pointer-events: none;
       opacity: 0;
       z-index: 2;
-      background: radial-gradient(
-        220px circle at var(--gx, 50%) var(--gy, 0%),
-        var(--rim-specular-color),
-        var(--rim-specular-soft) 46%,
-        transparent 72%
-      );
-      -webkit-mask:
-        linear-gradient(#000 0 0) content-box,
-        linear-gradient(#000 0 0);
+      background: radial-gradient(220px circle at var(--gx, 50%) var(--gy, 0%), var(--rim-specular-color), var(--rim-specular-soft) 46%, transparent 72%);
+      -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
       -webkit-mask-composite: xor;
-      mask:
-        linear-gradient(#000 0 0) content-box,
-        linear-gradient(#000 0 0);
+      mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
       mask-composite: exclude;
       transition: opacity var(--dur-fast) var(--ease-out);
     }
-
-    html:not([data-detail="off"]) [data-tactile-rim][data-rim-active="1"]::after,
-    html:not([data-detail="off"]) .brief-hero[data-rim-active="1"]::after,
-    html:not([data-detail="off"]) .dossier-hero[data-rim-active="1"]::after,
-    html:not([data-detail="off"]) .tr-radar-shell[data-rim-active="1"]::after,
-    html:not([data-detail="off"]) .tr-card[data-rim-active="1"]::after,
-    html:not([data-detail="off"]) .codex-card[data-rim-active="1"]::after,
-    html:not([data-detail="off"]) .taste-card[data-rim-active="1"]::after,
-    html:not([data-detail="off"]) .taste-option-card[data-rim-active="1"]::after,
-    html:not([data-detail="off"]) .eb-mesh-shell[data-rim-active="1"]::after,
-    html:not([data-detail="off"]) .cmdp-modal[data-rim-active="1"]::after {
+    html:not([data-detail="off"]) :is([data-tactile-rim], .brief-hero, .dossier-hero, .tr-radar-shell, .tr-card, .codex-card, .taste-card, .taste-option-card, .eb-mesh-shell, .cmdp-modal)[data-rim-active="1"]::after {
       opacity: 1;
     }
   }
 
-  /* ------------------------------------------------------------------------
-     7. SUBTRACTION PROOF (html[data-detail="off"]) - STRICT 0PX CLS
-     Removes optical lighting, specular bevels, and rim sheen while preserving
-     identical box dimensions, borders, and padding.
-     ------------------------------------------------------------------------ */
-  html[data-detail="off"] #app-shell,
-  html[data-detail="off"] .os-main,
-  html[data-detail="off"] .main-stage,
-  html[data-detail="off"] .os-sidebar {
+  /* 7. SUBTRACTION PROOF (html[data-detail="off"]) - STRICT 0PX CLS */
+  html[data-detail="off"] :is(#app-shell, .os-main, .main-stage, .os-sidebar) {
     background-image: none;
     box-shadow: none;
   }
-
-  html[data-detail="off"] .os-brand-bar,
-  html[data-detail="off"] .os-rail-bottom,
-  html[data-detail="off"] .os-search-trigger,
-  html[data-detail="off"] .os-nav-btn.is-active,
-  html[data-detail="off"] .os-nav-btn.is-active .os-nav-count,
-  html[data-detail="off"] .brief-hero,
-  html[data-detail="off"] .dossier-hero,
-  html[data-detail="off"] .tr-radar-shell,
-  html[data-detail="off"] .tr-card,
-  html[data-detail="off"] .taste-card,
-  html[data-detail="off"] .taste-option-card,
-  html[data-detail="off"] .codex-card,
-  html[data-detail="off"] .eb-composer-dock,
-  html[data-detail="off"] .eb-composer,
-  html[data-detail="off"] .kos-pulse-strip,
-  html[data-detail="off"] input[type="search"],
-  html[data-detail="off"] .search-input,
-  html[data-detail="off"] .filter-input,
-  html[data-detail="off"] .codex-search-input,
-  html[data-detail="off"] .whoop-bar-track,
-  html[data-detail="off"] .codex-leverage-track,
-  html[data-detail="off"] .codex-progress-track,
-  html[data-detail="off"] kbd,
-  html[data-detail="off"] .kbd,
-  html[data-detail="off"] .kbd-hint,
-  html[data-detail="off"] .tr-kbd,
-  html[data-detail="off"] .tr-rank-kbd,
-  html[data-detail="off"] .taste-keycap,
-  html[data-detail="off"] .cmdp-mode-tab kbd,
-  html[data-detail="off"] .cmdp-footer kbd {
+  html[data-detail="off"] :is(.os-brand-bar, .os-rail-bottom, .os-search-trigger, .os-nav-btn.is-active, .os-nav-btn.is-active .os-nav-count, .brief-hero, .dossier-hero, .tr-radar-shell, .tr-card, .taste-card, .taste-option-card, .codex-card, .eb-composer-dock, .eb-composer, .kos-pulse-strip, input[type="search"], .search-input, .filter-input, .codex-search-input, .whoop-bar-track, .codex-leverage-track, .codex-progress-track, kbd, .kbd, .kbd-hint, .tr-kbd, .tr-rank-kbd, .taste-keycap, .cmdp-mode-tab kbd, .cmdp-footer kbd) {
     box-shadow: none;
   }
-
-  html[data-detail="off"] kbd,
-  html[data-detail="off"] .kbd,
-  html[data-detail="off"] .kbd-hint,
-  html[data-detail="off"] .tr-kbd,
-  html[data-detail="off"] .tr-rank-kbd,
-  html[data-detail="off"] .taste-keycap,
-  html[data-detail="off"] .cmdp-mode-tab kbd,
-  html[data-detail="off"] .cmdp-footer kbd {
+  html[data-detail="off"] :is(kbd, .kbd, .kbd-hint, .tr-kbd, .tr-rank-kbd, .taste-keycap, .cmdp-mode-tab kbd, .cmdp-footer kbd) {
     background: var(--elev-2);
   }
-
-  html[data-detail="off"] .os-nav-btn::before {
-    box-shadow: none;
-  }
-
-  html[data-detail="off"] [data-tactile-rim]::after,
-  html[data-detail="off"] .brief-hero::after,
-  html[data-detail="off"] .dossier-hero::after,
-  html[data-detail="off"] .tr-radar-shell::after,
-  html[data-detail="off"] .tr-card::after,
-  html[data-detail="off"] .codex-card::after,
-  html[data-detail="off"] .taste-card::after,
-  html[data-detail="off"] .taste-option-card::after,
-  html[data-detail="off"] .eb-mesh-shell::after,
-  html[data-detail="off"] .cmdp-modal::after {
+  html[data-detail="off"] .os-nav-btn::before { box-shadow: none; }
+  html[data-detail="off"] :is([data-tactile-rim], .brief-hero, .dossier-hero, .tr-radar-shell, .tr-card, .codex-card, .taste-card, .taste-option-card, .eb-mesh-shell, .cmdp-modal)::after {
     display: none;
   }
 
-  /* ------------------------------------------------------------------------
-     8. REDUCED MOTION GUARDRAIL
-     ------------------------------------------------------------------------ */
+  /* 8. REDUCED MOTION GUARDRAIL */
   @media (prefers-reduced-motion: reduce) {
-    .os-search-trigger,
-    .os-nav-btn,
-    .os-nav-btn::before,
-    kbd,
-    .kbd,
-    .kbd-hint,
-    .tr-kbd,
-    .tr-rank-kbd,
-    .taste-keycap,
-    .cmdp-mode-tab kbd,
-    .cmdp-footer kbd {
+    :is(.os-search-trigger, .os-nav-btn, .os-nav-btn::before, kbd, .kbd, .kbd-hint, .tr-kbd, .tr-rank-kbd, .taste-keycap, .cmdp-mode-tab kbd, .cmdp-footer kbd) {
       transition: none;
     }
-
-    [data-tactile-rim]::after,
-    .brief-hero::after,
-    .dossier-hero::after,
-    .tr-radar-shell::after,
-    .tr-card::after,
-    .codex-card::after,
-    .taste-card::after,
-    .taste-option-card::after,
-    .eb-mesh-shell::after,
-    .cmdp-modal::after {
+    :is([data-tactile-rim], .brief-hero, .dossier-hero, .tr-radar-shell, .tr-card, .codex-card, .taste-card, .taste-option-card, .eb-mesh-shell, .cmdp-modal)::after {
       display: none;
     }
   }

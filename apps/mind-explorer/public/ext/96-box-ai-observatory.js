@@ -25,13 +25,13 @@ function injectPills(){
   if(!D)return;
   const mk=(id,c,t,h)=>{const b=D.createElement('button');b.type='button';b.id=id;b.className=c;b.title=t;b.setAttribute('aria-label',t);b.innerHTML=h;on(b,'click',()=>open());return b;};
   const rail=D.querySelector('.os-rail-controls'),mr=D.querySelector('.mobile-topbar-right');
-  if(rail&&!D.getElementById('bai-live-pill'))S.el.p=rail.appendChild(mk('bai-live-pill','bai-pill','Box AI Neural Observatory (Alt+I)',dv('br1',sp('bpl','<span class=bd data-b=d></span><span class=bcn data-b=n>-- AI LIVE</span>')+sp('bpr','<span class=bcp data-b=c>--%</span><kbd class=bkb>Alt+I</kbd>'))+dv('br2',C.map(c=>`<span class=bt data-c=${c[0]}><span class=bbw><span class=bbr data-b=b-${c[0]}></span></span><span class=btk>${c[2]}</span><span class=btv data-b=v-${c[0]}>0</span></span>`).join(''))));
+  if(rail&&!D.getElementById('bai-live-pill'))S.el.p=rail.appendChild(mk('bai-live-pill','bai-pill','Box AI Neural Observatory (Alt+I)',dv('br1',sp('bpl','<span class=bd data-b=d></span><span class=bcn data-b=n>-- AI live</span>')+sp('bpr','<span class=bcp data-b=c>--%</span><kbd class=bkb>Alt+I</kbd>'))+dv('br2',C.map(c=>`<span class=bt data-c=${c[0]}><span class=bbw><span class=bbr data-b=b-${c[0]}></span></span><span class=btk>${c[2]}</span><span class=btv data-b=v-${c[0]}>0</span></span>`).join(''))));
   if(mr&&!D.getElementById('bai-mobile-pill')){const m=mk('bai-mobile-pill','bai-mob','Box AI Neural Observatory','<span class=bd data-b=md></span><span data-b=mn>-- AI</span>'),w=D.getElementById('mobile-whoop-pill');w?.parentNode===mr?mr.insertBefore(m,w):mr.prepend(m);S.el.m=m;}
 }
 
 function syncUI(){
   const s=S.d.summary,tot=s.total_live||0,mx=M.max(1,...C.map(c=>s[c[0]]||0)),q=(r,k)=>r?.querySelector(`[data-b="${k}"]`),tx=(e,v)=>e&&(e.textContent=v);
-  if(S.el.p){q(S.el.p,'d')?.classList.toggle('is-idle',!tot);tx(q(S.el.p,'n'),`${tot} AI LIVE`);tx(q(S.el.p,'c'),`${M.round(s.total_cpu_pct||0)}%`);C.forEach(c=>{const v=s[c[0]]||0,br=q(S.el.p,`b-${c[0]}`);tx(q(S.el.p,`v-${c[0]}`),v);if(br)br.style.height=`${!v?12:M.max(24,M.min(100,M.round(v/mx*100)))}%`;});}
+  if(S.el.p){q(S.el.p,'d')?.classList.toggle('is-idle',!tot);tx(q(S.el.p,'n'),`${tot} AI live`);tx(q(S.el.p,'c'),`${M.round(s.total_cpu_pct||0)}%`);C.forEach(c=>{const v=s[c[0]]||0,br=q(S.el.p,`b-${c[0]}`);tx(q(S.el.p,`v-${c[0]}`),v);if(br)br.style.height=`${!v?12:M.max(24,M.min(100,M.round(v/mx*100)))}%`;});}
   if(S.el.m){q(S.el.m,'md')?.classList.toggle('is-idle',!tot);tx(q(S.el.m,'mn'),`${tot} AI`);}
   if(!S.el.bd)return;
   tx(S.el.mAi,tot);tx(S.el.mCpu,`${(s.total_cpu_pct||0).toFixed(0)}%`);tx(S.el.mRam,fR(s.total_ram_mb||0));tx(S.el.mLd,(+(Array.isArray(s.host_load)?s.host_load[0]:s.host_load)||0).toFixed(2));

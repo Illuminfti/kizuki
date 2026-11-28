@@ -135,7 +135,6 @@ describe("Lane U2: Sonner Toast Deck, Floating UI Popovers, Accessible DnD & Bio
         clear: () => void;
         pause: () => void;
         resume: () => void;
-        onLiveDelta: (detail: { scopes?: string[] }) => string | null;
         getItems: () => Array<{ id: string; idx: number; title: string; detail: string; tone: string; actionLabel: string }>;
       };
     };
@@ -180,16 +179,8 @@ describe("Lane U2: Sonner Toast Deck, Floating UI Popovers, Accessible DnD & Bio
     expect(afterDismiss.map((x) => x.id)).toEqual([id4!, id2!]);
     expect(afterDismiss.map((x) => x.idx)).toEqual([0, 1]);
 
-    // Live-delta debounce >= 12s
-    deck.clear();
-    fakeNow = 20000;
-    const d1 = deck.onLiveDelta({ scopes: ["board", "today"] });
-    expect(d1).toBeTruthy();
-    fakeNow = 25000; // only 5s later -> suppressed
-    expect(deck.onLiveDelta({ scopes: ["today"] })).toBeNull();
-    fakeNow = 32000; // 12s later -> allowed
-    const d2 = deck.onLiveDelta({ scopes: ["people"] });
-    expect(d2).toBeTruthy();
+    // Background live deltas never toast; the Live pill carries sync state.
+    expect((deck as Record<string, unknown>).onLiveDelta).toBeUndefined();
   });
 
   test("5. Accessible DnD order persistence helpers and honest Biometric ECG telemetry states", () => {

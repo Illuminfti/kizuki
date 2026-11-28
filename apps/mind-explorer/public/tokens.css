@@ -24,7 +24,8 @@
     --t-display: 44px;
 
     --font-sans: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-    --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    --font-code: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --font-mono: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 
     /* ------------------------------------------------------------------
        2. 4px Spacing Scale
@@ -57,11 +58,11 @@
     /* ------------------------------------------------------------------
        4. 5 Elevation Planes (OKLCH Anodized Obsidian Dark Ladder)
        ------------------------------------------------------------------ */
-    --elev-0: oklch(0.115 0.009 258);
-    --elev-1: oklch(0.155 0.010 258);
-    --elev-2: oklch(0.192 0.011 258);
-    --elev-3: oklch(0.232 0.012 258);
-    --elev-4: oklch(0.270 0.013 258);
+    --elev-0: oklch(0.145 0.003 270);
+    --elev-1: oklch(0.172 0.003 270);
+    --elev-2: oklch(0.198 0.004 270);
+    --elev-3: oklch(0.228 0.004 270);
+    --elev-4: oklch(0.262 0.005 270);
 
     --surface-0: var(--elev-0);
     --surface-1: var(--elev-1);
@@ -73,7 +74,7 @@
     --bevel-top: inset 0 1px 0 oklch(1 0 0 / 0.085);
     --bevel-top-strong: inset 0 1px 0 oklch(1 0 0 / 0.14);
     --bevel-well: inset 0 1px 3px oklch(0 0 0 / 0.52), inset 0 -1px 0 oklch(1 0 0 / 0.045);
-    --shadow-machined-plate: var(--bevel-top), 0 0 0 1px var(--border-hairline), 0 6px 18px -6px oklch(0 0 0 / 0.55);
+    --shadow-machined-plate: inset 0 1px 0 oklch(1 0 0 / 0.03), 0 0 0 1px var(--border-hairline);
     --shadow-machined-lift: var(--bevel-top-strong), 0 0 0 1px var(--border-strong), 0 10px 26px -8px oklch(0 0 0 / 0.64);
     --keycap-bg: linear-gradient(180deg, oklch(0.245 0.012 258) 0%, oklch(0.188 0.011 258) 100%);
     --keycap-border: oklch(1 0 0 / 0.16);
@@ -124,20 +125,20 @@
     /* ------------------------------------------------------------------
        5. Hairlines & Ink Roles (WCAG AA >= 4.5:1 on all dark planes)
        ------------------------------------------------------------------ */
-    --border-subtle: oklch(1 0 0 / 0.06);
-    --border-hairline: oklch(1 0 0 / 0.10);
-    --border-strong: oklch(1 0 0 / 0.17);
-    --border-hover: oklch(1 0 0 / 0.26);
+    --border-subtle: oklch(1 0 0 / 0.045);
+    --border-hairline: oklch(1 0 0 / 0.07);
+    --border-strong: oklch(1 0 0 / 0.12);
+    --border-hover: oklch(1 0 0 / 0.2);
     --border-focus: oklch(0.68 0.18 250);
 
-    --ink-primary: oklch(0.95 0.003 260);
-    --ink-secondary: oklch(0.79 0.005 260);
-    --ink-muted: oklch(0.68 0.006 260);
+    --ink-primary: oklch(0.96 0.002 270);
+    --ink-secondary: oklch(0.78 0.003 270);
+    --ink-muted: oklch(0.66 0.004 270);
     --text-muted: var(--ink-muted);
-    --ink-subtle: oklch(0.71 0.006 260);
+    --ink-subtle: oklch(0.69 0.004 270);
     --text-subtle: var(--ink-subtle);
-    --ink-tertiary: oklch(0.71 0.006 260);
-    --ink-faint: oklch(0.64 0.006 260);
+    --ink-tertiary: oklch(0.69 0.004 270);
+    --ink-faint: oklch(0.62 0.004 270);
     --ink-disabled: oklch(0.56 0.006 260);
     --ink-on-accent: oklch(0.12 0.004 260);
 
@@ -238,6 +239,33 @@
     --codex-pinned-border: oklch(1 0 0 / 0.22);
     --codex-track-bg: oklch(1 0 0 / 0.08);
 
+    /* Tessera Depth Architecture Tokens (Obsidian Tessera Dark) */
+    --ts-rail-bg: #0e0e10;
+    --ts-topbar-bg: #0e0e10;
+    --ts-canvas-bg: #0e0e10;
+    --ts-inspector-bg: #0e0e10;
+    --ts-plate-bg: #141416;
+    --ts-plate-elev: #1a1a1d;
+    --ts-plate-well: #111113;
+    --ts-plate-border: rgba(255, 255, 255, 0.06);
+    --ts-plate-border-hi: rgba(255, 255, 255, 0.11);
+    --ts-plate-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    --ts-hatch-line: rgba(255, 255, 255, 0.04);
+    --ts-hatch-bg: rgba(255, 255, 255, 0.012);
+    --ts-dot-ink: rgba(255, 255, 255, 0.17);
+    --ts-vernier-tick: rgba(255, 255, 255, 0.22);
+    --ts-cta-bg: #ededef;
+    --ts-cta-ink: #0e0e10;
+    --ts-cta-hover: #ffffff;
+    --ts-cobalt: #3b82f6;
+    --ts-cobalt-deep: #2563eb;
+    --ts-orange: #f97316;
+    --ts-emerald: #22c55e;
+    --ts-violet: #8b5cf6;
+    --ts-rose: #ef4444;
+    --ts-aurora: radial-gradient(circle at 14% 24%, #ffcdb2 0%, transparent 52%), radial-gradient(circle at 46% 32%, #a5c4ff 0%, transparent 56%), radial-gradient(circle at 82% 18%, #f8c6e8 0%, transparent 52%), radial-gradient(circle at 68% 82%, #e0f2fe 0%, transparent 58%), linear-gradient(125deg, #fbe0d2 0%, #c9d8ff 46%, #f6dcf0 78%, #eef4ff 100%);
+    --ts-recap-glow: radial-gradient(140% 100% at 92% 6%, rgba(124, 152, 255, 0.24) 0%, rgba(139, 92, 246, 0.10) 36%, transparent 66%), radial-gradient(80% 70% at 72% 18%, rgba(251, 146, 60, 0.10) 0%, transparent 58%);
+
     /* Motion */
     --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
     --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
@@ -271,11 +299,11 @@
   html[data-theme="light"] {
     color-scheme: light;
 
-    --elev-0: oklch(0.972 0.004 252);
-    --elev-1: oklch(0.994 0.002 252);
-    --elev-2: oklch(0.955 0.005 252);
-    --elev-3: oklch(0.934 0.006 252);
-    --elev-4: oklch(0.908 0.007 252);
+    --elev-0: oklch(0.985 0.001 270);
+    --elev-1: oklch(1 0 0);
+    --elev-2: oklch(0.968 0.002 270);
+    --elev-3: oklch(0.945 0.002 270);
+    --elev-4: oklch(0.92 0.003 270);
 
     --surface-0: var(--elev-0);
     --surface-1: var(--elev-1);
@@ -287,7 +315,7 @@
     --bevel-top: inset 0 1px 0 oklch(1 0 0 / 0.92);
     --bevel-top-strong: inset 0 1px 0 oklch(1 0 0 / 0.98);
     --bevel-well: inset 0 1px 2px oklch(0.15 0.01 258 / 0.08), inset 0 -1px 0 oklch(1 0 0 / 0.85);
-    --shadow-machined-plate: var(--bevel-top), 0 0 0 1px var(--border-hairline), 0 4px 14px -6px oklch(0.18 0.015 258 / 0.10), 0 1px 2px oklch(0.18 0.015 258 / 0.05);
+    --shadow-machined-plate: 0 0 0 1px var(--border-hairline), 0 1px 2px rgba(16, 16, 24, 0.035);
     --shadow-machined-lift: var(--bevel-top-strong), 0 0 0 1px var(--border-strong), 0 10px 24px -10px oklch(0.18 0.015 258 / 0.14);
     --keycap-bg: linear-gradient(180deg, oklch(0.996 0.002 252) 0%, oklch(0.946 0.005 252) 100%);
     --keycap-border: rgba(15, 23, 42, 0.15);
@@ -324,21 +352,21 @@
     --surface-whoop: var(--elev-2);
     --surface-inverse: oklch(0.17 0.008 258);
 
-    --border-subtle: rgba(15, 23, 42, 0.055);
-    --border-hairline: rgba(15, 23, 42, 0.085);
-    --border-strong: rgba(15, 23, 42, 0.155);
-    --border-hover: rgba(15, 23, 42, 0.26);
+    --border-subtle: rgba(16, 16, 24, 0.05);
+    --border-hairline: rgba(16, 16, 24, 0.075);
+    --border-strong: rgba(16, 16, 24, 0.13);
+    --border-hover: rgba(16, 16, 24, 0.22);
     --border-focus: oklch(0.53 0.20 255);
 
     /* WCAG AA >= 4.5:1 on porcelain and elevated slate planes */
-    --ink-primary: oklch(0.17 0.008 258);
-    --ink-secondary: oklch(0.35 0.008 258);
-    --ink-muted: oklch(0.45 0.008 258);
+    --ink-primary: oklch(0.18 0.004 270);
+    --ink-secondary: oklch(0.36 0.004 270);
+    --ink-muted: oklch(0.47 0.004 270);
     --text-muted: var(--ink-muted);
-    --ink-subtle: oklch(0.44 0.008 258);
+    --ink-subtle: oklch(0.46 0.004 270);
     --text-subtle: var(--ink-subtle);
-    --ink-tertiary: oklch(0.44 0.008 258);
-    --ink-faint: oklch(0.49 0.008 258);
+    --ink-tertiary: oklch(0.46 0.004 270);
+    --ink-faint: oklch(0.5 0.004 270);
     --ink-disabled: oklch(0.52 0.007 258);
     --ink-on-accent: oklch(0.992 0.002 252);
 
@@ -429,5 +457,32 @@
     --codex-pinned-bg: var(--elev-1);
     --codex-pinned-border: oklch(0.68 0.006 260);
     --codex-track-bg: oklch(0 0 0 / 0.075);
+
+    /* Tessera Depth Architecture Tokens (Porcelain Tessera Light) */
+    --ts-rail-bg: #fafafa;
+    --ts-topbar-bg: #fafafa;
+    --ts-canvas-bg: #fafafa;
+    --ts-inspector-bg: #fafafa;
+    --ts-plate-bg: #ffffff;
+    --ts-plate-elev: #f4f4f5;
+    --ts-plate-well: #f2f2f3;
+    --ts-plate-border: rgba(16, 16, 24, 0.075);
+    --ts-plate-border-hi: rgba(16, 16, 24, 0.14);
+    --ts-plate-shadow: 0 1px 2px rgba(16, 16, 24, 0.035);
+    --ts-hatch-line: rgba(16, 16, 24, 0.05);
+    --ts-hatch-bg: rgba(16, 16, 24, 0.015);
+    --ts-dot-ink: rgba(15, 23, 42, 0.14);
+    --ts-vernier-tick: rgba(15, 23, 42, 0.24);
+    --ts-cta-bg: #18181b;
+    --ts-cta-ink: #ffffff;
+    --ts-cta-hover: #27272a;
+    --ts-cobalt: #2563eb;
+    --ts-cobalt-deep: #1d4ed8;
+    --ts-orange: #ea580c;
+    --ts-emerald: #16a34a;
+    --ts-violet: #7c3aed;
+    --ts-rose: #dc2626;
+    --ts-aurora: radial-gradient(circle at 14% 24%, #ffd4bc 0%, transparent 52%), radial-gradient(circle at 46% 32%, #a8c7ff 0%, transparent 56%), radial-gradient(circle at 82% 18%, #f8c8ea 0%, transparent 52%), radial-gradient(circle at 68% 82%, #e0f2fe 0%, transparent 58%), linear-gradient(125deg, #fde4d6 0%, #cddcff 46%, #f7e0f2 78%, #eef4ff 100%);
+    --ts-recap-glow: radial-gradient(140% 100% at 92% 6%, rgba(59, 130, 246, 0.14) 0%, rgba(139, 92, 246, 0.07) 38%, transparent 66%), radial-gradient(80% 70% at 72% 18%, rgba(249, 115, 22, 0.08) 0%, transparent 58%);
   }
 }

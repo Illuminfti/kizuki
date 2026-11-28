@@ -410,8 +410,6 @@ html[data-theme="light"] .eb-stage-tab.is-active {
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: var(--t-xs, 11px);
   font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   color: var(--kos-ink-3);
   white-space: nowrap;
   overflow: hidden;
@@ -685,10 +683,8 @@ html[data-theme="light"] .eb-stage-tab.is-active {
 
 .kos-telemetry-title {
   font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--kos-ink-3);
 }
 

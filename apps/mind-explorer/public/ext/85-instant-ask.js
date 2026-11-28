@@ -122,31 +122,6 @@
   }
 
   function injectUtilityTriggers() {
-    // 1. Desktop rail cluster directly under Search button (0px CLS, exact sidebar width)
-    const railControls = document.querySelector('.os-rail-controls');
-    if (railControls && !document.getElementById('iask-rail-cluster')) {
-      const cluster = document.createElement('div');
-      cluster.id = 'iask-rail-cluster';
-      cluster.className = 'iask-rail-cluster';
-      cluster.innerHTML = [
-        '<button type="button" class="iask-pill-btn" id="btn-instant-ask" title="Instant Streaming Ask (Alt+A)" aria-label="Open Instant Streaming Ask">',
-        '  <span class="iask-pill-label">Ask</span>',
-        '  <kbd class="iask-kbd">Alt+A</kbd>',
-        '</button>',
-        '<button type="button" class="iask-pill-btn" id="btn-quick-capture" title="1-Second Quick Capture (Alt+N)" aria-label="Open Quick Capture">',
-        '  <span class="iask-pill-label">Note</span>',
-        '  <kbd class="iask-kbd">Alt+N</kbd>',
-        '</button>',
-      ].join('');
-      railControls.appendChild(cluster);
-      cluster.querySelector('#btn-instant-ask').addEventListener('click', function () {
-        openAsk();
-      });
-      cluster.querySelector('#btn-quick-capture').addEventListener('click', function () {
-        openCapture();
-      });
-    }
-
     // 2. Compact mobile utility trigger (single icon, never overflows 390px)
     const mobileRight = document.querySelector('.mobile-topbar-right');
     if (mobileRight && !document.getElementById('btn-mobile-capture')) {
