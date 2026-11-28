@@ -1,0 +1,135 @@
+<style>
+  .gb { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .gb-title { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.02em; color: var(--ink-primary); }
+  .gb-lede { margin: 2px 0 8px; max-width: 70ch; font-size: 13px; line-height: 1.55; color: var(--ink-secondary); }
+  .gb-spec {
+    display: grid;
+    grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+    gap: 20px;
+    padding: 18px 0;
+    border-top: 1px solid var(--ts-plate-border);
+    min-width: 0;
+  }
+  .gb-name { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--ink-primary); }
+  .gb-sig { display: block; margin: 0 0 8px; font-family: var(--font-code); font-size: 11.5px; line-height: 1.5; color: var(--ink-secondary); word-break: break-word; }
+  .gb-note { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink-muted); }
+  .gb-demo { min-width: 0; display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+  .gb-cell { min-width: 0; flex: 1 1 280px; max-width: 380px; }
+  .gb-cap { font-size: 11.5px; color: var(--ink-muted); margin-bottom: 6px; }
+  .gb-sample { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--ink-muted); }
+  .gb-sample::before { content: ""; width: 6px; height: 6px; border-radius: 2px; background: var(--ts-orange); }
+  .gb-panel { border-radius: 12px; overflow: hidden; background: var(--ts-plate-bg); border: 1px solid var(--ts-plate-border); min-width: 0; }
+  .gb-panel .dir-list { display: flex; flex-direction: column; -webkit-mask-image: none; mask-image: none; overflow: visible; }
+  .gb-stage { position: relative; display: flex; flex-wrap: wrap; gap: 10px; padding: 16px; border-radius: 12px; background: var(--surface-canvas, var(--ts-plate-bg)); border: 1px solid var(--ts-plate-border); }
+  .gb-stage .k10g-cluster { position: static; transform: none; }
+  .gb-legend .k10g-legend { position: static; width: auto; max-width: 240px; }
+  .gb-insp { max-width: 360px; padding-bottom: 16px; }
+  @media (max-width: 760px) {
+    .gb-spec { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+    .gb-cell { max-width: none; }
+  }
+</style>
+<div class="gb k10g-scope">
+  <div>
+    <h2 class="gb-title">Mind graph</h2>
+    <p class="gb-lede">Wave 10 layer for the graph view: a compact directory hero, calmer directory rows, cluster labels and a legend over the canvas, and an inspector head with a banner, people named in the node and the node's full connection mix. Inputs on this page are samples, marked <span class="gb-sample">Sample</span>. In the app every value comes from /api/graph, /api/node and the full /api/people roster, and all kind counts use the canvas classifier so pills, hero, legend and clusters agree.</p>
+  </div>
+  <div id="gb-specs"><p class="gb-note">Loading components...</p></div>
+</div>
+<script>
+(function () {
+  var out = document.getElementById('gb-specs');
+  if (!out) return;
+
+  function run() {
+    var K = window.KizukiKit;
+    var G = window.KizukiGraphW10;
+    if (!K || !G) {
+      out.innerHTML = K ? K.emptyState({ title: 'Graph layer unavailable', body: 'Could not load /ext/97b-w10-graph.js.', icon: 'graph' }) : '';
+      return;
+    }
+    var S = '<span class="gb-sample">Sample</span>';
+    var now = Date.now();
+    function ago(h) { return new Date(now - h * 3600000).toISOString(); }
+    var person = function (name, role, seen) { return { key: name.toLowerCase().replace(/\s+/g, '-'), name: name, role: role, last_seen_label: seen }; };
+    var ada = person('Sample Ada North', 'Sample design partner', '2h ago');
+    var ben = person('Sample Ben Okafor', 'Sample investor', '3d ago');
+    var chi = person('Sample Chiara Russo', 'Sample engineer', '1w ago');
+
+    var nodes = [];
+    function add(cat, n, deg, label) {
+      for (var i = 0; i < n; i += 1) nodes.push({ id: cat + i, label: 'Sample ' + label + ' ' + (i + 1), category: cat, degree: Math.max(0, deg - i), updated_at: ago(3 + i * 20) });
+    }
+    add('consolidated', 24, 18, 'situation');
+    add('concept', 14, 9, 'concept');
+    add('memt', 5, 6, 'recipe');
+    add('connector', 2, 40, 'source');
+    var edges = [];
+    [['related_topic', 52], ['ingested_from', 30], ['informs', 9], ['verified_from', 3]].forEach(function (p) {
+      for (var i = 0; i < p[1]; i += 1) edges.push({ predicate: p[0] });
+    });
+
+    function spec(name, sig, note, demo) {
+      return '<section class="gb-spec"><div><h3 class="gb-name">' + K.esc(name) + '</h3><code class="gb-sig">' + K.esc(sig) + '</code><p class="gb-note">' + note + '</p></div><div class="gb-demo">' + demo + '</div></section>';
+    }
+    function cell(cap, html) { return '<div class="gb-cell"><div class="gb-cap">' + cap + '</div>' + html + '</div>'; }
+
+    function row(n, matches, sub, selected) {
+      var d = G.rowDecor(n, matches);
+      return '<button type="button" class="dir-item k10g-row' + (selected ? ' is-selected' : '') + '">' + d.lead +
+        '<div class="dir-item-top"><span class="dir-item-title">' + K.esc(n.label) + '</span></div>' +
+        (sub ? '<div class="dir-item-sub">' + K.esc(sub) + '</div>' : '') + d.meta + '</button>';
+    }
+
+    var html = '';
+    html += spec('Directory hero', 'KizukiGraphW10.heroHtml(nodes, edgeCount, {now})',
+      'Sits above the vault totals. The bar follows the canvas colours. Freshness ignores sources, whose timestamp is the last ingest event, and re-renders every minute. Busiest hubs skip sources and open the node like a directory row. With no nodes it shows a waiting line, never zeros.',
+      cell('With data ' + S, '<div class="gb-panel k10g-hero">' + G.heroHtml(nodes, edges.length, { now: now }) + '</div>') +
+      cell('Links unknown ' + S, '<div class="gb-panel k10g-hero">' + G.heroHtml(nodes.slice(0, 6), null, { now: now }) + '</div>') +
+      cell('Empty graph', '<div class="gb-panel k10g-hero">' + G.heroHtml([], null) + '</div>'));
+
+    html += spec('Directory rows', 'KizukiGraphW10.rowDecor(node, [{person, how}])',
+      'The lead is always the category glyph, so a row never pretends to be a person. People named in the title sit at the end of the meta line as initials. Sources count events, not claims. Each fact only appears when the value exists.',
+      cell('Variants ' + S, '<div class="gb-panel"><div class="dir-list">' +
+        row({ label: 'Sample world situation', category: 'consolidated', degree: 24, claim_count: 4, updated_at: ago(20) }, [], 'Sample summary line for a world object', true) +
+        row({ label: 'Sample Ada North sync', category: 'consolidated', degree: 6, claim_count: 2, updated_at: ago(3) }, [{ person: ada, how: 'full' }], 'One person: initials and name') +
+        row({ label: 'Sample Ada North and Ben Okafor intro', category: 'consolidated', degree: 3, claim_count: 1, updated_at: ago(50) }, [{ person: ada, how: 'full' }, { person: ben, how: 'full' }, { person: chi, how: 'first' }], 'Several people stack') +
+        row({ label: 'Sample concept', category: 'concept', degree: 9, claim_count: 5, updated_at: ago(200) }, [], 'Concept glyph') +
+        row({ label: 'Sample MemT recipe', category: 'memt', degree: 4, claim_count: 1, updated_at: ago(30) }, [], 'Diamond glyph; recipes have no claim count') +
+        row({ label: 'Sample source', category: 'connector', degree: 8, claim_count: 63000, updated_at: ago(1) }, [], 'Sources count events') +
+        row({ label: 'Sample bare node', category: 'concept', degree: 0, claim_count: 0, updated_at: '' }, [], 'No links, claims or date: no meta line') +
+        '</div></div>'));
+
+    html += spec('Cluster labels', 'KizukiGraphW10.clusterHtml(category, count)',
+      'Float just outside each colour cluster, facing away from the centre, and step outward until they clear nodes and likely node labels. They replace the engine\'s uppercase sector watermarks. Groups under 8 visible nodes get no label. Labels fade while a node is hovered or selected.',
+      '<div class="gb-stage">' + G.categories.map(function (c) {
+        return '<div class="k10g-cluster k10g-cat-' + c.id + '">' + G.clusterHtml(c.id, 12) + '</div>';
+      }).join('') + '</div><div class="gb-cap" style="width:100%">Counts above are ' + S + '</div>');
+
+    html += spec('Legend', 'KizukiGraphW10.legendHtml(nodes, edges)',
+      'Bottom right of the canvas. It explains the marks; kind counts live on the pills and cluster labels. Link types are the four most common predicates. It hides when the inspector opens, below 900px on the live canvas, and when there is no graph.',
+      cell('With data ' + S, '<div class="gb-legend"><aside class="k10g-legend">' + G.legendHtml(nodes, edges) + '</aside></div>') +
+      cell('No edges ' + S, '<div class="gb-legend"><aside class="k10g-legend">' + G.legendHtml(nodes.slice(0, 5), []) + '</aside></div>') +
+      cell('Empty graph', '<p class="gb-note">legendHtml returns an empty string and the panel is hidden.</p>'));
+
+    var insp = function (m) { return '<div class="gb-panel gb-insp k10g-insp-hero">' + G.inspectorHtml(m) + '</div>'; };
+    var mixA = { total: 7, kinds: [{ label: 'World objects', value: 4, tone: 'orange' }, { label: 'Concepts', value: 2, tone: 'cobalt' }, { label: 'Sources', value: 1, tone: 'violet' }], preds: [['related topic', 5], ['ingested from', 2]] };
+    html += spec('Inspector head', 'KizukiGraphW10.inspectorHtml({title, category, subtitle, stats, leadPerson, people, mix})',
+      'Links is the node\'s degree on the canvas; the neighbour list below says "24 of 160" when /api/node caps it. Claims stays at -- until /api/node answers, while stale lists from the previous node are hidden. Sources show events. A first-name match is only allowed once the full People roster has loaded, and is labelled.',
+      cell('World node, people by full name ' + S, insp({ id: 's1', title: 'Sample Ada North pilot', category: 'consolidated', subtitle: 'World object · world situation · updated 2h ago', stats: [{ label: 'Confidence', value: '50%' }, { label: 'Claims', value: 4 }, { label: 'Links', value: 7 }], people: [{ person: ada, how: 'full' }, { person: ben, how: 'full' }], mix: mixA })) +
+      cell('Detail still loading, possible person ' + S, insp({ id: 's4', title: 'Sample sync with Chiara', category: 'consolidated', subtitle: 'World object · updated 5h ago', stats: [{ label: 'Confidence', value: '72%' }, { label: 'Claims', value: null }, { label: 'Links', value: 3 }], people: [{ person: chi, how: 'first' }], mix: { total: 3, kinds: [{ label: 'World objects', value: 3, tone: 'orange' }], preds: [['related topic', 3]] } })) +
+      cell('Person node ' + S, insp({ id: 's2', title: 'Sample Chiara Russo', category: 'consolidated', subtitle: 'World object · updated 1d ago', stats: [{ label: 'Confidence', value: '96%' }, { label: 'Claims', value: 12 }, { label: 'Links', value: 5 }], leadPerson: chi, people: [], mix: { total: 5, kinds: [{ label: 'World objects', value: 5, tone: 'orange' }], preds: [] } })) +
+      cell('Source ' + S, insp({ id: 's5', title: 'Sample source', category: 'connector', subtitle: 'Source · connector', stats: [{ label: 'Events', value: 63000 }, { label: 'Links', value: 8 }, { label: 'Latest', value: '1h ago' }], people: [], mix: { total: 8, kinds: [{ label: 'World objects', value: 6, tone: 'orange' }, { label: 'Concepts', value: 2, tone: 'cobalt' }], preds: [['ingested from', 8]] } })) +
+      cell('MemT recipe, values missing, no links ' + S, insp({ id: 's3', title: 'Sample MemT recipe', category: 'memt', subtitle: 'MemT recipe', stats: [{ label: 'Confidence', value: null }, { label: 'Links', value: 0 }, { label: 'Updated', value: null }], people: [], mix: { total: 0, kinds: [], preds: [] } })));
+
+    out.innerHTML = html;
+  }
+
+  if (window.KizukiGraphW10) { run(); return; }
+  var s = document.createElement('script');
+  s.src = '/ext/97b-w10-graph.js';
+  s.onload = run;
+  s.onerror = run;
+  document.head.appendChild(s);
+})();
+</script>

@@ -1,0 +1,173 @@
+<style>
+  .sbs { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .sbs-title { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.02em; color: var(--ink-primary); }
+  .sbs-lede { margin: 2px 0 8px; max-width: 72ch; font-size: 13px; line-height: 1.55; color: var(--ink-secondary); }
+  .sbs-spec {
+    display: grid;
+    grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+    gap: 20px;
+    padding: 18px 0;
+    border-top: 1px solid var(--ts-plate-border);
+    min-width: 0;
+  }
+  .sbs-name { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--ink-primary); }
+  .sbs-note code { overflow-wrap: anywhere; }
+  .sbs-note { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink-muted); }
+  .sbs-demo { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+  .sbs-row { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; min-width: 0; }
+  .sbs-cap { font-size: 11.5px; color: var(--ink-muted); margin-bottom: 6px; }
+  .sbs-cell { min-width: 0; }
+  .sbs-sample { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--ink-muted); }
+  .sbs-sample::before { content: ""; width: 6px; height: 6px; border-radius: 2px; background: var(--ts-orange); }
+  .sbs-rail { max-width: 300px; }
+  .sbs-toolbar { display: flex; flex-direction: column; gap: 10px; }
+  @media (max-width: 760px) {
+    .sbs-spec { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  }
+</style>
+<div class="sbs w10s-sb" id="sbs-root">
+  <div>
+    <h2 class="sbs-title">Event stream</h2>
+    <p class="sbs-lede">Components added to the Event Stream view in Wave 10. The live view builds them from /api/stream (captured from the request the view already makes) and /api/replay/index. Inputs on this page are samples, marked <span class="sbs-sample">Sample</span>, because the storyboard is a catalog.</p>
+  </div>
+  <div id="sbs-specs"><p class="sbs-note">Loading stream components...</p></div>
+</div>
+<script>
+(function () {
+  var out = document.getElementById('sbs-specs');
+  if (!out) return;
+
+  function ready(cb) {
+    if (window.KizukiStreamW10 && window.KizukiKit) return cb();
+    var s = document.createElement('script');
+    s.src = '/ext/97b-w10-stream.js';
+    s.onload = function () { if (window.KizukiStreamW10 && window.KizukiKit) cb(); else fail(); };
+    s.onerror = fail;
+    document.body.appendChild(s);
+  }
+  function fail() {
+    out.innerHTML = window.KizukiKit
+      ? window.KizukiKit.emptyState({ title: 'Stream components unavailable', body: 'The stream script did not load.', icon: 'alert', compact: true })
+      : '<p class="sbs-note">Stream components unavailable.</p>';
+  }
+
+  ready(function () {
+    var K = window.KizukiKit;
+    var W = window.KizukiStreamW10;
+    var S = '<span class="sbs-sample">Sample</span>';
+    function spec(name, sig, note, demo) {
+      return '<section class="sbs-spec"><div><h3 class="sbs-name">' + K.esc(name) + '</h3><p class="sbs-note"><code>' + K.esc(sig) + '</code></p><p class="sbs-note">' + K.esc(note) + '</p></div><div class="sbs-demo">' + demo + '</div></section>';
+    }
+    function cell(cap, html) { return '<div class="sbs-cell"><div class="sbs-cap">' + K.esc(cap) + '</div>' + html + '</div>'; }
+    function ago(min) { return new Date(Date.now() - min * 60000).toISOString(); }
+    var html = '';
+
+    /* Monogram */
+    html += spec('Source monogram', 'KizukiStreamW10.monogram(id, label, size)',
+      'Generated locally per connector. Tone encodes the family (violet agent sessions, cobalt messages, emerald notes and saves, orange life signals, slate imports and unknown sources), so the palette stays at five tones instead of one hue per source.',
+      '<div class="sbs-row">' +
+        cell('Agents', W.monogram('kizuki.claude-code-sessions', 'Claude Code Sessions', 32)) +
+        cell('Messages', W.monogram('telegram', 'Telegram', 32)) +
+        cell('Notes', W.monogram('mac-obsidian', 'Obsidian (Mac)', 32)) +
+        cell('Life', W.monogram('whoop', 'Whoop', 32)) +
+        cell('Imported', W.monogram('kizuki.import-legacy-events', 'Legacy Event Stream', 32)) +
+        cell('Unknown source', W.monogram('sample-new-connector', 'Sample New Connector', 32)) +
+      '</div>' +
+      '<div class="sbs-row">' + [20, 26, 32, 40].map(function (s) { return W.monogram('whatsapp', 'WhatsApp', s); }).join('') + '</div>');
+
+    /* Sources rail items */
+    var sample = [
+      { id: 'kizuki.claude-code-sessions', label: 'Claude Code Sessions', count: 6400 },
+      { id: 'telegram', label: 'Telegram', count: 1700 },
+      { id: 'mac-obsidian', label: 'Obsidian (Mac)', count: 90 },
+      { id: 'whoop', label: 'Whoop', count: 3 },
+      { id: 'sample-new-connector', label: 'Sample New Connector', count: null },
+    ];
+    var max = 6400, sum = 8193;
+    var freshSamples = [
+      { state: 'live', date: new Date(Date.now() - 12 * 60000) },
+      { state: 'live', date: new Date(Date.now() - 3 * 3600000) },
+      { state: 'unknown' },
+      { state: 'stale', date: new Date(Date.now() - 6 * 86400000) },
+      { state: 'unknown' },
+    ];
+    html += spec('Source filter', 'KizukiStreamW10.sourceButtonHtml(connector, { active, max, sum, fresh })',
+      'Replaces the wrapped pill row. One button per connector with its real event count, a bar scaled to the largest source and the age of its last event (from /api/overview). Sources quiet for over 24 hours get an orange dot and age. Imported archives sit below the live sources. aria-pressed marks the active filter; clicking drives the existing filter pills and focus stays on the pressed button. Under 1180px it becomes a horizontal strip, and a chip strip on phones.',
+      S + '<div class="sbs-rail w10s-rail"><div class="w10s-rail-head"><h2 class="w10s-rail-title">Sources</h2><span class="w10s-rail-sub">2 of 3 reported in 24h</span></div><div class="w10s-rail-list">' +
+        sample.map(function (c, i) { return W.sourceButtonHtml(c, { active: i === 1, max: max, sum: sum, fresh: freshSamples[i] }); }).join('') +
+        '<div class="w10s-rail-group"><span>Imported archives</span></div>' +
+        W.sourceButtonHtml({ id: 'kizuki.import-legacy-events', label: 'Legacy Event Stream', count: 2100 }, { max: max, sum: sum, fresh: { state: 'future', date: new Date(Date.now() + 200 * 86400000) } }) +
+      '</div></div>' +
+      '<p class="sbs-note">States: live with age, active (Telegram), no freshness data shows the share, quiet for 6 days (Whoop), missing count shows two dashes, imported archive with a future-dated latest event.</p>');
+
+    /* Overview strip */
+    var vals = [120, 340, 280, 90, 0, 610, 720, 455, 380, 300, null, null, 510, 905, 640, 700, 520, 610, 480, 390, 820, 760, 300, 280, 440, 690, 720, 510, 600, 350];
+    var titles = vals.map(function (v, i) { return 'Day ' + (i + 1) + ': ' + (v == null ? 'not indexed' : v + ' events'); });
+    html += spec('Overview strip', 'KizukiKit.statTile x3 + KizukiStreamW10.chartCardHtml({ title, right, chart: columnsHtml(vals), axis, foot })',
+      'All sources: events captured, captured today with its replay-index breakdown, and the daily average over the indexed full days before today (today is still in progress, so it is left out). The 30-day chart draws a column per indexed day; days missing from the replay index are dashed stubs on the baseline, never bars, and the header counts indexed days. A source or a search swaps the first tile for an identity plate. On phones the strip collapses to one line of stats.',
+      S + '<div class="w10s-hero"><div class="w10s-hero-grid is-all">' +
+        K.statTile({ label: 'Events captured', value: 12345, sub: 'Across 18 sources', icon: 'pulse', tone: 'cobalt' }) +
+        K.statTile({ label: 'Captured today', value: 350, sub: '310 build, 36 messages, 4 docs', icon: 'calendar', tone: 'emerald' }) +
+        K.statTile({ label: 'Daily average', value: 499, sub: 'Over 28 indexed full days', icon: 'graph', tone: 'violet' }) +
+        W.chartCardHtml({ title: 'Daily volume, last 30 days', right: '28 of 30 days indexed', chart: W.columnsHtml(vals, { titles: titles, aria: 'Sample daily volume' }), axis: ['30 Oct', 'Today'], foot: 'Peak 905 on 12 Nov. Dashes mark days missing from the replay index', tone: 'cobalt' }) +
+      '</div></div>' +
+      '<div class="w10s-hero"><div class="w10s-hero-grid is-source">' +
+        '<div class="w10s-ident">' + W.monogram('telegram', 'Telegram', 40, 'w10s-mono-hero') + '<div class="w10s-ident-text"><span class="w10s-ident-eyebrow">Messages</span><h2 class="w10s-ident-title">Telegram</h2><span class="w10s-ident-row">' + K.chip('Live', 'emerald', { dot: true }) + '</span></div></div>' +
+        K.statTile({ label: 'Events', value: 1700, sub: '20.7% of all events', icon: 'layers', tone: 'cobalt' }) +
+        K.statTile({ label: 'Last event', value: '4m ago', sub: '28 Nov, 11:07', icon: 'clock', tone: 'slate' }) +
+        W.chartCardHtml({ title: 'Events per hour', right: '40 loaded', chart: W.columnsHtml([3, 5, 2, 0, 8, 6, 9, 4, 3]), axis: ['27 Nov', '28 Nov'], foot: 'Covers every event from 27 Nov to 28 Nov; load more to extend it', tone: 'cobalt' }) +
+      '</div></div>' +
+      '<div class="w10s-hero"><div class="w10s-hero-grid is-search">' +
+        '<div class="w10s-ident"><span class="w10s-ident-ic" aria-hidden="true">' + K.icon('search', 18) + '</span><div class="w10s-ident-text"><span class="w10s-ident-eyebrow">Search in All sources</span><h2 class="w10s-ident-title">“Sample query”</h2><span class="w10s-ident-row"><span class="w10s-ident-note">Ranked by relevance</span></span></div></div>' +
+        K.statTile({ label: 'Matches', value: '40+', sub: '40 loaded below', icon: 'search', tone: 'cobalt' }) +
+        K.statTile({ label: 'Newest match', value: null, sub: 'No timestamps', icon: 'clock', tone: 'slate' }) +
+        W.chartCardHtml({ title: 'Matches by source', right: '3 sources', chart: '<div class="w10s-chart-bars">' + K.bars([{ label: 'Telegram', value: 22, tone: 'cobalt' }, { label: 'Claude Code Sessions', value: 14, tone: 'violet' }, { label: 'Obsidian (Mac)', value: 4, tone: 'emerald' }]) + '</div>', foot: 'Across the 40 loaded results', tone: 'cobalt' }) +
+      '</div></div>' +
+      '<div class="w10s-hero"><div class="w10s-hero-grid is-all">' +
+        K.statTile({ label: 'Events captured', value: null, icon: 'pulse', tone: 'cobalt' }) +
+        K.statTile({ label: 'Captured today', value: null, sub: 'Loading', icon: 'calendar', tone: 'emerald' }) +
+        K.statTile({ label: 'Daily average', value: null, sub: 'Loading', icon: 'graph', tone: 'violet' }) +
+        W.chartCardHtml({ title: 'Daily volume, last 30 days', chart: '', empty: 'Daily volume unavailable' }) +
+      '</div></div>' +
+      '<p class="sbs-note">Last strip: every value unavailable, as the view renders before data arrives or when the replay index fails.</p>');
+
+    /* Day headers */
+    var today = new Date();
+    var older = new Date(today.getTime() - 4 * 86400000);
+    html += spec('Day group header', 'KizukiStreamW10.dayHeaderHtml({ date, shown, captured })',
+      'Inserted before the first row of each local day and sticky while scrolling. "Shown" counts loaded rows; "captured that day" comes from the replay index and only appears for the unfiltered stream. Headers are rebuilt only when their groups change.',
+      S + '<div class="stream-list">' +
+        '<div class="w10s-day">' + W.dayHeaderHtml({ date: today, shown: 24, captured: 905 }) + '</div>' +
+        '<div class="w10s-day">' + W.dayHeaderHtml({ date: older, shown: 3, captured: null }) + '</div>' +
+        '<div class="w10s-day">' + W.dayHeaderHtml({ date: null, shown: 1, captured: null }) + '</div>' +
+      '</div>');
+
+    /* Rows */
+    var evs = [
+      { note: 'Message: sender initials with a platform dot, chat on line 2', ev: { id: 'sb1', connector: 'telegram', connector_label: 'Telegram', kind: 'message', observed_at: ago(4), title: '[Telegram | Sample Builders | Sample Ada North]: Sample message about the launch plan', full_text: '[Telegram | Sample Builders | Sample Ada North]: Sample message about the launch plan' } },
+      { note: 'Owner as sender reads "You" with a ringed disc; a one-to-one chat reads "to" the other person', ev: { id: 'sb2', connector: 'whatsapp', connector_label: 'WhatsApp', kind: 'message', observed_at: ago(32), title: '[WhatsApp | Sample Ben Okafor | ' + (document.body.getAttribute('data-owner-name') || 'Sample Owner') + ']: Sample reply on the way', full_text: '[WhatsApp | Sample Ben Okafor | ' + (document.body.getAttribute('data-owner-name') || 'Sample Owner') + ']: Sample reply on the way' } },
+      { note: 'Email from an automated sender uses initials', ev: { id: 'sb3', connector: 'kizuki.import-legacy-events', connector_label: 'Legacy Event Stream', kind: 'email', observed_at: ago(95), title: 'Email (INBOX): Sample weekly digest', full_text: '# Email (INBOX): Sample weekly digest\nFrom: Sample Digest <no-reply@example.invalid>\nTo: sample@example.invalid\n\nSample body text for the digest preview.' } },
+      { note: 'Agent session: source monogram leads; line 2 continues the text instead of repeating the title', ev: { id: 'sb4', connector: 'kizuki.claude-code-sessions', connector_label: 'Claude Code Sessions', kind: 'message', observed_at: ago(180), title: 'Sample session note: the build passed and the...', preview: 'Sample session note: the build passed and the screenshots are attached for review.', full_text: 'Sample session note: the build passed and the screenshots are attached for review.' } },
+      { note: 'Dictation keeps the app name the view parsed', ev: { id: 'sb5', connector: 'wispr-flow', connector_label: 'Wispr Flow', kind: 'voice_dictation', observed_at: ago(1500), title: 'Sample dictated sentence', full_text: 'Sample dictated sentence' }, ctx: { appName: 'Sample App' } },
+      { note: 'Missing time and unknown source', ev: { id: 'sb6', connector: 'sample-new-connector', connector_label: '', kind: 'note', observed_at: null, title: 'Sample event with no timestamp', full_text: 'Sample event with no timestamp' } },
+    ];
+    html += spec('Event row', 'KizukiStreamW10.headHtml(event, { domTitle, domPreview, appName })',
+      'Rebuilds each row head: lead (sender initials with a platform dot, or the source monogram; a photo only when the event carries one), sender and cleaned title, then origin platform, chat, app or kind, and a preview. Legacy imports show the original platform and keep "Captured via" in the tooltip. Clock time on the right with relative age below.',
+      S + '<div class="stream-list" role="list">' + evs.map(function (x) {
+        var tone = W.sourceMeta(x.ev.connector).tone;
+        return '<article class="stream-row w10s-row k10-tone-' + tone + '" role="listitem"><button type="button" class="stream-row-head" aria-expanded="false" title="' + K.esc(x.note) + '">' + W.headHtml(x.ev, x.ctx || {}) + '</button></article>';
+      }).join('') + '</div>' +
+      '<ul class="sbs-note">' + evs.map(function (x) { return '<li>' + K.esc(x.note) + '</li>'; }).join('') + '</ul>');
+
+    /* Active filter */
+    html += spec('Active filter line', '#w10s-active in the toolbar',
+      'States which filter is on in words, with a clear button that returns to all sources.',
+      S + '<div class="sbs-toolbar">' +
+        '<div class="w10s-active"><span class="w10s-active-label">Showing all 18 sources, newest first</span></div>' +
+        '<div class="w10s-active"><span class="w10s-active-label">Showing</span><span class="w10s-active-chip">' + W.monogram('telegram', 'Telegram', 20) + '<span>Telegram</span><button type="button" class="w10s-active-clear" aria-label="Clear source filter, show all sources"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></button></span></div>' +
+      '</div>');
+
+    out.innerHTML = html;
+  });
+})();
+</script>

@@ -1,0 +1,181 @@
+<style>
+  .vb { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .vb-title { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.02em; color: var(--ink-primary); }
+  .vb-lede { margin: 2px 0 8px; max-width: 70ch; font-size: 13px; line-height: 1.55; color: var(--ink-secondary); }
+  .vb-spec { display: grid; grid-template-columns: minmax(200px, 250px) minmax(0, 1fr); gap: 20px; padding: 18px 0; border-top: 1px solid var(--ts-plate-border); min-width: 0; }
+  .vb-name { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--ink-primary); }
+  .vb-note { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink-muted); }
+  .vb-demo { min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+  .vb-row { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); min-width: 0; }
+  .vb-row > * { min-width: 0; }
+  .vb-cap { font-size: 12px; color: var(--ink-muted); margin-bottom: 6px; }
+  .vb-sample { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ink-muted); }
+  .vb-sample::before { content: ""; width: 6px; height: 6px; border-radius: 2px; background: var(--ts-orange); }
+  .vb-live::before { background: var(--ts-emerald); }
+  .vb-side { border: 1px solid var(--ts-plate-border); border-radius: 12px; background: var(--surface-raised, var(--ts-plate-bg)); overflow: hidden; min-width: 0; max-width: 300px; }
+  .vb-list { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; }
+  .vb-rail { max-width: 240px; display: flex; flex-direction: column; gap: 2px; }
+  .vb-check { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr)); gap: 8px; }
+  @media (max-width: 760px) { .vb-spec { grid-template-columns: minmax(0, 1fr); gap: 10px; } .vb-side { max-width: none; } }
+</style>
+<div class="vb" id="view-vault">
+  <div>
+    <h2 class="vb-title">Vault</h2>
+    <p class="vb-lede">What the vault view adds to the app's reader: a library composition bar that also filters, one scrolling row of source chips, source-typed document rows, a document masthead, reading facts with a document shape, and related documents. In the app every value comes from the category counts app.js renders from <code>/api/docs</code> or is counted from the open document. Inputs on this page are samples with round, made-up numbers, marked <span class="vb-sample">Sample</span>. The source typing check at the end runs on live data, marked <span class="vb-sample vb-live">Live</span>.</p>
+  </div>
+  <div id="vb-specs"><p class="vb-note">Loading vault components...</p></div>
+</div>
+<script>
+(function () {
+  var out = document.getElementById('vb-specs');
+  function ready(fn) {
+    if (window.KizukiVault10 && window.KizukiKit) return fn();
+    var s = document.createElement('script');
+    s.src = '/ext/97b-w10-vault.js';
+    s.onload = fn;
+    s.onerror = function () { out.innerHTML = window.KizukiKit ? window.KizukiKit.emptyState({ title: 'Vault components unavailable', body: '/ext/97b-w10-vault.js did not load.', compact: true }) : 'Unavailable'; };
+    document.head.appendChild(s);
+  }
+  ready(function () {
+    var K = window.KizukiKit, V = window.KizukiVault10;
+    if (!K || !V || !out) return;
+    var S = '<span class="vb-sample">Sample</span>';
+    var esc = K.esc;
+    function spec(name, note, demo) {
+      return '<div class="vb-spec"><div><h3 class="vb-name">' + esc(name) + '</h3><p class="vb-note">' + note + '</p></div><div class="vb-demo">' + demo + '</div></div>';
+    }
+    function cap(t) { return '<div class="vb-cap">' + esc(t) + ' ' + S + '</div>'; }
+    function iso(daysAgo) { return new Date(Date.now() - daysAgo * 86400000).toISOString(); }
+
+    // Round, visibly made-up sample counts (not the live vault).
+    var cats = [
+      { key: 'owner', label: 'Owner & Canon', count: 10 }, { key: 'dashboards', label: 'Dashboards', count: 100 },
+      { key: 'world', label: 'World Model', count: 3000 }, { key: 'entities', label: 'Entities', count: 1500 },
+      { key: 'facts', label: 'Facts', count: 2500 }, { key: 'notes', label: 'Vault Notes', count: 800 },
+      { key: 'obsidian', label: 'Obsidian', count: 600 }, { key: 'apple-notes', label: 'Apple Notes', count: 400 },
+      { key: 'wispr-flow', label: 'Wispr Meetings', count: 40 }, { key: 'claude', label: 'Claude Sessions', count: 500 },
+      { key: 'codex', label: 'Codex Sessions', count: 200 }, { key: 'sources', label: 'Sources & Captures', count: 300 },
+      { key: 'archive', label: 'Archive', count: 1000 }
+    ];
+    var total = cats.reduce(function (a, c) { return a + c.count; }, 0);
+    function side(html) { return '<div class="vb-side"><section class="k10v-lib">' + html + '</section></div>'; }
+
+    // 1. Library composition
+    var lib = '<div class="vb-row">' +
+      '<div>' + cap('All sources') + side(V.libraryHtml({ cats: cats }, 'all')) + '</div>' +
+      '<div>' + cap('Facts selected: its segment stays solid') + side(V.libraryHtml({ cats: cats }, 'facts')) + '</div>' +
+      '</div><div class="vb-row">' +
+      '<div>' + cap('Before app.js has counts') + side(V.libraryHtml({ cats: [] }, 'all')) + '</div>' +
+      '<div>' + cap('Document list failed to load') + side(V.libraryHtml({ cats: [], failed: true }, 'all')) + '</div>' +
+      '</div>';
+
+    // 2. Source chips (app.js markup, restyled)
+    function chipBtn(key, label, count, active) {
+      return '<button type="button" class="vault-cat-btn k10v-cat k10-tone-' + V.catMeta(key).tone + (active ? ' is-active' : '') + '" aria-selected="' + (active ? 'true' : 'false') + '" role="tab">' +
+        '<span style="display:inline-flex;align-items:center;gap:5px"><span class="k-pill-icon">' + K.icon(V.catMeta(key).icon, 12) + '</span><span>' + esc(label) + '</span></span>' +
+        '<span class="vault-cat-count">' + esc(K.fmt(count)) + '</span></button>';
+    }
+    var chips = cap('One scrolling row; only the active chip carries its family tone') +
+      '<div class="vb-side"><div class="vault-cat-list k10v-cats" role="tablist" aria-label="Sample categories">' +
+      chipBtn('all', 'All', total, false) + chipBtn('facts', 'Facts', 2500, true) + chipBtn('dashboards', 'Dashboards', 100, false) +
+      chipBtn('world', 'World', 3000, false) + chipBtn('wispr-flow', 'Wispr Meetings', 40, false) + chipBtn('archive', 'Archive', 1000, false) +
+      '</div></div>';
+
+    // 3. Document rows
+    function row(path, title, when, excerpt, active) {
+      var key = V.classifyPath(path), m = V.catMeta(key);
+      return '<button type="button" class="vault-doc-item k10v-doc k10-tone-' + m.tone + (active ? ' is-active' : '') + '">' +
+        '<span class="k10v-tile" aria-hidden="true">' + K.icon(m.icon, 13) + '</span>' +
+        '<span class="vault-doc-title">' + esc(title) + '</span>' +
+        '<div class="vault-doc-meta"><span class="vault-doc-path">' + esc(path) + '</span><span class="tabular">' + esc(when) + '</span></div>' +
+        (excerpt ? '<span class="vault-doc-excerpt">' + esc(excerpt) + '</span>' : '') + '</button>';
+    }
+    var rows = cap('Neutral tiles typed by the server rule; the open row takes its tone') + '<div class="vb-side"><div class="vb-list">' +
+      row('dashboards/sample-brief.md', 'Sample daily brief', '3h ago', 'Covers the last day of sample activity.') +
+      row('auto/facts/sample/decision.md', 'Sample decision record', '1d ago', 'A sample fact with two sources.', true) +
+      row('wispr-flow/2026-01-01-sample-meeting.md', 'Sample meeting', '1 Jan', '') +
+      row('auto/kizuki.codex-sessions/sample.md', 'Sample Codex session', '4d ago', '') +
+      row('misc/sample.md', 'Sample loose file (falls back to Vault Notes, as on the server)', '2w ago', '') +
+      '</div></div>';
+
+    // 4. Mastheads
+    function mast(o) {
+      var c = V.mastheadParts(o);
+      return '<div class="' + c.className + '">' + c.html + '</div>';
+    }
+    var masts =
+      cap('Dashboard: source, type, sensitivity') + mast({ path: 'dashboards/sample-digest.md', title: 'Sample digest', catKey: 'dashboards', catLabel: 'Dashboards', fm: { type: 'executive-digest', sensitivity: 'private' } }) +
+      cap('Meeting: participants as a generated avatar stack') + mast({ path: 'wispr-flow/sample-meeting.md', title: 'Sample meeting', catKey: 'wispr-flow', catLabel: 'Wispr Meetings', fm: { type: 'MeetingNote', participants: ['Sample Ada North', 'Sample Ben Okafor', 'Sample Chiara Russo'] } }) +
+      cap('Entity with a folder trail, status and confidence') + mast({ path: 'auto/entities/sample/topic.md', title: 'Sample topic', catKey: 'entities', catLabel: 'Entities', fm: { type: 'topic', status: 'active', 'x-confidence': 'high' } }) +
+      cap('Person document: generated portrait') + mast({ path: 'auto/entities/people/sample-emi-sato.md', title: 'Sample Emi Sato', catKey: 'entities', catLabel: 'Entities', fm: { type: 'person' } }) +
+      cap('No frontmatter') + mast({ path: 'notes/sample.md', title: 'Sample', catKey: 'notes', catLabel: 'Vault Notes', fm: {} });
+
+    // 5. Facts + shape
+    function facts(secs, counts, fm) { return '<div class="k10v-facts" style="margin:0;padding:0;border:0">' + V.factsHtml(secs, counts, fm) + '</div>'; }
+    var secs = [
+      { id: '', title: 'Opening', words: 40 }, { id: 'sb-a', title: 'Sample pulse', words: 120 }, { id: 'sb-b', title: 'Sample highlights', words: 60 },
+      { id: 'sb-c', title: 'Sample recipes', words: 220 }, { id: 'sb-d', title: 'Sample connectors', words: 90 }, { id: 'sb-e', title: 'Sample access', words: 20 }
+    ];
+    var factsHtml =
+      cap('Generated dashboard: length, related, freshness') + facts(secs, { links: 2, related: 6 }, { generated_at: iso(0.2) }) +
+      cap('Meeting: duration and when it was held') + facts([{ id: 'm1', title: 'Summary', words: 300, el: 1 }, { id: 'm2', title: 'Transcript', words: 2700, el: 1 }], { links: 0, related: 4 }, { duration_min: '20', occurred_at: iso(2) }) +
+      cap('Stale entity with an overdue review and cited sources') + facts(secs, { links: 0, related: 3 }, { sources: ['a', 'b'], 'x-updated': iso(100), 'x-next-review': iso(10) }) +
+      cap('Short note: under 115 words reads as under a minute') + facts([{ id: '', title: 'Opening', words: 40 }], { links: 1, related: 0 }, {}) +
+      cap('Nothing counted: related unknown') + facts([], {}, {});
+
+    // 6. Related
+    function relRow(path, title) {
+      var key = path ? V.classifyPath(path) : '', m = V.catMeta(key);
+      return '<button type="button" class="related-doc-item is-stacked k10v-rel k10-tone-' + m.tone + '">' +
+        '<span class="k10v-tile" aria-hidden="true">' + K.icon(key ? m.icon : 'link', 12) + '</span>' +
+        '<span class="related-doc-title">' + esc(title) + '</span><span class="related-doc-cat badge badge-neutral">' + esc(key ? m.label : 'Wikilink') + '</span></button>';
+    }
+    var rail = '<div id="doc-related-list" class="vb-rail">' + relRow('dashboards/a.md', 'Sample digest, previous day') + relRow('wispr-flow/b.md', 'Sample meeting') + relRow('', 'Sample wikilink target') + '</div>';
+    var nextItems = [
+      { path: 'dashboards/a.md', title: 'Sample digest, previous day', catKey: 'dashboards', catLabel: 'Dashboards' },
+      { path: 'auto/facts/sample/b.md', title: 'Sample decision record', catKey: 'facts', catLabel: 'Facts' },
+      { path: 'apple-notes/c.md', title: 'Sample note with a long title that wraps onto two lines', catKey: 'apple-notes', catLabel: 'Apple Notes' },
+      { wiki: 'Sample wikilink', title: 'Sample wikilink' }
+    ];
+    var related = '<div class="vb-row">' +
+      '<div>' + cap('Rail rows (1220px and wider)') + rail + '</div>' +
+      '<div>' + cap('No related docs') + V.nextGridHtml([]) + '</div></div>' +
+      cap('Continue reading grid (when the rail is hidden)') + '<section class="k10v-next" style="display:block;margin:0;padding:0;border:0">' + V.nextGridHtml(nextItems) + '</section>';
+
+    var typing = '<div id="vb-typing">' + K.unavailable('Checking live paths') + '</div>';
+
+    out.innerHTML =
+      spec('Library composition', 'Sidebar card from the per-source counts app.js puts on the category chips. Those counts partition the vault, so their sum is the total. Click a segment to filter. Shows a counting state until app.js has counts, and says unavailable if the list failed.', lib) +
+      spec('Source chips', 'The app\'s filter chips in one horizontal row, so the document list starts high in the sidebar. Colour stays on the bar; the active chip alone carries tone.', chips) +
+      spec('Document rows', 'Each row gets a source icon from the same path rule the server uses (classifyDocCategory). Tiles are neutral; the open document\'s tile takes its family tone.', rows) +
+      spec('Document masthead', 'Replaces the breadcrumb on desktop: the source (click to filter), the folder trail below it, and frontmatter type, status, confidence and sensitivity. Meeting participants become an avatar stack. Metadata chips that repeat these are hidden from the More metadata list.', masts) +
+      spec('Reading facts and shape', 'Length and read time, related documents and links in the text, then duration or cited sources, the date the frontmatter carries (labelled held, updated, generated or reviewed, flagged stale past 30 days) and next review. Cells without data are left out. Shape segments are sections sized by words; while reading, the current one lifts and the line names it.', factsHtml) +
+      spec('Related documents', 'Compact rows in the rail, typed by source. Below 1220px the same documents appear at the end as a Continue reading grid.', related) +
+      spec('Source typing on live paths', 'Runs the client rule over the latest 60 documents from <code>/api/docs</code> and compares it with the category the server returned for each.', typing);
+
+    fetch('/api/docs?sort=recent&limit=60&offset=0', { headers: { Accept: 'application/json' } })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)); })
+      .then(function (res) {
+        var items = (res && res.items) || [];
+        var match = 0, bySrc = {};
+        items.forEach(function (it) {
+          var k = V.classifyPath(it.path);
+          if (k === String(it.category || '').toLowerCase()) match += 1;
+          bySrc[k] = (bySrc[k] || 0) + 1;
+        });
+        var el = document.getElementById('vb-typing');
+        if (!el) return;
+        if (!items.length) { el.innerHTML = K.unavailable('No documents returned'); return; }
+        var L = '<span class="vb-sample vb-live">Live</span>';
+        el.innerHTML = '<div class="vb-cap">Latest ' + items.length + ' documents ' + L + '</div><div class="vb-check">' +
+          K.statTile({ label: 'Match server category', value: match, sub: 'of ' + items.length + ' paths', icon: 'check', tone: match === items.length ? 'emerald' : 'orange' }) +
+          K.statTile({ label: 'Sources seen', value: Object.keys(bySrc).length, sub: 'in this page of results', icon: 'layers', tone: 'slate' }) +
+          '</div>';
+      })
+      .catch(function () {
+        var el = document.getElementById('vb-typing');
+        if (el) el.innerHTML = K.unavailable('Live check unavailable');
+      });
+  });
+})();
+</script>

@@ -1,0 +1,185 @@
+<style>
+  .cxs { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .cxs-title { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.02em; color: var(--ink-primary); }
+  .cxs-lede { margin: 2px 0 8px; max-width: 70ch; font-size: 13px; line-height: 1.55; color: var(--ink-secondary); }
+  .cxs-spec { display: grid; grid-template-columns: minmax(200px, 250px) minmax(0, 1fr); gap: 20px; padding: 18px 0; border-top: 1px solid var(--ts-plate-border); min-width: 0; }
+  .cxs-name { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--ink-primary); }
+  .cxs-note { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink-muted); }
+  .cxs-demo { min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+  .cxs-cap { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-muted); margin-bottom: 6px; }
+  .cxs-sample { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--ink-muted); }
+  .cxs-sample::before { content: ""; width: 6px; height: 6px; border-radius: 2px; background: var(--ts-orange); }
+  .cxs-live { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--ink-muted); }
+  .cxs-live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ts-emerald); }
+  .cxs-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+  .cxs-tab { height: 28px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--ts-plate-border); background: transparent; color: var(--ink-secondary); font: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer; }
+  .cxs-tab:hover { background: var(--ts-plate-elev); color: var(--ink-primary); }
+  .cxs-tab[aria-pressed="true"] { background: var(--ts-plate-elev); border-color: var(--ts-plate-border-hi); color: var(--ink-primary); font-weight: 600; }
+  .cxs-tab:focus-visible { outline: 2px solid var(--ts-cobalt); outline-offset: 2px; }
+  #sb-codex #view-codex { display: block; height: auto; overflow: visible; background: transparent; }
+  #sb-codex #view-codex .cxs-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 12px; align-items: start; }
+  @media (max-width: 760px) { .cxs-spec { grid-template-columns: minmax(0, 1fr); gap: 10px; } }
+</style>
+<div class="cxs">
+  <div>
+    <h2 class="cxs-title">Codex</h2>
+    <p class="cxs-lede">The Mind Codex depth layer. The section hero and overview render from the local <code>/api/codex</code> and <code>/api/actions</code> responses, marked <span class="cxs-live">Live</span>. Card variants and edge states use inputs marked <span class="cxs-sample">Sample</span>.</p>
+  </div>
+
+  <div class="cxs-spec">
+    <div>
+      <h3 class="cxs-name">Section hero</h3>
+      <p class="cxs-note">Compact banner with the section's own art and tone and four counts that no plate below repeats (entries, pinned, entries without a next move, one section-specific figure). Below it, three plates: where entries live (tap a bar to filter), conviction or the idea pipeline, and people in orbit with initials avatars. A section with fewer than three linked people shows entries the matcher flagged as possible taste conflicts, labelled as unconfirmed. Under 640px the plates become a swipeable strip.</p>
+    </div>
+    <div class="cxs-demo">
+      <div class="cxs-tabs" id="cxs-tabs" role="group" aria-label="Section"></div>
+      <div class="cxs-cap"><span class="cxs-live">Live</span><span id="cxs-live-state">Loading</span></div>
+      <div id="cxs-hero"></div>
+    </div>
+  </div>
+
+  <div class="cxs-spec">
+    <div>
+      <h3 class="cxs-name">Hero states</h3>
+      <p class="cxs-note">An empty section shows zero counts and empty plates rather than invented values. The Action Plane banner counts open Codex items (decisions, venture moves, commitments) from /api/codex, so it stays correct when the actions API is down; only the Today list plate reads as unavailable, with its dashed ring.</p>
+    </div>
+    <div class="cxs-demo">
+      <div><div class="cxs-cap"><span class="cxs-sample">Sample</span>Empty section</div><div id="cxs-empty"></div></div>
+      <div><div class="cxs-cap"><span class="cxs-sample">Sample</span>Action Plane, actions API unavailable</div><div id="cxs-noactions"></div></div>
+    </div>
+  </div>
+
+  <div class="cxs-spec">
+    <div>
+      <h3 class="cxs-name">Codex card</h3>
+      <p class="cxs-note">Flat plate, no generated cover. Domain is muted text with a section-tone dot, pinned entries get a small star mark. Conviction is a dot and a word. Thesis labels are sentence case. Linked people get initials avatars. Board, doc, pin and edit become icon buttons with labels for assistive tech. Summaries over 260 characters clamp to four lines with a separate Show more button. A card without a leverage score hides the meter instead of showing a fallback number.</p>
+    </div>
+    <div class="cxs-demo">
+      <div id="view-codex" class="cx10-on"><div class="cxs-cards" id="cxs-cards"></div></div>
+    </div>
+  </div>
+</div>
+<script src="/ext/97b-w10-codex.js"></script>
+<script>
+(function () {
+  var tries = 0;
+  function boot() {
+    var K = window.KizukiKit;
+    var W = window.KizukiCodexW10;
+    if (!K || !W) {
+      if (tries++ < 60) setTimeout(boot, 100);
+      return;
+    }
+    var SECS = [
+      { id: 'philosophies', label: 'Philosophies' },
+      { id: 'interests', label: 'Interests' },
+      { id: 'hobbies', label: 'Hobbies' },
+      { id: 'ideas', label: 'Ideas' },
+      { id: 'actions', label: 'Action Plane' }
+    ];
+    var live = { codex: null, actions: null, sec: 'philosophies' };
+    var tabs = document.getElementById('cxs-tabs');
+    var heroHost = document.getElementById('cxs-hero');
+    var state = document.getElementById('cxs-live-state');
+
+    tabs.innerHTML = SECS.map(function (s) {
+      return '<button type="button" class="cxs-tab" data-sec="' + s.id + '" aria-pressed="' + (s.id === live.sec) + '">' + K.esc(s.label) + '</button>';
+    }).join('');
+    tabs.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-sec]');
+      if (!b) return;
+      live.sec = b.getAttribute('data-sec');
+      tabs.querySelectorAll('[data-sec]').forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); });
+      paintLive();
+    });
+
+    function paintLive() {
+      if (!live.codex) {
+        heroHost.innerHTML = K.emptyState({ title: 'Codex data unavailable', body: 'The live view keeps its own error state and does not draw a hero without data.', icon: 'alert', compact: true });
+        return;
+      }
+      heroHost.innerHTML = W.heroHtml(live.codex, live.actions, live.sec);
+    }
+
+    Promise.all([
+      fetch('/api/codex?section=all').then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }),
+      fetch('/api/actions').then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; })
+    ]).then(function (res) {
+      live.codex = res[0] && Array.isArray(res[0].items) ? res[0] : null;
+      live.actions = res[1] && Array.isArray(res[1].actions) ? res[1].actions : null;
+      state.textContent = live.codex ? live.codex.items.length + ' entries from /api/codex' : 'Unavailable';
+      paintLive();
+    });
+
+    var emptyCodex = {
+      updated_at: 'sample',
+      stats: { bookmarks: 0 },
+      sections: [{ id: 'hobbies', label: 'Sample hobbies', description: 'Sample section with no entries yet.' }],
+      items: [],
+      open_decisions: []
+    };
+    document.getElementById('cxs-empty').innerHTML = W.heroHtml(emptyCodex, [], 'hobbies');
+
+    var sampleDecisionCodex = {
+      updated_at: 'sample',
+      stats: {},
+      sections: [{ id: 'actions', label: 'Sample Action Plane', description: 'Sample decisions with the actions API offline.' }],
+      items: [
+        { id: 's-act-1', section: 'actions', title: 'Sample venture move', domain: 'Sample domain', conviction: 'core', status: 'open', linked_people: ['Sample Ada North'] },
+        { id: 's-dec-1', section: 'actions', title: 'Sample decision with a score', leverage_score: 82, status: 'open', linked_people: ['Sample Ben Okafor'] },
+        { id: 's-dec-2', section: 'actions', title: 'Sample decision without a score', status: 'open' }
+      ],
+      open_decisions: [
+        { id: 's-dec-1', title: 'Sample decision with a score', leverage_score: 82, status: 'open', linked_people: ['Sample Ben Okafor'] },
+        { id: 's-dec-2', title: 'Sample decision without a score', status: 'open' }
+      ]
+    };
+    document.getElementById('cxs-noactions').innerHTML = W.heroHtml(sampleDecisionCodex, null, 'actions');
+
+    var items = [
+      { id: 'sample-phil-pinned', section: 'philosophies', title: 'Sample pinned principle', subtitle: 'Sample subtitle', domain: 'Sample domain', conviction: 'core', pinned: true, leverage_score: 94, linked_people: ['Sample Ada North', 'Sample Chiara Russo'], thesis: 'Sample thesis text.', anti_pattern: 'Sample anti-pattern text.', next_move: 'Sample next move.' },
+      { id: 'sample-idea', section: 'ideas', title: 'Sample idea in testing', domain: 'Sample ventures', conviction: 'testing', pinned: false, leverage_score: 61, linked_people: [], summary: 'Sample long summary that runs past the clamp threshold. It keeps going so the card shows four lines and then a Show more button underneath, which expands the text in place and reports its state through aria-expanded. Screen readers hear the paragraph as plain text and the button as a separate control, rather than the whole summary announced as a button label.' },
+      { id: 'sample-no-score', section: 'hobbies', title: 'Sample entry without a leverage score', domain: 'Sample craft', conviction: 'active', pinned: false, linked_people: ['Sample Dev Patel'], summary: 'The leverage meter is hidden because the score is missing.' }
+    ];
+    var sampleCodex = { updated_at: 'sample', items: items, sections: [], open_decisions: [] };
+
+    function cardHtml(it) {
+      var e = K.esc;
+      var conv = { core: 'CORE', active: 'ACTIVE', testing: 'TESTING' }[it.conviction] || 'ACTIVE';
+      var thesis = it.thesis || it.anti_pattern
+        ? '<div class="codex-thesis-box">' +
+          (it.thesis ? '<div class="codex-thesis-row is-thesis"><span class="codex-thesis-label">CORE THESIS</span><span class="codex-thesis-text">' + e(it.thesis) + '</span></div>' : '') +
+          (it.anti_pattern ? '<div class="codex-thesis-row is-antipattern"><span class="codex-thesis-label">ANTI-PATTERN</span><span class="codex-thesis-text">' + e(it.anti_pattern) + '</span></div>' : '') +
+          '</div>'
+        : '';
+      var score = typeof it.leverage_score === 'number' ? it.leverage_score : 75;
+      return '<article class="codex-card is-' + it.section + (it.pinned ? ' is-pinned' : '') + '" data-codex-item-id="' + e(it.id) + '">' +
+        '<div class="codex-card-head"><div class="codex-card-title-row"><h3 class="codex-card-title">' + e(it.title) + '</h3>' +
+        '<span class="codex-conviction is-' + e(it.conviction) + '">' + conv + '</span></div>' +
+        (it.subtitle ? '<p class="codex-card-subtitle">' + e(it.subtitle) + '</p>' : '') +
+        '<div class="codex-card-meta"><span class="codex-domain-pill">' + e(it.domain) + '</span><span class="codex-pill">Sample source</span>' +
+        '<span class="codex-leverage"><span class="codex-leverage-label">LEV ' + score + '</span><span class="codex-leverage-bar"><span class="codex-leverage-fill" style="width:' + score + '%"></span></span></span></div></div>' +
+        thesis +
+        (it.summary ? '<p class="codex-card-subtitle">' + e(it.summary) + '</p>' : '') +
+        (it.next_move ? '<div class="codex-next-move"><div class="codex-next-move-copy"><span class="codex-next-move-label">Next Move</span><span class="codex-next-move-text">' + e(it.next_move) + '</span></div></div>' : '') +
+        (it.linked_people.length ? '<div class="codex-people-pills">' + it.linked_people.map(function (p) { return '<button type="button" class="codex-person-pill" data-codex-open-person="' + e(p) + '"><span>' + e(p) + '</span></button>'; }).join('') + '</div>' : '') +
+        '<div class="codex-card-actions">' +
+        '<button type="button" class="codex-action-btn is-ai">' + K.icon('spark', 12) + ' Sharpen</button>' +
+        '<button type="button" class="codex-action-btn is-primary">' + K.icon('bolt', 12) + ' Promote</button>' +
+        '<button type="button" class="codex-action-btn" data-codex-send-board="x">' + K.icon('layers', 12) + ' Board</button>' +
+        '<button type="button" class="codex-action-btn" data-codex-open-doc="x">' + K.icon('doc', 12) + ' Open Doc</button>' +
+        '<button type="button" class="codex-action-btn' + (it.pinned ? ' is-pinned' : '') + '" data-codex-pin="x" aria-pressed="' + (it.pinned ? 'true' : 'false') + '">' + K.icon('star', 12) + ' ' + (it.pinned ? 'Pinned' : 'Pin') + '</button>' +
+        '<button type="button" class="codex-action-btn" data-codex-edit="x">' + K.icon('tag', 12) + ' Edit</button>' +
+        '</div></article>';
+    }
+    var cards = document.getElementById('cxs-cards');
+    cards.innerHTML = items.map(cardHtml).join('');
+    W.enhanceScope(cards, sampleCodex, []);
+    cards.addEventListener('click', function (e) {
+      var more = e.target.closest('.cx10-more');
+      if (more) W.toggleMore(more);
+    });
+  }
+  boot();
+})();
+</script>
