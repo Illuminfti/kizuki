@@ -104,24 +104,6 @@
     }
   }
 
-  function dayProgressPct() {
-    try {
-      const parts = new Intl.DateTimeFormat('en-GB', {
-        timeZone: 'Europe/London',
-        hour: 'numeric',
-        minute: 'numeric',
-        hour12: false,
-      }).formatToParts(new Date());
-      const h = Number(parts.find((p) => p.type === 'hour')?.value || 12);
-      const m = Number(parts.find((p) => p.type === 'minute')?.value || 0);
-      const mins = h * 60 + m;
-      // Active waking day window 07:00 to 23:00
-      return Math.max(8, Math.min(96, Math.round(((mins - 420) / 960) * 100)));
-    } catch {
-      return 68;
-    }
-  }
-
   function syncThemeFromUrl() {
     try {
       const params = new URLSearchParams(W.location.search || '');
@@ -166,6 +148,7 @@
   }
 
   function triggerQuickCapture() {
+    if (!D.body.classList.contains('view-today')) triggerView('today');
     setTodayTab('triage');
     const toggle = D.getElementById('btn-toggle-quick-action');
     const form = D.getElementById('triage-quick-add');
@@ -291,23 +274,25 @@
     const ontoTerms = onto.terms ?? 0;
 
     // Row 2 Workload 4 chambers (real counts)
-    const inboxCount = (t.inbox || []).filter((x) => !x.is_noise).length || 12;
-    const waitingCount = Math.min(99, Math.max(1, v.consolidation_pending ? Math.round(v.consolidation_pending / 25) : 6));
-    const focusCount = sm.active_pipelines ?? (t.workstreams || []).length ?? 4;
+    const inboxCount = (t.inbox || []).filter((x) => !x.is_noise).length;
+    const waitingCount = Number(v.consolidation_pending || 0);
+    const focusCount = sm.active_pipelines ?? (t.workstreams || []).length;
     const doneCount = actions.filter((a) => a.done).length + memtCount;
     const openTotal = priorityInbox + (sm.open_actions || 0);
 
+    const chamberMax = Math.max(1, inboxCount, waitingCount, focusCount, doneCount);
+    const share = (n) => Math.round((n / chamberMax) * 100);
     const chambers = [
-      { key: 'inbox', name: 'Inbox', sub: 'Priority queue', count: inboxCount, pct: 64, color: '#9ca3af', avs: people.slice(0, 2) },
-      { key: 'waiting', name: 'Waiting', sub: 'Consolidating', count: waitingCount, pct: 46, color: '#f59e0b', avs: people.slice(1, 2) },
-      { key: 'focus', name: 'In Focus', sub: 'Live pipelines', count: focusCount, pct: 82, color: '#3b82f6', avs: people.slice(2, 4) },
-      { key: 'completed', name: 'Completed', sub: 'Verified today', count: doneCount, pct: 92, color: '#22c55e', avs: people.slice(0, 2) },
+      { key: 'inbox', name: 'Inbox', sub: 'Priority queue', count: inboxCount, pct: share(inboxCount), color: '#9ca3af', avs: people.slice(0, 2) },
+      { key: 'waiting', name: 'Waiting', sub: 'Consolidating', count: waitingCount, pct: share(waitingCount), color: '#f59e0b', avs: people.slice(1, 2) },
+      { key: 'focus', name: 'In Focus', sub: 'Live pipelines', count: focusCount, pct: share(focusCount), color: '#3b82f6', avs: people.slice(2, 4) },
+      { key: 'completed', name: 'Completed', sub: 'Verified today', count: doneCount, pct: share(doneCount), color: '#22c55e', avs: people.slice(0, 2) },
     ];
 
     const ringSvg = (pct, color) => {
       const r = 12;
       const c = 2 * Math.PI * r;
-      const off = c * (1 - Math.max(0.08, Math.min(1, pct / 100)));
+      const off = c * (1 - Math.max(0, Math.min(1, pct / 100)));
       return `<svg class="ts-ring-svg" width="30" height="30" viewBox="0 0 30 30" aria-hidden="true">
         <circle cx="15" cy="15" r="${r}" fill="none" stroke="rgba(148,163,184,0.18)" stroke-width="2.4"/>
         <circle cx="15" cy="15" r="${r}" fill="none" stroke="${color}" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}"/>
@@ -315,61 +300,57 @@
     };
 
     // Row 3 Left: Day Capacity (computed from live Whoop + schedule + pipelines)
-    const sleepH = Number(whoop.sleep_hours || 6.5);
-    const activeWindow = Math.max(10, Math.round((24 - sleepH) * 10) / 10);
+    const hasWhoop = whoop.recovery_pct != null && whoop.sleep_hours != null;
+    const sleepH = Number(whoop.sleep_hours || 0);
+    const activeWindow = hasWhoop ? Math.round((24 - sleepH) * 10) / 10 : null;
     const schedCount = (t.schedule || []).length;
-    const focusPct = Math.max(42, Math.min(62, Math.round((whoop.recovery_pct || 61) * 0.85)));
-    const syncPct = Math.max(18, Math.min(34, schedCount * 3 + 6));
-    const freePct = Math.max(12, 100 - focusPct - syncPct);
-    const focusH = (activeWindow * focusPct / 100).toFixed(1);
-    const syncH = (activeWindow * syncPct / 100).toFixed(1);
-    const freeH = (activeWindow * freePct / 100).toFixed(1);
+    const focusPct = hasWhoop ? Math.max(0, Math.min(100, Math.round(Number(whoop.recovery_pct) * 0.85))) : 0;
+    const syncPct = hasWhoop ? Math.min(100 - focusPct, schedCount * 3) : 0;
+    const freePct = hasWhoop ? 100 - focusPct - syncPct : 0;
+    const focusH = hasWhoop ? (activeWindow * focusPct / 100).toFixed(1) : '0';
+    const syncH = hasWhoop ? (activeWindow * syncPct / 100).toFixed(1) : '0';
+    const freeH = hasWhoop ? (activeWindow * freePct / 100).toFixed(1) : '0';
+    const relBars = (items) => {
+      const max = Math.max(1, ...items.map((b) => b.value));
+      return items.map((b) => ({ ...b, pct: Math.round((b.value / max) * 100) }));
+    };
+    const connectors = Array.isArray(v.connectors) ? v.connectors.slice().sort((a, b) => (b.count || 0) - (a.count || 0)).slice(0, 4) : [];
 
     // Row 3 Right: Mind & Agent Velocity (real datasets switchable across 3 modes)
     const velSets = {
       core: {
         label: 'Kizuki Core',
-        bars: [
-          { id: 'wa', name: 'WhatsApp', badge: 'W', tone: 'emerald', pct: Math.min(95, Math.max(18, Math.round(((ic.whatsapp || 140) / Math.max(1, ic.priority || 355)) * 100))), detail: `${fmtNum(ic.whatsapp || 0)} threads` },
-          { id: 'tg', name: 'Telegram', badge: 'T', tone: 'amber', pct: Math.min(95, Math.max(24, Math.round(((ic.telegram || 107) / Math.max(1, ic.priority || 355)) * 140))), detail: `${fmtNum(ic.telegram || 0)} signals` },
-          { id: 'ai', name: 'Canon', badge: 'K', tone: 'cobalt', pct: Math.min(94, Math.max(68, Math.round(((sm.active_pipelines || 18) / Math.max(1, sm.total_pipelines || 20)) * 96))), delta: '+14%', detail: `${fmtNum(liveClaims)} live claims` },
-          { id: 'mail', name: 'Gmail', badge: 'G', tone: 'slate', pct: Math.min(90, Math.max(20, Math.round(((ic.gmail || 83) / Math.max(1, ic.priority || 355)) * 125))), detail: `${fmtNum(ic.gmail || 0)} messages` },
-        ],
+        bars: relBars([
+          { id: 'wa', name: 'WhatsApp', badge: 'W', tone: 'emerald', value: Number(ic.whatsapp || 0), detail: `${fmtNum(ic.whatsapp || 0)} threads` },
+          { id: 'tg', name: 'Telegram', badge: 'T', tone: 'amber', value: Number(ic.telegram || 0), detail: `${fmtNum(ic.telegram || 0)} signals` },
+          { id: 'ai', name: 'Canon', badge: 'K', tone: 'cobalt', value: Number(v.claims_24h || 0), detail: `${fmtNum(v.claims_24h || 0)} claims today` },
+          { id: 'mail', name: 'Gmail', badge: 'G', tone: 'slate', value: Number(ic.gmail || 0), detail: `${fmtNum(ic.gmail || 0)} messages` },
+        ]),
       },
       channels: {
         label: 'People',
-        bars: people.slice(0, 4).map((p, i) => {
-          const tones = ['emerald', 'amber', 'cobalt', 'slate'];
-          const maxMsg = Math.max(1, ...people.slice(0, 4).map((x) => x.message_count || 1));
-          const pct = Math.max(22, Math.min(92, Math.round(((p.message_count || 40) / maxMsg) * 88)));
-          return {
-            id: p.key || `p${i}`,
-            name: clean(p.name).split(' ')[0],
-            badge: initials(p.name)[0],
-            tone: tones[i % 4],
-            pct,
-            delta: i === 2 ? '+18%' : '',
-            detail: `${fmtNum(p.message_count || 0)} msgs`,
-          };
-        }),
+        bars: relBars(people.slice(0, 4).map((p, i) => ({
+          id: p.key || `p${i}`,
+          name: clean(p.name).split(' ')[0],
+          badge: initials(p.name)[0],
+          tone: ['emerald', 'amber', 'cobalt', 'slate'][i % 4],
+          value: Number(p.message_count || 0),
+          detail: `${fmtNum(p.message_count || 0)} msgs`,
+        }))),
       },
       pipelines: {
         label: 'Pipelines',
-        bars: [
-          { id: 'p1', name: 'Claude', badge: 'C', tone: 'cobalt', pct: 89, delta: '+21%', detail: `${fmtNum(v.connectors?.[0]?.count || 62993)} events` },
-          { id: 'p2', name: 'Codex', badge: 'X', tone: 'amber', pct: 64, detail: `${fmtNum(v.connectors?.[2]?.count || 35078)} events` },
-          { id: 'p3', name: 'Wiki', badge: 'W', tone: 'emerald', pct: 48, detail: `${fmtNum(v.connectors?.[3]?.count || 8075)} pages` },
-          { id: 'p4', name: 'Notes', badge: 'N', tone: 'slate', pct: 32, detail: `${fmtNum(v.connectors?.[4]?.count || 2671)} docs` },
-        ],
+        bars: relBars(connectors.map((c, i) => ({
+          id: c.id || `c${i}`,
+          name: clean(c.label || c.id || 'Source'),
+          badge: clean(c.label || c.id || '?')[0].toUpperCase(),
+          tone: ['cobalt', 'amber', 'emerald', 'slate'][i % 4],
+          value: Number(c.count || 0),
+          detail: `${fmtNum(c.count || 0)} records`,
+        }))),
       },
     };
     const activeVel = velSets[S.velMode] && velSets[S.velMode].bars.length === 4 ? velSets[S.velMode] : velSets.core;
-    // Mark tallest bar with delta bubble if none set
-    let maxIdx = 0;
-    activeVel.bars.forEach((b, i) => {
-      if (b.pct > activeVel.bars[maxIdx].pct) maxIdx = i;
-    });
-
     // Row 4 Recent Activity filtered
     const allRows = buildActivityFeed();
     const filteredRows = allRows
@@ -455,7 +436,7 @@
           <div class="ts-viz-head">
             <div>
               <h3 class="ts-viz-title">Day capacity</h3>
-              <div class="ts-viz-sub">Whoop ${esc(whoop.recovery_pct || 61)}% &middot; ${esc(sm.active_pipelines || 18)}/${esc(sm.total_pipelines || 20)} pipelines active</div>
+              <div class="ts-viz-sub">${hasWhoop ? `Whoop ${esc(whoop.recovery_pct)}%` : 'Whoop unavailable'} &middot; ${esc(sm.active_pipelines ?? 0)}/${esc(sm.total_pipelines ?? 0)} pipelines active</div>
             </div>
             <span class="ts-chip-pill">
               <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="5.8"/><path d="M8 5v3.2l2 1.2"/></svg>
@@ -463,7 +444,7 @@
             </span>
           </div>
           <div class="ts-cap-hero">
-            <span class="ts-cap-num">${esc(activeWindow)}h</span>
+            <span class="ts-cap-num">${hasWhoop ? `${esc(activeWindow)}h` : '--'}</span>
             <span class="ts-cap-unit">Active window</span>
           </div>
           <div class="ts-cap-diagram">
@@ -498,18 +479,14 @@
           </div>
           ${S.velHover ? `<div class="ts-vel-tooltip">${esc(S.velHover)}</div>` : ''}
           <div class="ts-vel-stage">
-            <div class="ts-vel-target"><span class="ts-vel-target-lbl">Target 70%</span></div>
             <div class="ts-vel-cols">
               ${activeVel.bars
-                .map((b, i) => {
-                  const showBubble = i === maxIdx;
-                  const bubbleTxt = b.delta || '+14%';
+                .map((b) => {
                   return `
                   <div class="ts-vel-col">
-                    <button type="button" class="ts-vel-track" data-ts-vel-bar="${esc(b.name)}: ${b.pct}% (${esc(b.detail)})" aria-label="${esc(b.name)} ${b.pct}%">
+                    <button type="button" class="ts-vel-track" data-ts-vel-bar="${esc(b.name)}: ${esc(b.detail)}" aria-label="${esc(b.name)}: ${esc(b.detail)}">
                       <div class="ts-vel-bar is-${b.tone}" style="height:${b.pct}%">
-                        ${showBubble ? `<span class="ts-vel-bubble">&#8593; ${esc(bubbleTxt.replace(/^\+/, ''))}</span>` : ''}
-                        <span class="ts-vel-pct">${b.pct}%</span>
+                        <span class="ts-vel-pct">${esc(fmtNum(b.value))}</span>
                       </div>
                     </button>
                   </div>`;
@@ -592,14 +569,14 @@
     const handle = sel ? sel.sub.split('·')[1]?.trim() || '@signal' : '@kizuki';
     const statusTxt = sel ? sel.status : 'Online';
     const stat1K = sel ? sel.metaKey : 'Vault claims';
-    const stat1V = sel ? sel.metaVal : fmtNum(v.claims_live ?? sm.claims_live ?? 40452);
+    const stat1V = sel ? sel.metaVal : fmtNum(v.claims_live ?? sm.claims_live ?? 0);
     const stat2K = sel ? 'Recovery' : 'Timezone';
-    const stat2V = sel ? `${whoop.recovery_pct || 61}% Whoop` : londonTimeStr();
+    const stat2V = sel ? (whoop.recovery_pct != null ? `${whoop.recovery_pct}% Whoop` : 'Unavailable') : londonTimeStr();
     const consDone = Number(v.consolidation_complete || 0);
     const consPend = Number(v.consolidation_pending || 0);
     const progPct = consDone + consPend > 0
-      ? Math.max(12, Math.min(92, Math.round((consDone / (consDone + consPend)) * 100)))
-      : dayProgressPct();
+      ? Math.round((consDone / (consDone + consPend)) * 100)
+      : 0;
 
     const tones = ['blue', 'amber', 'green'];
     const upIcons = [
@@ -608,7 +585,7 @@
       '<circle cx="6.2" cy="5.6" r="2"/><path d="M2.5 12.6c.4-2 1.8-3 3.7-3s3.3 1 3.7 3M10.6 4.6a1.8 1.8 0 0 1 0 3.2"/>',
     ];
 
-    const recapSummary = `${fmtNum(v.events_24h || 2889)} events and ${fmtNum(sm.priority_inbox_count || 355)} priority signals indexed. ${sm.active_pipelines || 18}/${sm.total_pipelines || 20} pipelines active.`;
+    const recapSummary = `${fmtNum(v.events_24h ?? 0)} events and ${fmtNum(sm.priority_inbox_count ?? 0)} priority signals indexed. ${sm.active_pipelines ?? 0}/${sm.total_pipelines ?? 0} pipelines active.`;
 
     rail.innerHTML = `
       <div class="ts-aurora-banner">
@@ -730,15 +707,15 @@
       const res = await fetch('/api/brief', { headers: { Accept: 'application/json' } });
       if (res.ok) {
         const data = await res.json();
-        const raw = clean(data.summary || data.content || data.markdown || '');
+        const raw = clean((data.latest && data.latest.markdown) || '');
         const lines = raw
           .split('\n')
           .map((l) => l.replace(/^#+\s*/, '').trim())
           .filter((l) => l && !l.startsWith('---'))
           .slice(0, 5);
-        S.recapText = lines.join('\n') || 'Live vault synced. Open Ask Mind for deep synthesis.';
+        S.recapText = lines.length ? lines.join('\n') : 'No daily brief saved yet. Ask Mind can synthesise one.';
       } else {
-        S.recapText = 'Live brief ready in Triage workbench. Click Ask for interactive synthesis.';
+        S.recapText = `Brief unavailable (HTTP ${res.status}). Ask Mind can synthesise one.`;
       }
     } catch {
       S.recapText = 'Offline recap unavailable. Click Ask Mind to run local synthesis.';
