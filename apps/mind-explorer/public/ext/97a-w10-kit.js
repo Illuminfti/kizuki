@@ -543,4 +543,3 @@
     personRow,
   });
 })(typeof window !== 'undefined' ? window : globalThis);
-
