@@ -1,0 +1,152 @@
+<style>
+  .tsb { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .tsb-title { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.02em; color: var(--ink-primary); }
+  .tsb-lede { margin: 2px 0 8px; max-width: 70ch; font-size: 13px; line-height: 1.55; color: var(--ink-secondary); }
+  .tsb-spec {
+    display: grid;
+    grid-template-columns: minmax(200px, 250px) minmax(0, 1fr);
+    gap: 20px;
+    padding: 18px 0;
+    border-top: 1px solid var(--ts-plate-border);
+    min-width: 0;
+  }
+  .tsb-name { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--ink-primary); }
+  .tsb-note { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink-muted); }
+  .tsb-demo { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+  .tsb-cap { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 11.5px; color: var(--ink-muted); }
+  .tsb-live, .tsb-sample { display: inline-flex; align-items: center; gap: 5px; }
+  .tsb-live::before, .tsb-sample::before { content: ""; width: 6px; height: 6px; border-radius: 2px; }
+  .tsb-live::before { background: var(--ts-emerald); }
+  .tsb-sample::before { background: var(--ts-orange); }
+  .tsb-plate { padding: 12px 14px; border-radius: 12px; background: var(--ts-plate-bg); border: 1px solid var(--ts-plate-border); min-width: 0; }
+  .tsb-rail { display: flex; flex-direction: column; gap: 4px; max-width: 260px; }
+  .tsb-rail .taste-domain-btn { width: 100%; font: inherit; color: var(--ink-primary); text-align: left; cursor: default; }
+  .tsb-rail .taste-domain-top, .tsb-rail .taste-domain-row { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; }
+  .tsb-rail .taste-domain-row { font-size: 12px; }
+  .tsb-gcard { max-width: 340px; padding: 14px; }
+  .tsb-gcard .gardener-agent-name { margin: 0; font-size: 13.5px; font-weight: 600; color: var(--ink-primary); }
+  .tsb-gcard .gardener-agent-specialty { margin: 2px 0 0; font-size: 12px; color: var(--ink-muted); }
+  @media (max-width: 760px) {
+    .tsb-spec { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  }
+</style>
+<div class="tsb">
+  <div>
+    <h2 class="tsb-title">Taste Studio</h2>
+    <p class="tsb-lede">Wave 10 components for #view-taste, built by public/ext/97b-w10-taste.js. Blocks marked <span class="tsb-live">Live</span> render from /api/taste and /api/taste/gardeners on this server. Blocks marked <span class="tsb-sample">Sample</span> use sample inputs to show a state.</p>
+  </div>
+  <div id="view-taste" class="tsb-scope"><div class="w10t" id="tsb-specs"><p class="tsb-note">Loading Taste components</p></div></div>
+</div>
+<script>
+(function () {
+  var out = document.getElementById('tsb-specs');
+  if (!out) return;
+
+  function spec(name, note, demos) {
+    return '<section class="tsb-spec"><div><h3 class="tsb-name">' + name + '</h3><p class="tsb-note">' + note + '</p></div>' +
+      '<div class="tsb-demo">' + demos.join('') + '</div></section>';
+  }
+  function demo(kind, caption, html) {
+    var tag = kind === 'live' ? '<span class="tsb-live">Live</span>' : '<span class="tsb-sample">Sample</span>';
+    return '<div><div class="tsb-cap">' + tag + '<span>' + caption + '</span></div>' + html + '</div>';
+  }
+  function getJson(url) {
+    return fetch(url, { headers: { Accept: 'application/json' } }).then(function (r) {
+      if (!r.ok) throw new Error(String(r.status));
+      return r.json();
+    });
+  }
+
+  function render(W, K, taste, gardeners) {
+    var E = K.esc;
+    var d = W.derive(taste);
+    var st = { activeDomain: 'all', activeTab: 'deck' };
+    var specs = [];
+
+    var emptyDeck = {
+      stats: { calibration_pct: 100, answered_count: 12, total_questions: 12, remaining_count: 0, vault_docs_count: 3, streak_count: 4 },
+      domains: [{ id: 'sample', label: 'Sample domain', pct: 100, answered: 12, total: 12 }],
+      queued: {}, history: [], gaps: [], rulesByDomain: {}, lastByDomain: {}, rulesTotal: 4, weekCount: 2, weakest: null, lastAt: null, now: Date.now(),
+    };
+    var noGaps = { gaps: [], queued: {}, rulesByDomain: {}, lastByDomain: {}, now: Date.now() };
+    specs.push(spec('Calibration strip',
+      'Sits under the tabs on every tab. Ring for overall calibration, decisions locked as the title, one line with the last verdict, answers this week and the answer streak (consecutive answers with no gap over 36h, from stats.streak_count). One next action: calibrate the weakest domain that still has queued cards, answer the next card when that domain is already open, or generate questions when nothing is queued. If a refresh fails while older data is shown, the line ends with "Data may be stale."',
+      [
+        d ? demo('live', 'All domains, deck tab', W.heroHtml(d, st)) : demo('live', 'API did not answer', W.heroHtml(null, st, { failed: true })),
+        d && d.weakest ? demo('live', 'Weakest domain already open', W.heroHtml(d, { activeDomain: d.weakest.id, activeTab: 'deck' })) : '',
+        d ? demo('live', 'Live data after a failed refresh', W.heroHtml(d, st, { failed: true })) : '',
+        demo('sample', 'Nothing queued', W.heroHtml(emptyDeck, st)),
+        demo('sample', 'Loading', W.heroHtml(null, st)),
+        demo('sample', 'Unavailable', W.heroHtml(null, st, { failed: true })),
+      ]));
+
+    specs.push(spec('Gaps to close',
+      'Below the deck. The rail already lists every domain with a ring, so this shows only the three weakest domains that still have queued cards, with what the rail cannot: rules per domain, the last pick in full and a Calibrate button.',
+      [
+        d ? demo('live', E(d.gaps.length) + ' domains with queued cards', W.gapsHtml(d)) : demo('live', 'API did not answer', K.unavailable()),
+        demo('sample', 'Nothing queued', W.gapsHtml(noGaps)),
+      ]));
+
+    specs.push(spec('Recent verdicts',
+      'The six most recent answers from answered_history: chosen option, question, when, domain and axis, with the trait tag as a chip.',
+      [
+        d ? demo('live', E(d.history.length) + ' recorded', '<div class="w10t-panel">' + W.verdictsHtml(d) + '</div>') : '',
+        demo('sample', 'No verdicts', '<div class="w10t-panel">' + W.verdictsHtml({ history: [], domains: [], now: Date.now() }) + '</div>'),
+      ]));
+
+    specs.push(spec('Gardener roster',
+      'Gardeners are agents, so they get the icon of their first domain on a plain tile instead of a human portrait. An emerald dot appears only while one is running. Run count and last run come from /api/taste/gardeners.',
+      [
+        gardeners ? demo('live', 'From /api/taste/gardeners', '<div class="w10t-panel">' + W.rosterHtml(gardeners) + '</div>') : '',
+        demo('sample', 'Running gardener', '<div class="w10t-panel">' + W.rosterHtml({ gardeners: [{ id: 'sample', name: 'Sample Gardener', domains: ['motion_feel'], codex_scope: 'Sample scope', status: 'running', runs_count: 3, last_run_at: null }] }) + '</div>'),
+        demo('sample', 'Roster unavailable', '<div class="w10t-panel">' + W.rosterHtml(null) + '</div>'),
+      ]));
+
+    function railRow(label, sub, pct, answered, total) {
+      return '<button type="button" class="taste-domain-btn w10t-has-ring">' +
+        '<span class="w10t-rail-ring" aria-hidden="true">' + K.ring(pct, pct >= 100 ? 'emerald' : 'cobalt', { size: 28, stroke: 3, label: '' }) + '</span>' +
+        '<div class="taste-domain-top"><span class="taste-domain-name">' + E(label) + '</span><span class="taste-domain-count">' + answered + '/' + total + '</span></div>' +
+        '<div class="taste-domain-row"><span class="taste-domain-trait">' + E(sub) + '</span><span class="taste-domain-pct">' + pct + '%</span></div>' +
+        '</button>';
+    }
+    specs.push(spec('Rail domain row',
+      'The rail keeps the view\'s own domain buttons and adds a 28px ring in place of the coloured bar. The ring is redrawn when the percentage changes. Rows with no percentage are left as they are.',
+      [
+        demo('sample', 'Partial and complete', '<div class="tsb-plate tsb-rail">' +
+          railRow('Sample domain', 'sample-trait', 50, 5, 10) +
+          railRow('Sample finished domain', 'calibrated', 100, 8, 8) + '</div>'),
+      ]));
+
+    specs.push(spec('Gardener card identity',
+      'Gardeners tab cards get a 40px domain mark next to the name. Coloured accent tops are replaced by hairlines, and the countdown pill is neutral unless the gardener is running or failed.',
+      [
+        demo('sample', 'Card head', '<div class="tsb-plate tsb-gcard"><div class="gardener-agent-identity w10t-has-gav">' +
+          '<span class="w10t-gav">' + W.gardenerMark({ domains: ['ui_product'] }, 40) + '</span>' +
+          '<h4 class="gardener-agent-name">Sample Craft Gardener</h4>' +
+          '<p class="gardener-agent-specialty">Sample specialty</p></div></div>'),
+      ]));
+
+    out.innerHTML = specs.join('');
+  }
+
+  function start() {
+    var W = window.KizukiTasteW10;
+    var K = window.KizukiKit;
+    if (!W || !K) {
+      out.innerHTML = K ? K.emptyState({ title: 'Taste builders unavailable', body: '/ext/97b-w10-taste.js did not load.', compact: true }) : '<p class="tsb-note">Unavailable</p>';
+      return;
+    }
+    Promise.all([
+      getJson('/api/taste?domain=all').catch(function () { return null; }),
+      getJson('/api/taste/gardeners').catch(function () { return null; }),
+    ]).then(function (res) { render(W, K, res[0], res[1]); });
+  }
+
+  if (window.KizukiTasteW10) { start(); return; }
+  var s = document.createElement('script');
+  s.src = '/ext/97b-w10-taste.js';
+  s.onload = start;
+  s.onerror = start;
+  document.head.appendChild(s);
+})();
+</script>

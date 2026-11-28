@@ -1,0 +1,178 @@
+<style>
+  .rb { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .rb-title { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.02em; color: var(--ink-primary); }
+  .rb-lede { margin: 2px 0 8px; max-width: 72ch; font-size: 13px; line-height: 1.55; color: var(--ink-secondary); }
+  .rb-spec {
+    display: grid;
+    grid-template-columns: minmax(200px, 250px) minmax(0, 1fr);
+    gap: 20px;
+    padding: 18px 0;
+    border-top: 1px solid var(--ts-plate-border);
+    min-width: 0;
+  }
+  .rb-name { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--ink-primary); }
+  .rb-note { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink-muted); }
+  .rb-demo { min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+  .rb-cap { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--ink-muted); margin-bottom: 6px; }
+  .rb-sample { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--ink-muted); }
+  .rb-sample::before { content: ""; width: 6px; height: 6px; border-radius: 2px; background: var(--ts-orange); }
+  .rb-row { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+  .rb-chipcell { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-secondary); }
+  .rb-plate { padding: 12px 14px; border-radius: 12px; background: var(--ts-plate-bg); border: 1px solid var(--ts-plate-border); min-width: 0; }
+  @media (max-width: 760px) { .rb-spec { grid-template-columns: minmax(0, 1fr); gap: 10px; } }
+</style>
+<div class="rb">
+  <div>
+    <h2 class="rb-title">Life Replay</h2>
+    <p class="rb-lede">Blocks added to the Replay view by 97b-w10-replay.js. In the app every value comes from GET /api/replay/day for the selected day. This page feeds the same builders with sample days, marked <span class="rb-sample">Sample</span>, to show each variant and its empty or unavailable state.</p>
+  </div>
+  <div id="rb-specs"><p class="rb-note">Loading replay builders.</p></div>
+</div>
+<script>
+(function () {
+  var out = document.getElementById('rb-specs');
+  if (!out) return;
+
+  function iso(day, h, m) { return day + 'T' + String(h).padStart(2, '0') + ':' + String(m || 0).padStart(2, '0') + ':00.000Z'; }
+
+  function sampleFull() {
+    var day = '2026-03-14';
+    var work = [];
+    var comms = [];
+    var counts = [0, 0, 0, 0, 0, 0, 0, 2, 6, 14, 18, 12, 4, 9, 16, 21, 13, 8, 3, 1, 5, 7, 2, 0];
+    counts.forEach(function (n, h) {
+      for (var i = 0; i < n; i++) work.push({ time: iso(day, h, i), project: i % 3 === 0 ? 'Sample Atlas' : i % 5 === 0 ? 'Sample Ledger' : 'Sample Kizuki', source: 'sample-agent', count: 1 });
+    });
+    function slug(s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'item'; }
+    /* Threads: [channel, title, sender per message]. 'Sample Self' is the owner (not a person). */
+    var threads = [
+      ['telegram', 'Sample Ada North', ['Sample Ada North', 'Sample Self', 'Sample Ada North', 'Sample Ada North', 'Sample Self', 'Sample Ada North', 'Sample Ada North']],
+      ['whatsapp', 'Sample Ben Okafor', ['Sample Ben Okafor', 'Sample Self', 'Sample Ben Okafor', 'Sample Ben Okafor']],
+      ['telegram', 'Sample Market Wire', ['Sample Market Wire', 'Sample Market Wire', 'Sample Market Wire', 'Sample Market Wire', 'Sample Market Wire']],
+      ['whatsapp', 'Sample Chiara Russo', ['Sample Self', 'Sample Self']],
+      ['telegram', 'Sample Climbing Club', ['Sample Dev Patel', 'Sample Emi Sato', 'Sample Felix Brandt', 'Sample Self', 'Sample Dev Patel', 'Sample Emi Sato', 'Sample Dev Patel', 'Sample Felix Brandt', 'Sample Dev Patel']],
+      ['telegram', 'Sample Builders', ['Sample Grace Lin', 'Sample Dev Patel', 'Sample Grace Lin', 'Sample Grace Lin']],
+      ['gmail', 'Sample invoice', ['Sample Hugo Moreau', 'Sample Hugo Moreau']],
+      ['gmail', 'Sample build failed', ['sample-ci[bot]', 'sample-ci[bot]', 'sample-ci[bot]']]
+    ];
+    var counts2 = {};
+    var chanOf = {};
+    var t = 0;
+    threads.forEach(function (th) {
+      th[2].forEach(function (sender) {
+        var h = 7 + (t * 5) % 15;
+        comms.push({ time: iso(day, h, (t * 7) % 60), channel: th[0], sender: sender, thread_title: th[1], snippet: 'Sample' });
+        t++;
+        var person = sender === 'Sample Self' ? th[1] : sender;
+        if (th[0] === 'gmail' && sender === 'Sample Self') return;
+        counts2[person] = (counts2[person] || 0) + 1;
+        chanOf[person] = th[0];
+      });
+    });
+    var people = Object.keys(counts2).map(function (n) { return { name: n, key: slug(n), channels: [chanOf[n]], count: counts2[n] }; });
+    people.push({ name: 'Sample Iris Vega', key: slug('Sample Iris Vega'), channels: ['calendar'], count: 1 });
+    return {
+      day: day,
+      weekday: 'Saturday',
+      summary: { primary_location: 'Sample Park', total_events: work.length + comms.length + 3, work_sessions: work.length, messages_count: comms.length, meetings_count: 3, docs_count: 4, photo_count: 9, claims_count: 6 },
+      work: work,
+      comms: comms,
+      people: people,
+      places: [
+        { time: iso(day, 9, 10), label: 'Sample Park', lat: 51.5, lng: -0.1 },
+        { time: iso(day, 13, 40), label: 'Sample Cafe', lat: 51.51, lng: -0.12 },
+        { time: iso(day, 18, 5), label: 'GPS (51.402, -0.081)', lat: 51.402, lng: -0.081 }
+      ],
+      meetings: [
+        { time: iso(day, 9, 30), end_time: iso(day, 10, 30), title: 'Sample design review', participants: ['Sample Iris Vega <iris@example.invalid>', 'ben@example.invalid', 'chiara@example.invalid', 'dev@example.invalid'] },
+        { time: iso(day, 10, 0), end_time: iso(day, 10, 45), title: 'Sample overlapping call', participants: ['emi@example.invalid'] },
+        { time: iso(day, 15, 0), end_time: iso(day, 16, 0), title: 'Sample pick up', participants: [] }
+      ],
+      docs: [],
+      whoop: { recovery_pct: 72, sleep_hours: 7.4, hrv_ms: 61 },
+      claims: [],
+      timeline: []
+    };
+  }
+
+  function sampleQuiet() {
+    var day = '2026-03-15';
+    return {
+      day: day,
+      weekday: 'Sunday',
+      summary: { total_events: 4, work_sessions: 0, messages_count: 0, meetings_count: 0, docs_count: 1, photo_count: 0, claims_count: 0 },
+      work: [], comms: [], people: [], places: [], meetings: [], docs: [{ path: 'sample.md' }],
+      whoop: { recovery_pct: 28, sleep_hours: 5.1, rhr_bpm: 62 },
+      claims: [],
+      timeline: [{ time: iso(day, 11, 20), kind: 'doc' }]
+    };
+  }
+
+  function sampleMissing() {
+    return { day: '2026-03-16', weekday: 'Monday', summary: {}, whoop: null };
+  }
+
+  function spec(name, note, demos) {
+    return '<section class="rb-spec"><div><h3 class="rb-name">' + name + '</h3><p class="rb-note">' + note + '</p></div>' +
+      '<div class="rb-demo">' + demos.map(function (d) {
+        return '<div><div class="rb-cap"><span>' + d[0] + '</span><span class="rb-sample">Sample</span></div>' + d[1] + '</div>';
+      }).join('') + '</div></section>';
+  }
+
+  function render() {
+    var R = window.KizukiReplayW10;
+    var K = window.KizukiKit;
+    if (!R || !K) { out.innerHTML = '<p class="rb-note">Replay builders unavailable.</p>'; return; }
+    var full = sampleFull();
+    var quiet = sampleQuiet();
+    var none = sampleMissing();
+
+    var kinds = Object.keys(R.kinds).map(function (k) {
+      var m = R.kinds[k];
+      return '<span class="rb-chipcell"><span class="w10r-ev-ic k10-tone-' + m.tone + '">' + K.icon(m.icon, 12) + '</span>' + m.label + '</span>';
+    }).join('');
+
+    out.innerHTML =
+      spec('Day hero', 'Banner above the KPIs and map. The art is the day signature: sessions started and messages per half hour, with meeting spans as bands. Facts are the primary place, first to last timestamp, and the peak hour. The stack shows people in direct touch, two-way conversations first.', [
+        ['Full day', R.hero(full)],
+        ['Quiet day, nobody in touch', R.hero(quiet)],
+        ['Summary missing', R.hero(none)]
+      ]) +
+      spec('Day KPI plates', 'Sit directly under the hero. Build sessions counts sessions, its sub line counts steps inside them, and the sparkline counts sessions started per hour. A field missing from the packet reads two dashes and "Not in this day packet", never zero. Without a Whoop day Recovery shrinks to a quiet one-line tile.', [
+        ['Full day, recovery 72%', R.kpis(full)],
+        ['Quiet day, low recovery', R.kpis(quiet)],
+        ['Summary missing', R.kpis(none)]
+      ]) +
+      spec('Day shape', 'Hour by hour swimlanes: sessions started and messages scale to their own peak, meetings pack into up to three lanes so overlaps stay legible, places sit as pins. Meeting titles hide in blocks too narrow to hold a word.', [
+        ['Full day with overlapping meetings', R.shape(full)],
+        ['Lists present but empty', R.shape(quiet)],
+        ['Fields missing from the packet', R.shape(none)]
+      ]) +
+      spec('People in touch', 'Senders are split by thread shape. Direct: a 1:1 thread titled after the person, or a meeting. Email: Gmail only. Only in group chats: seen in threads with several senders. Bots and notification senders are counted separately, not as people. Rows open the person dossier.', [
+        ['Full day', R.people(full)],
+        ['Empty', R.people(quiet)],
+        ['Missing from the packet', R.people(none)]
+      ]) +
+      spec('Build focus', 'Steps per project with each project share and session count. Chips count sessions per source.', [
+        ['Full day', R.work(full)],
+        ['Empty', R.work(quiet)],
+        ['Missing from the packet', R.work(none)]
+      ]) +
+      spec('Agenda', 'Calendar events with start and end, attendee portraits from participant addresses, and a note link when one exists.', [
+        ['Full day', R.agenda(full)],
+        ['Empty', R.agenda(quiet)],
+        ['Missing from the packet', R.agenda(none)]
+      ]) +
+      spec('Timeline marks', 'Timeline events get a neutral kind tile in place of the dot. Only Build and Message carry colour.', [
+        ['Event kind tiles', '<div class="rb-plate rb-row">' + kinds + '</div>']
+      ]);
+  }
+
+  if (window.KizukiReplayW10) { render(); return; }
+  var s = document.createElement('script');
+  s.src = '/ext/97b-w10-replay.js';
+  s.onload = render;
+  s.onerror = function () { out.innerHTML = '<p class="rb-note">Replay builders failed to load.</p>'; };
+  document.head.appendChild(s);
+})();
+</script>

@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en" data-theme="dark" class="sb">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <title>Kizuki storyboard</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23000000'/%3E%3Cpath d='M16 7L26 24H6L16 7Z' fill='%23ededed'/%3E%3C/svg%3E">
+  <script>
+    (function () {
+      var t = null;
+      try { t = new URLSearchParams(location.search).get('theme'); } catch (_) {}
+      if (t !== 'dark' && t !== 'light') { try { t = localStorage.getItem('kz-storyboard-theme'); } catch (_) {} }
+      if (t !== 'dark' && t !== 'light') t = (window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+  <style>
+    @font-face { font-family: 'Geist'; font-style: normal; font-weight: 100 900; font-display: swap; src: url('/fonts/geist-latin-wght-normal.woff2') format('woff2'); unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+    @font-face { font-family: 'Geist'; font-style: normal; font-weight: 100 900; font-display: swap; src: url('/fonts/geist-latin-ext-wght-normal.woff2') format('woff2'); unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
+    @font-face { font-family: 'Geist Mono'; font-style: normal; font-weight: 100 900; font-display: swap; src: url('/fonts/geist-mono-latin-wght-normal.woff2') format('woff2'); unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+  </style>
+  <link rel="stylesheet" href="/bundle/app.css">
+  <link rel="stylesheet" href="/ext/97a-w10-kit.css">
+  <style>
+    html.sb, html.sb body {
+      height: auto;
+      min-height: 100%;
+      overflow: auto;
+      overflow-x: clip;
+      background: var(--ts-canvas-bg);
+      color: var(--ink-primary);
+      font-family: var(--font-sans);
+      font-size: 13px;
+      font-feature-settings: "tnum" 1, "cv11" 1;
+    }
+    html.sb body { margin: 0; }
+    .sb-shell { display: grid; grid-template-columns: 224px minmax(0, 1fr); min-height: 100vh; }
+    .sb-nav {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 16px 12px;
+      border-right: 1px solid var(--ts-plate-border);
+      background: var(--ts-rail-bg);
+      overflow-y: auto;
+    }
+    .sb-brand { display: flex; align-items: center; gap: 9px; padding: 4px 8px 14px; }
+    .sb-mark { width: 24px; height: 24px; border-radius: 7px; background: var(--ts-cta-bg); color: var(--ts-cta-ink); display: inline-flex; align-items: center; justify-content: center; }
+    .sb-brand-name { font-size: 13px; font-weight: 600; letter-spacing: -0.015em; }
+    .sb-brand-sub { font-size: 11.5px; color: var(--ink-muted); }
+    .sb-nav-group { padding: 12px 8px 4px; font-size: 11.5px; color: var(--ink-muted); }
+    .sb-link {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      height: 30px;
+      padding: 0 8px;
+      border-radius: 8px;
+      color: var(--ink-secondary);
+      text-decoration: none;
+      font-size: 13px;
+      transition: background-color 140ms ease-out, color 140ms ease-out;
+    }
+    .sb-link:hover { background: var(--ts-plate-bg); color: var(--ink-primary); }
+    .sb-link.is-active { background: var(--ts-plate-elev); color: var(--ink-primary); font-weight: 500; }
+    .sb-link:focus-visible, .sb-theme:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+    .sb-state { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-faint); flex-shrink: 0; }
+    .sb-state.is-ready { background: var(--ts-emerald); }
+    .sb-state.is-missing { background: transparent; border: 1px dashed var(--ink-faint); }
+    .sb-nav-foot { margin-top: auto; padding-top: 12px; }
+    .sb-theme {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      width: 100%;
+      height: 32px;
+      padding: 0 10px;
+      border-radius: 8px;
+      border: 1px solid var(--ts-plate-border-hi);
+      background: var(--ts-plate-bg);
+      color: var(--ink-primary);
+      font: inherit;
+      font-size: 12.5px;
+      cursor: pointer;
+    }
+    .sb-theme:hover { background: var(--ts-plate-elev); }
+    .sb-main { min-width: 0; padding: 28px 32px 80px; }
+    .sb-head { max-width: 760px; margin-bottom: 28px; }
+    .sb-head h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.03em; }
+    .sb-head p { margin: 6px 0 0; color: var(--ink-secondary); font-size: 13px; line-height: 1.55; }
+    .sb-section { scroll-margin-top: 20px; padding: 28px 0; border-top: 1px solid var(--ts-plate-border); min-width: 0; }
+    .sb-section:first-of-type { border-top: 0; padding-top: 0; }
+    .sb-loading { color: var(--ink-muted); font-size: 12.5px; }
+    @media (max-width: 860px) {
+      .sb-shell { grid-template-columns: minmax(0, 1fr); }
+      .sb-nav {
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        height: auto;
+        flex-direction: row;
+        align-items: center;
+        gap: 4px;
+        padding: 8px 12px;
+        border-right: 0;
+        border-bottom: 1px solid var(--ts-plate-border);
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: none;
+      }
+      .sb-brand, .sb-nav-group { display: none; }
+      #sb-links { display: flex; gap: 2px; flex-shrink: 0; }
+      .sb-link { flex-shrink: 0; }
+      .sb-state { display: none; }
+      .sb-nav-foot { margin: 0 0 0 auto; padding: 0 0 0 8px; flex-shrink: 0; }
+      .sb-theme { width: auto; }
+      .sb-theme-label { display: none; }
+      .sb-main { padding: 20px 16px 64px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html.sb { scroll-behavior: auto; }
+      .sb-link { transition: none; }
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      html.sb { scroll-behavior: smooth; }
+    }
+  </style>
+</head>
+<body>
+  <div class="sb-shell">
+    <nav class="sb-nav" aria-label="Storyboard sections">
+      <div class="sb-brand">
+        <span class="sb-mark" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 32 32"><path d="M16 5L28 26H4L16 5Z" fill="currentColor"/></svg></span>
+        <span><span class="sb-brand-name">Kizuki storyboard</span><br><span class="sb-brand-sub">Wave 10 components and views</span></span>
+      </div>
+      <div class="sb-nav-group">Library</div>
+      <div id="sb-links"></div>
+      <div class="sb-nav-foot">
+        <button type="button" class="sb-theme" id="sb-theme" aria-label="Toggle colour theme">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="5.6"/><path d="M8 2.4v11.2A5.6 5.6 0 0 0 8 2.4Z" fill="currentColor"/></svg>
+          <span class="sb-theme-label" id="sb-theme-label">Light theme</span>
+        </button>
+      </div>
+    </nav>
+    <main class="sb-main" id="sb-main">
+      <header class="sb-head">
+        <h1>Component storyboard</h1>
+        <p>The shared Wave 10 kit and every view's building blocks in one place. Kit samples are labelled as samples; view fragments render from the local app API.</p>
+      </header>
+      <div id="sb-sections"></div>
+    </main>
+  </div>
+  <script src="/ext/97a-w10-kit.js"></script>
+  <script>
+    (function () {
+      var FRAGMENTS = ['kit', 'people', 'replay', 'codex', 'taste', 'board', 'vault', 'graph', 'stream', 'atlas', 'memt'];
+      var LABELS = { kit: 'Kit', people: 'People', replay: 'Replay', codex: 'Codex', taste: 'Taste', board: 'Agent board', vault: 'Vault', graph: 'Graph', stream: 'Stream', atlas: 'Atlas', memt: 'MemT' };
+      var esc = window.KizukiKit ? window.KizukiKit.esc : function (s) { return String(s); };
+      var links = document.getElementById('sb-links');
+      var host = document.getElementById('sb-sections');
+
+      links.innerHTML = FRAGMENTS.map(function (id) {
+        return '<a class="sb-link" href="#sb-' + id + '" data-sb-link="' + id + '"><span>' + esc(LABELS[id] || id) + '</span><span class="sb-state" id="sb-state-' + id + '" aria-hidden="true"></span></a>';
+      }).join('');
+      host.innerHTML = FRAGMENTS.map(function (id) {
+        return '<section class="sb-section" id="sb-' + id + '" aria-label="' + esc(LABELS[id] || id) + '"><div class="sb-loading">Loading ' + esc(LABELS[id] || id) + '</div></section>';
+      }).join('');
+
+      function runScripts(container) {
+        container.querySelectorAll('script').forEach(function (old) {
+          var s = document.createElement('script');
+          for (var i = 0; i < old.attributes.length; i++) s.setAttribute(old.attributes[i].name, old.attributes[i].value);
+          s.textContent = old.textContent;
+          old.replaceWith(s);
+        });
+      }
+
+      // View layers load lazily in the app; the catalog needs every view's css and js up front.
+      function loadLayer(id) {
+        if (id === 'kit') return Promise.resolve();
+        var ln = document.createElement('link');
+        ln.rel = 'stylesheet';
+        ln.href = '/ext/97b-w10-' + id + '.css';
+        document.head.appendChild(ln);
+        return new Promise(function (done) {
+          var sc = document.createElement('script');
+          sc.src = '/ext/97b-w10-' + id + '.js';
+          sc.onload = sc.onerror = function () { done(); };
+          document.head.appendChild(sc);
+        });
+      }
+
+      Promise.all(FRAGMENTS.map(loadLayer)).then(function () { FRAGMENTS.forEach(function (id) {
+        var sec = document.getElementById('sb-' + id);
+        var dot = document.getElementById('sb-state-' + id);
+        fetch('/storyboard/' + id + '.html', { cache: 'no-store' })
+          .then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.text(); })
+          .then(function (html) {
+            if (/<html[\s>]/i.test(html) && /id="sb-main"/.test(html)) throw new Error('fallback');
+            sec.innerHTML = html;
+            runScripts(sec);
+            dot.classList.add('is-ready');
+          })
+          .catch(function () {
+            sec.innerHTML = window.KizukiKit
+              ? '<h2 style="margin:0 0 12px;font-size:18px;font-weight:600;letter-spacing:-0.02em">' + esc(LABELS[id] || id) + '</h2>' + window.KizukiKit.emptyState({ title: 'Fragment not found', body: '/storyboard/' + id + '.html has not been written yet.', compact: true })
+              : '<p>Fragment not found</p>';
+            dot.classList.add('is-missing');
+          });
+      }); });
+
+      var themeBtn = document.getElementById('sb-theme');
+      var themeLabel = document.getElementById('sb-theme-label');
+      function syncLabel() {
+        themeLabel.textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? 'Light theme' : 'Dark theme';
+      }
+      themeBtn.addEventListener('click', function () {
+        var next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        try { localStorage.setItem('kz-storyboard-theme', next); } catch (_) {}
+        syncLabel();
+      });
+      syncLabel();
+
+      if ('IntersectionObserver' in window) {
+        var io = new IntersectionObserver(function (entries) {
+          entries.forEach(function (e) {
+            if (!e.isIntersecting) return;
+            var id = e.target.id.replace('sb-', '');
+            links.querySelectorAll('.sb-link').forEach(function (a) { a.classList.toggle('is-active', a.getAttribute('data-sb-link') === id); });
+          });
+        }, { rootMargin: '-20% 0px -70% 0px' });
+        FRAGMENTS.forEach(function (id) { io.observe(document.getElementById('sb-' + id)); });
+      }
+    })();
+  </script>
+</body>
+</html>

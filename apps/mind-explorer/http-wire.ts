@@ -175,6 +175,25 @@ const LAZY_EXT_ASSETS = new Set<string>([
   "people-radar.js",
 ]);
 
+// Wave 10 layers (shared kit ext/97a-w10-kit.* and per-view ext/97b-w10-<view>.*) load only when a view needs them;
+// ext/97c-view-layers.js injects them.
+const VIEW_LAYER_RE = /^97[ab]-w10-([a-z]+)\.(css|js)$/;
+
+export function listViewLayers(publicDir: string): Record<string, { css?: string; js?: string }> {
+  const out: Record<string, { css?: string; js?: string }> = {};
+  try {
+    for (const name of readdirSync(join(publicDir, "ext")).sort()) {
+      const m = VIEW_LAYER_RE.exec(name);
+      if (!m) continue;
+      const slot = (out[m[1]] ||= {});
+      slot[m[2] as "css" | "js"] = `ext/${name}`;
+    }
+  } catch {
+    // ext directory absent
+  }
+  return out;
+}
+
 export function listExtAssets(publicDir: string): { css: string[]; js: string[] } {
   const extDir = join(publicDir, "ext");
   const css: string[] = [];
@@ -182,7 +201,7 @@ export function listExtAssets(publicDir: string): { css: string[]; js: string[] 
   try {
     const names = readdirSync(extDir).sort();
     for (const name of names) {
-      if (name.startsWith(".") || LAZY_EXT_ASSETS.has(name)) continue;
+      if (name.startsWith(".") || LAZY_EXT_ASSETS.has(name) || VIEW_LAYER_RE.test(name)) continue;
       if (name.endsWith(".css")) css.push(`/ext/${name}`);
       else if (name.endsWith(".js")) js.push(`/ext/${name}`);
     }
@@ -593,6 +612,19 @@ export class AssetStore {
         css: `/ext/people-radar.css?v=${peopleCssEntry.sha256Short}`,
       };
     }
+    const viewLayerSig: string[] = [];
+    for (const [view, files] of Object.entries(listViewLayers(this.publicDir))) {
+      const slot: { css?: string; js?: string } = {};
+      for (const kind of ["css", "js"] as const) {
+        const rel = files[kind];
+        if (!rel) continue;
+        const entry = await this.getPublicFileEntry(rel);
+        if (!entry) continue;
+        slot[kind] = `/${rel}?v=${entry.sha256Short}`;
+        viewLayerSig.push(`${view}.${kind}:${entry.sha256Short}`);
+      }
+      if (slot.css || slot.js) lazyExtMap[`w10-${view}`] = slot;
+    }
     const bundleExts = ext.css.length + ext.js.length > 4;
 
     const extCssStamped = await Promise.all(
@@ -638,6 +670,7 @@ export class AssetStore {
 
     const htmlSig = [
       rawHtmlEntry.signature,
+      viewLayerSig.join(",") || "-",
       initialChunk || "none",
       appCssBundle?.sha256Short || "-",
       baseCssBundle?.sha256Short || "-",

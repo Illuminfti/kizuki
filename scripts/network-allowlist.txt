@@ -192,3 +192,12 @@ apps/mind-explorer/public/ext/98-tessera-depth.js:generateRecap.fetch#1:same-ori
 apps/mind-explorer/public/ext/98-tessera-depth.js:refreshTelemetry.fetch#1:same-origin browser GET of Today telemetry from the local mind-explorer API
 apps/mind-explorer/public/ext/98-tessera-depth.js:refreshTelemetry.fetch#2:same-origin browser GET of Today telemetry from the local mind-explorer API
 apps/mind-explorer/public/ext/98-tessera-depth.js:refreshTelemetry.fetch#3:same-origin browser GET of Today telemetry from the local mind-explorer API
+apps/mind-explorer/public/ext/97b-w10-atlas.js:fetchAtlas.fetch#1:same-origin browser GET against the local mind-explorer loopback API
+apps/mind-explorer/public/ext/97b-w10-board.js:refreshBlockers.fetch#1:same-origin browser GET against the local mind-explorer loopback API
+apps/mind-explorer/public/ext/97b-w10-codex.js:getJson.fetch#1:same-origin browser GET against the local mind-explorer loopback API
+apps/mind-explorer/public/ext/97b-w10-graph.js:getPeople.fetch#1:same-origin browser GET against the local mind-explorer loopback API
+apps/mind-explorer/public/ext/97b-w10-memt.js:fetchOnce.fetch#1:same-origin browser GET against the local mind-explorer loopback API
+apps/mind-explorer/public/ext/97b-w10-people.js:getJson.fetch#1:same-origin browser GET against the local mind-explorer loopback API
+apps/mind-explorer/public/ext/97b-w10-replay.js:getDay.fetch#1:same-origin browser GET against the local mind-explorer loopback API
+apps/mind-explorer/public/ext/97b-w10-stream.js:getJson.window.fetch#1:same-origin browser GET against the local mind-explorer loopback API
+apps/mind-explorer/public/ext/97b-w10-stream.js:loadReplayIndex.window.fetch#1:same-origin browser GET against the local mind-explorer loopback API

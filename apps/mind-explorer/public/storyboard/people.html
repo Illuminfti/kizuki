@@ -1,0 +1,191 @@
+<style>
+  .pb { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .pb-title { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.02em; color: var(--ink-primary); }
+  .pb-lede { margin: 2px 0 8px; max-width: 72ch; font-size: 13px; line-height: 1.55; color: var(--ink-secondary); }
+  div#view-people.pb-scope { display: block; overflow: visible; min-height: 0; height: auto; }
+  .pb-spec {
+    display: grid;
+    grid-template-columns: minmax(200px, 250px) minmax(0, 1fr);
+    gap: 20px;
+    padding: 18px 0;
+    border-top: 1px solid var(--ts-plate-border);
+    min-width: 0;
+  }
+  .pb-name { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--ink-primary); }
+  .pb-note { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink-muted); }
+  .pb-demo { min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+  .pb-cap { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 11.5px; color: var(--ink-muted); }
+  .pb-sample { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--ink-muted); }
+  .pb-sample::before { content: ""; width: 6px; height: 6px; border-radius: 2px; background: var(--ts-orange); }
+  .pb-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(248px, 1fr)); gap: 10px; }
+  .pb-scope .k10p-hero { padding: 0; border: 0; background: transparent; }
+  .pb-list { max-width: 340px; border: 1px solid var(--ts-plate-border); border-radius: 12px; padding: 6px; background: var(--surface-canvas); }
+  .pb-list .person-row { display: flex; }
+  @media (max-width: 760px) {
+    .pb-spec { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  }
+</style>
+<div class="pb">
+  <div>
+    <h2 class="pb-title">People</h2>
+    <p class="pb-lede">Components added to the People directory and person dossier in Wave 10. They are rendered here by the same functions the view uses (window.KizukiW10People). In the app every value comes from /api/people, /api/people/dossier and /api/people/radar. Inputs on this page are samples, marked <span class="pb-sample">Sample</span>.</p>
+  </div>
+  <div id="view-people" class="pb-scope"><div id="pb-specs"></div></div>
+</div>
+<script>
+(function () {
+  var out = document.getElementById('pb-specs');
+  if (!out) return;
+
+  function ready(cb) {
+    if (window.KizukiW10People && window.KizukiKit) return cb();
+    var s = document.createElement('script');
+    s.src = '/ext/97b-w10-people.js';
+    s.onload = function () { if (window.KizukiW10People) cb(); else fail(); };
+    s.onerror = fail;
+    document.head.appendChild(s);
+  }
+  function fail() {
+    out.innerHTML = window.KizukiKit
+      ? window.KizukiKit.emptyState({ title: 'People components did not load', body: '/ext/97b-w10-people.js could not be loaded.', icon: 'alert' })
+      : '<p class="pb-note">People components did not load.</p>';
+  }
+
+  ready(function () {
+    var K = window.KizukiKit;
+    var P = window.KizukiW10People;
+    var S = '<span class="pb-sample">Sample</span>';
+    function spec(name, note, demo) {
+      return '<section class="pb-spec"><div><h3 class="pb-name">' + K.esc(name) + '</h3><p class="pb-note">' + K.esc(note) + '</p></div><div class="pb-demo">' + demo + '</div></section>';
+    }
+    function cell(cap, html) { return '<div><div class="pb-cap">' + K.esc(cap) + S + '</div>' + html + '</div>'; }
+
+    var channels = [
+      { id: 'whatsapp', label: 'WhatsApp', count: 120 },
+      { id: 'telegram', label: 'Telegram', count: 84 },
+      { id: 'imessage', label: 'iMessage', count: 12 },
+      { id: 'gmail', label: 'Gmail', count: 30 },
+      { id: 'calendar', label: 'Calendar', count: 61 }
+    ];
+    var now = Date.now();
+    function ago(days) { return new Date(now - days * 86400000).toISOString(); }
+    var inner = P.innerStats([
+      { key: 'sample-ada', name: 'Sample Ada North', relationship_tier: 'Family', last_seen_iso: ago(0.5) },
+      { key: 'sample-ben', name: 'Sample Ben Okafor', relationship_tier: 'Core', last_seen_iso: ago(1) },
+      { key: 'sample-chiara', name: 'Sample Chiara Russo', relationship_tier: 'Core', last_seen_iso: ago(20) },
+      { key: 'sample-dev', name: 'Sample Dev Patel', relationship_tier: 'Family', last_seen_iso: null },
+      { key: 'sample-emi', name: 'Sample Emi Sato', relationship_tier: 'Core', last_seen_iso: ago(6) }
+    ], now);
+
+    var html = '';
+
+    html += spec('Directory summary',
+      'One compact row above the radar strip, no decorative art. Profiled dossiers as a share of everyone, family and core contacted in the last 14 days (counted from last_seen_iso across the whole circle; clicking it applies the Core filter), and people per channel. Before data arrives every figure reads --; a failed request says so.',
+      cell('Ready', '<div class="k10p-hero">' + P.heroHtml({ total: 297, profiled: 41, core: 5, channels: channels, inner: inner, at: 1 }) + '</div>') +
+      cell('Loading', '<div class="k10p-hero">' + P.heroHtml(null) + '</div>') +
+      cell('Request failed', '<div class="k10p-hero">' + P.heroHtml({ error: true, channels: [], inner: null }) + '</div>'));
+
+    function row(name, tier, sub, time) {
+      var ring = tier === 'family' ? 'rose' : tier === 'core' ? 'violet' : null;
+      return '<button type="button" class="person-row" data-k10p="sb"><span class="person-avatar k10p-av-slot">' +
+        P.avatar({ name: name }, 32, ring) +
+        '</span><span class="person-row-main"><span class="person-row-head"><span class="person-row-name">' + K.esc(name) +
+        '</span></span><span class="person-role-line">' + K.esc(sub) + '</span></span><span class="person-row-right"><span class="person-row-time tabular">' + K.esc(time) + '</span></span></button>';
+    }
+    html += spec('Directory row avatar',
+      'Initials disc like Today and the radar strip, so people stay easy to tell apart. A real same-origin avatar_url or photo replaces it when the API sends one. Family gets a rose ring, Core a violet ring, everyone else none.',
+      cell('Family, core, other',
+        '<div class="pb-list">' +
+        row('Sample Ada North', 'family', 'Sister', '2h ago') +
+        row('Sample Ben Okafor', 'core', 'Co-founder', '1d ago') +
+        row('Sample Felix Brandt', 'other', 'Met at a conference', '3w ago') +
+        '</div>'));
+
+    function card(o) {
+      return P.faceCard({
+        key: o.key, name: o.name, role: o.role || '', lastSeen: o.seen || '', tier: o.tier, selected: !!o.selected,
+        signal: o.signal || null,
+        item: o.item === null ? null : Object.assign({ key: o.key, name: o.name, channels: o.channels || [] }, o.item || {})
+      });
+    }
+    html += spec('Person card',
+      'Cards mode, grouped by circle in activity order. Each card carries the radar signal for that person (reply owed, quieter than usual, meeting soon) when /api/people/radar reports one. Counts that are zero are left out. Before the list data arrives a card says it is loading instead of guessing a circle.',
+      cell('Variants',
+        '<div class="pb-cards">' +
+        card({ key: 'a', name: 'Sample Ada North', role: 'Sister, weekend plans', seen: '2h ago', tier: 'family', channels: ['whatsapp', 'imessage'], item: { message_count: 412, claim_count: 18, meeting_count: 2 } }) +
+        card({ key: 'b', name: 'Sample Ben Okafor', role: 'Co-founder, product and hiring', seen: '1d ago', tier: 'core', channels: ['telegram', 'gmail', 'calendar'], item: { message_count: 960, claim_count: 140, meeting_count: 31 }, selected: true, signal: { upcoming: 'Meeting in 2d' } }) +
+        card({ key: 'c', name: 'Sample Chiara Russo', role: '', seen: '3w ago', tier: 'warm', channels: ['gmail'], item: { message_count: 6 }, signal: { owed: 'Reply owed (9d waiting on gmail)' } }) +
+        card({ key: 'd', name: 'Sample Dev Patel', role: 'Intro from a friend', seen: '', tier: 'ambient', channels: [], item: {} }) +
+        card({ key: 'e', name: 'Sample Emi Sato', tier: 'loading', item: null }) +
+        '</div>') +
+      cell('Nobody matches', P.galleryEmptyHtml()));
+
+    html += spec('Circle ribbon',
+      'Proportional bar at the top of Cards mode: how many of the shown people fall in each circle, Ambient included. The heading says how many are shown of the total and that the order is activity.',
+      cell('Five circles', '<p class="pb-note">' + K.esc(P.gallerySub(80, 886, 8)) + '</p>' + P.circlesHtml([
+        { t: 'family', list: new Array(4) }, { t: 'core', list: new Array(9) }, { t: 'warm', list: new Array(10) }, { t: 'active', list: new Array(50) }, { t: 'ambient', list: new Array(7) }
+      ])) +
+      cell('One circle', P.circlesHtml([{ t: 'core', list: new Array(3) }])));
+
+    function cad(vals) {
+      return vals.map(function (v, i) { return { week_label: 'Wk ' + (i + 1), total: v }; });
+    }
+    function banner(d, key, tier, name) {
+      return '<header class="profile-banner k10p-banner">' + P.coverHtml(d, key, tier) +
+        '<div class="profile-banner-top"><span class="profile-avatar-xl k10p-av-xl">' +
+        P.avatar({ name: name }, 72, tier === 'family' || tier === 'core' ? P.tierTone(tier) : 'slate') +
+        '</span><div class="profile-banner-main"><div class="profile-name-row"><h2 class="detail-title">' + K.esc(name) + '</h2></div>' +
+        '<div class="profile-role-line">Sample role line</div></div></div></header>';
+    }
+    html += spec('Dossier cover',
+      'Top band of the person dossier, 64px. Bars are weekly interactions (messages and meetings) from profile_visuals.cadence_series in neutral ink; the latest week is in the circle colour. The caption names the week range, the peak and the latest week. Without a cadence the band is a flat plate that says so.',
+      cell('With cadence', banner({ profile_visuals: { cadence_series: cad([2, 5, 0, 8, 12, 4, 0, 0, 3, 9, 15, 6, 2, 0, 7, 10]) } }, 'sample-ben', 'core', 'Sample Ben Okafor')) +
+      cell('No cadence recorded', banner({ profile_visuals: {} }, 'sample-dev', 'other', 'Sample Dev Patel')));
+
+    function ledgerWeeks(pairs) {
+      return pairs.map(function (p, i) { return { weekStart: 'w' + i, in: p[0], out: p[1], meetings: 0 }; });
+    }
+    var full = {
+      person: { message_count: 960, last_seen_label: '1d ago', history_span_label: '2023 - 2026' },
+      sqlite_claims_total: 140,
+      meetings: new Array(31),
+      related_docs: new Array(6),
+      collaborators: [
+        { name: 'Sample Chiara Russo', key: 'sample-chiara', shared_events: 12, note: 'Weekly product sync' },
+        { name: 'Sample Emi Sato', key: 'sample-emi', shared_events: 4, note: 'Hiring loop' },
+        { name: 'Sample Hugo Moreau', key: 'sample-hugo', shared_events: 1, note: 'One board meeting' }
+      ],
+      profile_visuals: {
+        cadence_series: cad([12, 18, 9, 22, 30, 14, 11, 25, 19, 28, 33, 20, 16, 24, 27, 21]),
+        reciprocity_ratio: { you_pct: 44, you_count: 422, them_count: 538 },
+        channel_breakdown: [
+          { channel: 'telegram', label: 'Telegram', count: 610, pct: 64 },
+          { channel: 'gmail', label: 'Gmail', count: 240, pct: 25 },
+          { channel: 'calendar', label: 'Calendar', count: 110, pct: 11 }
+        ],
+        ledger: { weeks: ledgerWeeks([[4, 3], [6, 5], [2, 1], [9, 8], [12, 10], [5, 6], [3, 4], [8, 9], [7, 7], [11, 9], [13, 12], [8, 6]]), streak_weeks: 12, median_gap_days: 0.8, next_touch: 'Keep the weekly sync; reply to the hiring thread.' }
+      }
+    };
+    var owed = JSON.parse(JSON.stringify(full));
+    owed.profile_visuals.ledger = { weeks: full.profile_visuals.ledger.weeks, median_gap_days: 3.2, drift_z: 2.4, last_inbound_unanswered: true, next_touch: 'Reply to the last message.' };
+    var calOnly = {
+      person: { message_count: 1, last_seen_label: '12d ago', history_span_label: '2026' },
+      sqlite_claims_total: 9, meetings: new Array(1), related_docs: [],
+      profile_visuals: {
+        reciprocity_ratio: { you_pct: 50, you_count: 0, them_count: 0 },
+        channel_breakdown: [{ channel: 'calendar', label: 'Calendar', count: 1, pct: 100 }],
+        ledger: { weeks: ledgerWeeks([[0, 0], [0, 0], [0, 0], [0, 0]]), median_gap_days: 0, streak_weeks: 0, next_touch: 'Light check-in when relevant.' }
+      }
+    };
+    var sparse = { person: {}, profile_visuals: {} };
+    html += spec('Relationship health',
+      'Sits under the dossier banner and replaces the old definition row. Messages counts direct messages only, with a weekly sparkline from the 52-week ledger. Your share appears only when at least one message has a known direction. Last contact carries reply owed and drift when the ledger reports them, then the streak or the usual gap (a gap of 0 means no data and is not shown). Then channel mix and the shared circle; each person opens their dossier, and the overflow link opens Network and loops.',
+      cell('Healthy, 12-week streak', P.healthHtml(full)) +
+      cell('Reply owed and drifting', P.healthHtml(owed)) +
+      cell('Calendar only: no direction data, no gap', P.healthHtml(calOnly)) +
+      cell('No data yet', P.healthHtml(sparse)));
+
+    out.innerHTML = html;
+  });
+})();
+</script>

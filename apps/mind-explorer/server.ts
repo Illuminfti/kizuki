@@ -585,6 +585,15 @@ export function createExplorerApp(opts: ExplorerServerOptions = {}) {
         return jsonResponse(await api.mutateActions(body));
       }
 
+      if (req.method === "GET" && pathname.startsWith("/api/avatar/")) {
+        const key = decodeURIComponent(pathname.slice("/api/avatar/".length));
+        const file = await api.getAvatarFile(key);
+        if (!file) return new Response("Not Found", { status: 404, headers: { "Cache-Control": "no-store" } });
+        return new Response(Bun.file(file), {
+          headers: { "Content-Type": "image/jpeg", "Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff" },
+        });
+      }
+
       if (req.method === "GET" && pathname === "/api/people") {
         const q = url.searchParams.get("q") || "";
         const filter = url.searchParams.get("filter") || "";

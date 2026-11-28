@@ -1,3 +1,4 @@
+import { AvatarStore, parseAvatarSources, type AvatarPerson, type AvatarSource } from "./avatar-store.ts";
 import { Database } from "bun:sqlite";
 import { appendFile, mkdir, readdir, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -71,6 +72,7 @@ export const DEFAULT_FALLBACK_LLM_TOKEN_PATH =
 
 export interface VaultApiConfig {
   vaultPath?: string;
+  avatarSources?: AvatarSource[];
   dbPath?: string;
   kizukiBin?: string;
   bridgeMeterPath?: string;
@@ -500,6 +502,7 @@ export interface PeopleRadarItem {
   key: string;
   name: string;
   initials: string;
+  avatar_url?: string;
   channels: string[];
   last_seen: string | null;
   last_seen_iso: string | null;
@@ -570,6 +573,7 @@ export interface PersonDirectoryItem {
   key: string;
   name: string;
   initials: string;
+  avatar_url?: string;
   channels: string[];
   message_count: number;
   claim_count: number;
@@ -648,6 +652,7 @@ export interface PersonDossierResponse {
     key: string;
     name: string;
     initials: string;
+    avatar_url?: string;
     channels: string[];
     message_count: number;
     claim_count: number;
@@ -2000,8 +2005,11 @@ export class KizukiVaultApi {
   private actionsVersion = 0;
   private fallbackTokenCache: CacheEntry<string | null> | null = null;
 
+  private readonly avatars: AvatarStore;
+
   constructor(config: VaultApiConfig = {}) {
     this.vaultPath = config.vaultPath || DEFAULT_VAULT_PATH;
+    this.avatars = new AvatarStore(config.avatarSources ?? parseAvatarSources(process.env.KIZUKI_AVATAR_SOURCES));
     this.dbPath = config.dbPath || join(this.vaultPath, ".kizuki", "kizuki.db");
     this.kizukiBin = config.kizukiBin || DEFAULT_KIZUKI_BIN;
     this.bridgeMeterPath = config.bridgeMeterPath || DEFAULT_BRIDGE_METER_PATH;
@@ -6818,11 +6826,35 @@ export class KizukiVaultApi {
     return isNoiseMessage({ channel: "gmail", from: fromAddr, sender: fromAddr, subject, body });
   }
 
+  private avatarPerson(p: PersonIndexRecord): AvatarPerson {
+    const wm = p.canonical_card?.world_model;
+    return {
+      key: p.key,
+      names: [p.name, ...p.raw_aliases, ...p.aliases, ...(wm?.aliases || [])],
+      telegramUserId: wm?.telegram_user_id || undefined,
+      telegramHandle: wm?.telegram_handle || undefined,
+      channels: p.channels,
+    };
+  }
+
+  private avatarUrlFor(p: PersonIndexRecord): string | undefined {
+    return this.avatars.has(this.avatarPerson(p)) ? `/api/avatar/${encodeURIComponent(p.key)}` : undefined;
+  }
+
+  /** Local photo file for a person key, or null. Paths never leave the configured avatar directories. */
+  async getAvatarFile(key: string): Promise<string | null> {
+    if (!this.avatars.enabled || !/^[a-z0-9][a-z0-9_-]{0,120}$/i.test(key)) return null;
+    const personal = await this.getPersonalIndex();
+    const rec = personal.peopleList.find((p) => p.key === key);
+    return rec ? this.avatars.filePath(this.avatarPerson(rec)) : null;
+  }
+
   private toPersonDirectoryItem(p: PersonIndexRecord): PersonDirectoryItem {
     return {
       key: p.key,
       name: p.name,
       initials: p.initials,
+      avatar_url: this.avatarUrlFor(p),
       channels: Array.from(p.channels).filter((ch) => ch !== "calendar" || p.meetings.length > 0).sort(),
       message_count: p.message_count,
       claim_count: p.claim_count,
@@ -7900,6 +7932,7 @@ export class KizukiVaultApi {
         key: p.key,
         name: p.name,
         initials: p.initials,
+        avatar_url: this.avatarUrlFor(p),
         channels: Array.from(p.channels).filter((ch) => ch !== "calendar" || p.meetings.length > 0).sort(),
         last_seen: p.last_seen_iso,
         last_seen_iso: p.last_seen_iso,
@@ -8311,6 +8344,7 @@ export class KizukiVaultApi {
         key: rec.key,
         name: rec.name,
         initials: rec.initials,
+        avatar_url: this.avatarUrlFor(rec),
         channels: bundle.resolvedChannels,
         message_count: rec.message_count,
         claim_count: bundle.effectiveClaimCount,

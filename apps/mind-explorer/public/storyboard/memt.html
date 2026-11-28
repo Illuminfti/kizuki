@@ -1,0 +1,148 @@
+<style>
+  .msb { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .msb-title { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.02em; color: var(--ink-primary); }
+  .msb-lede { margin: 2px 0 8px; max-width: 72ch; font-size: 13px; line-height: 1.55; color: var(--ink-secondary); }
+  .msb-spec { display: grid; grid-template-columns: minmax(200px, 250px) minmax(0, 1fr); gap: 20px; padding: 18px 0; border-top: 1px solid var(--ts-plate-border); min-width: 0; }
+  .msb-name { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--ink-primary); }
+  .msb-note { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink-muted); }
+  .msb-demo { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+  .msb-cap { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--ink-muted); margin-bottom: 6px; }
+  .msb-tag { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--ink-muted); }
+  .msb-tag::before { content: ""; width: 6px; height: 6px; border-radius: 2px; background: var(--ts-orange); }
+  .msb-tag.is-live::before { background: var(--ts-emerald); }
+  .msb-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 14px; align-items: start; }
+  .msb-cards > div { display: flex; flex-direction: column; min-width: 0; }
+  .msb-cards .memt-card { display: flex; flex-direction: column; }
+  @media (max-width: 760px) { .msb-spec { grid-template-columns: minmax(0, 1fr); gap: 10px; } }
+</style>
+<div class="msb">
+  <div>
+    <h2 class="msb-title">MemT library</h2>
+    <p class="msb-lede">Components added to the MemT view in Wave 10. They come from public/ext/97b-w10-memt.js, so this page shows the same code the view runs. The live hero reads /api/memt. Everything else uses inputs marked <span class="msb-tag">Sample</span>.</p>
+  </div>
+  <div id="msb-specs" class="w10m-sb"></div>
+</div>
+<script>
+(function () {
+  var out = document.getElementById('msb-specs');
+  if (!out) return;
+
+  function ready(cb) {
+    if (window.KizukiW10Memt && window.KizukiKit) return cb();
+    var s = document.createElement('script');
+    s.src = '/ext/97b-w10-memt.js';
+    s.onload = function () { if (window.KizukiW10Memt && window.KizukiKit) cb(); };
+    document.head.appendChild(s);
+  }
+
+  ready(function () {
+    var K = window.KizukiKit;
+    var M = window.KizukiW10Memt;
+    var SAMPLE = '<span class="msb-tag">Sample</span>';
+    var LIVE = '<span class="msb-tag is-live">Live data from /api/memt</span>';
+    var DAY = 86400000;
+    var now = Date.now();
+
+    function spec(name, note, demo) {
+      return '<section class="msb-spec"><div><h3 class="msb-name">' + K.esc(name) + '</h3><p class="msb-note">' + K.esc(note) + '</p></div><div class="msb-demo">' + demo + '</div></section>';
+    }
+    function cell(cap, html, tag) {
+      return '<div><div class="msb-cap">' + K.esc(cap) + (tag || '') + '</div>' + html + '</div>';
+    }
+    function iso(daysAgo) { return new Date(now - daysAgo * DAY).toISOString(); }
+
+    var sampleExps = [
+      { id: 's1', domain: 'Sample ops', scope_key: 'deploys', sensitivity: 'work', outcome: 'verified', confidence: 0.98, use_count: 4,
+        condition: 'Sample: restarting a service that owns a shared port',
+        recommendation: 'Sample: wait for the port to be released before binding again, and fail loudly if it is still held after a minute.',
+        verification: 'Sample: lsof shows no listener before the new process starts',
+        citations: ['vault/ops/runbook.md', 'vault/ops/restart.sh'], created_at: iso(1), updated_at: iso(1) },
+      { id: 's2', domain: 'Sample design', scope_key: 'general', sensitivity: 'public', outcome: 'verified', confidence: 0.91, use_count: 0,
+        condition: 'Sample: a dashboard number has no source', recommendation: 'Sample: render an explicit unavailable state instead of a stand-in number.',
+        verification: '', citations: [], created_at: iso(3), updated_at: iso(2) },
+      { id: 's3', domain: 'Sample video', scope_key: 'general', sensitivity: 'private', outcome: 'observed', confidence: null, use_count: null,
+        condition: 'Sample: recipe stored without a confidence score', recommendation: 'Sample: the ring is dashed, the score reads two dashes, and the card sorts last under Weakest first.',
+        verification: '', citations: [], created_at: iso(5), updated_at: iso(5) },
+      { id: 's4', domain: 'Sample ops', scope_key: 'general', sensitivity: 'work', outcome: 'verified', confidence: 0.95, use_count: 1,
+        condition: 'Sample: long recommendation text',
+        recommendation: 'Sample: recommendations longer than about 240 characters are clamped to four lines with a Show more control. ' +
+          'The control is a real button with aria-expanded and aria-controls, so keyboard and screen reader users can open the full text. ' +
+          'The expanded state is remembered while the view stays open, so filtering does not collapse what you were reading.',
+        verification: 'Sample: press Show more and check `aria-expanded` flips to `true`', citations: ['vault/notes/clamp.md'], created_at: iso(9), updated_at: iso(4) },
+      { id: 's5', domain: 'Sample ops', scope_key: 'general', sensitivity: 'work', confidence: 0.72, use_count: 0,
+        condition: 'Sample: record with no status field and a low score', recommendation: 'Sample: the status reads Unknown, never Verified, and a score under 80 turns the ring orange.',
+        verification: '', citations: [], created_at: iso(12), updated_at: iso(12) },
+    ];
+    var sampleStatus = function (total, verified) { return { mode: 'sample-mode', gpu_backend: 'sample', experiences: { total: total, verified: verified, observed: 1, failed: 0, uninternalized: total }, snapshots: { total: 0 } }; };
+    var sampleData = { status: sampleStatus(5, 3), experiences: sampleExps };
+    var truncData = { status: sampleStatus(62, 58), experiences: sampleExps };
+    var noEngineData = { status: { mode: 'unavailable', experiences: { total: 0, verified: 0 } }, experiences: sampleExps };
+
+    function cardShell(exp) {
+      var verif = exp.verification || '';
+      return '<article class="memt-card">' +
+        '<div class="memt-card-head"><div class="memt-badges"><span class="badge badge-teal">' + K.esc(exp.domain) + '</span></div></div>' +
+        '<div class="memt-condition">' + K.esc(exp.condition) + '</div>' +
+        '<p class="memt-recommendation">' + K.esc(exp.recommendation) + '</p>' +
+        (verif ? '<div class="memt-verification"><strong>Proof:</strong> ' + K.esc(verif) + '</div>' : '') +
+        '<div class="highlight-foot"><span></span><div class="memt-card-actions">' +
+        (verif ? '<button type="button" class="btn-ghost btn-sm">Copy Proof</button>' : '') +
+        '<button type="button" class="btn-secondary btn-sm">Reflex Test</button></div></div></article>';
+    }
+
+    var html = '';
+
+    html += spec('Library hero', 'Banner with an actionable stat strip (Weakest recipe jumps to that card), then the domains, evidence and growth cards. Figures come from the API response; a missing figure shows two dashes. If the engine reports itself unavailable, its zero counts are ignored.',
+      cell('Live', '<div class="w10m-hero" id="msb-live"><div class="w10m-hero-loading"><div class="skeleton-block"></div></div></div>', LIVE) +
+      cell('Small library with one domain selected', '<div class="w10m-hero">' + M.heroHtml(sampleData, 'sample ops') + '</div>', SAMPLE) +
+      cell('Engine holds more than the list returns', '<div class="w10m-hero">' + M.heroHtml(truncData, 'all') + '</div>', SAMPLE) +
+      cell('Engine status unavailable, list present', '<div class="w10m-hero">' + M.heroHtml(noEngineData, 'all') + '</div>', SAMPLE));
+
+    html += spec('Hero states', 'Loading shows a skeleton shaped like the banner. A list that did not arrive shows a retry, never "no recipes". An empty library is only shown when the engine confirms a total of zero. If the endpoint fails three times the summary says so.',
+      cell('Loading', '<div class="w10m-hero">' + M.heroHtml(null, 'all') + '</div>') +
+      cell('Endpoint failed', '<div class="w10m-hero">' + M.heroFailedHtml() + '</div>') +
+      cell('Engine timed out', '<div class="w10m-hero">' + M.heroHtml({ status: { mode: 'unavailable', experiences: { total: 0 } }, experiences: [] }, 'all') + '</div>', SAMPLE) +
+      cell('Confirmed empty', '<div class="w10m-hero">' + M.heroHtml({ status: { mode: 'sample-mode', experiences: { total: 0, verified: 0 } }, experiences: [] }, 'all') + '</div>', SAMPLE));
+
+    html += spec('Toolbar', 'Result count, evidence filters (has proof, has citations) and sort (newest, weakest first, most cited, domain). Pressed state uses aria-pressed. When the engine holds more recipes than the list returned, the count says so.',
+      cell('Default', '<div class="w10m-toolbar">' + M.toolbarHtml({ sort: 'newest', countHtml: M.countHtml(5, 5, 5, []) }) + '</div>', SAMPLE) +
+      cell('Filters on, weakest first', '<div class="w10m-toolbar">' + M.toolbarHtml({ sort: 'weakest', needProof: true, needCites: true, countHtml: M.countHtml(2, 5, 5, ['sample ops']) }) + '</div>', SAMPLE) +
+      cell('List shorter than the library', '<div class="w10m-toolbar">' + M.toolbarHtml({ sort: 'newest', countHtml: M.countHtml(50, 50, 62, []) }) + '</div>', SAMPLE));
+
+    html += spec('Recipe card', 'The core view renders the card; Wave 10 replaces its header with a domain, a status chip that only says Verified when the record does, and an inline confidence ring from the stored score. It adds a clamp for long text, a verification note in the body font, sources and a facts row. Use counts appear only once any recipe has one.',
+      '<div class="msb-cards" id="msb-cards">' + sampleExps.map(function (e, i) {
+        var caps = ['Proof and sources', 'No proof, no sources', 'Confidence missing, observed', 'Long text, clamped', 'No status field, low score'];
+        return cell(caps[i], cardShell(e), SAMPLE);
+      }).join('') + '</div>');
+
+    html += spec('Filter empty state', 'Shown inside the grid when the evidence filters hide every recipe in view, with a way out.',
+      cell('Empty', '<div class="w10m-empty">' + K.emptyState({ title: 'No recipes with this evidence', body: 'The evidence filters hide every recipe in this view.', icon: 'search', compact: true, action: { label: 'Clear evidence filters', action: 'w10m-clear-evidence' } }) + '</div>'));
+
+    out.innerHTML = html;
+
+    var cards = out.querySelectorAll('#msb-cards .memt-card');
+    cards.forEach(function (el, i) { M.decorateCard(el, sampleExps[i], { usesTracked: true }); });
+    out.querySelectorAll('.w10m-domain-bars[data-active]').forEach(function (bars) {
+      var act = bars.getAttribute('data-active');
+      bars.querySelectorAll('[data-k10-id]').forEach(function (b) { b.classList.toggle('is-active', b.getAttribute('data-k10-id') === act); });
+    });
+    var det = out.querySelector('#msb-cards .w10m-cites');
+    if (det) det.open = true;
+    out.addEventListener('click', function (e) {
+      var more = e.target.closest('.w10m-more');
+      if (!more) return;
+      var rec = document.getElementById(more.getAttribute('aria-controls'));
+      var open = more.getAttribute('aria-expanded') !== 'true';
+      if (rec) rec.classList.toggle('is-clamped', !open);
+      more.setAttribute('aria-expanded', String(open));
+      more.textContent = open ? 'Show less' : 'Show more';
+    });
+
+    var live = document.getElementById('msb-live');
+    fetch('/api/memt', { headers: { Accept: 'application/json' } })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)); })
+      .then(function (d) { if (live) live.innerHTML = M.heroHtml(d, 'all'); })
+      .catch(function () { if (live) live.innerHTML = K.unavailable('MemT endpoint did not respond'); });
+  });
+})();
+</script>

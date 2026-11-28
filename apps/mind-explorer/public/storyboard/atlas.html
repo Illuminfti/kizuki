@@ -1,0 +1,180 @@
+<style>
+  .w10sb { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .w10sb-title { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.02em; color: var(--ink-primary); }
+  .w10sb-lede { margin: 2px 0 8px; max-width: 70ch; font-size: 13px; line-height: 1.55; color: var(--ink-secondary); }
+  .w10sb-spec { display: grid; grid-template-columns: minmax(200px, 260px) minmax(0, 1fr); gap: 20px; padding: 18px 0; border-top: 1px solid var(--ts-plate-border); min-width: 0; }
+  .w10sb-name { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--ink-primary); }
+  .w10sb-note { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink-muted); }
+  .w10sb-demo { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+  .w10sb-cap { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 11.5px; color: var(--ink-muted); }
+  .w10sb-tag { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--ink-muted); }
+  .w10sb-tag::before { content: ""; width: 6px; height: 6px; border-radius: 2px; background: var(--ts-orange); }
+  .w10sb-tag.is-live::before { background: var(--ts-emerald); }
+  .w10sb-meta { margin: 0 0 10px; font-size: 13px; color: var(--ink-secondary); font-variant-numeric: tabular-nums; }
+  .w10sb #view-atlas { display: block; }
+  .w10sb .atlas-panels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .w10sb .highlights-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); gap: 12px; }
+  @media (max-width: 900px) { .w10sb .atlas-panels { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 760px) { .w10sb-spec { grid-template-columns: minmax(0, 1fr); gap: 10px; } }
+</style>
+<div class="w10sb">
+  <div>
+    <h2 class="w10sb-title">Atlas</h2>
+    <p class="w10sb-lede">World Atlas components from 97b-w10-atlas.js. In the app every value comes from GET /api/atlas. Demos tagged <span class="w10sb-tag">Sample</span> use made-up inputs (source "sample", so their badges read Sample, never Live) to show each state; demos tagged <span class="w10sb-tag is-live">Live</span> read /api/atlas.</p>
+  </div>
+  <div id="view-atlas"><div id="w10sb-specs"><p class="w10sb-note">Loading atlas components</p></div></div>
+</div>
+<script>
+(function () {
+  function start() {
+    var K = window.KizukiKit;
+    var A = window.KizukiAtlasW10;
+    var out = document.getElementById('w10sb-specs');
+    if (!out) return;
+    if (!K || !A || !A.overview) {
+      out.innerHTML = '<p class="w10sb-note">Atlas components did not load.</p>';
+      return;
+    }
+    var SAMPLE = '<span class="w10sb-tag">Sample</span>';
+    var LIVE = '<span class="w10sb-tag is-live">Live</span>';
+    var now = Date.now();
+    function ago(min) { return new Date(now - min * 60000).toISOString(); }
+    function clone(o) { return JSON.parse(JSON.stringify(o)); }
+    function spec(name, note, demo) {
+      return '<section class="w10sb-spec"><div><h3 class="w10sb-name">' + K.esc(name) + '</h3><p class="w10sb-note">' + K.esc(note) + '</p></div><div class="w10sb-demo">' + demo + '</div></section>';
+    }
+    function cell(cap, tag, html) { return '<div><div class="w10sb-cap">' + tag + K.esc(cap) + '</div>' + html + '</div>'; }
+    function top(d) { return '<p class="w10sb-meta">' + K.esc(A.meta(d)) + '</p>' + A.overview(d); }
+
+    function item(id, title, summary, min, kind) { return { id: id, title: title, summary: summary, kind: kind, updated_at: ago(min) }; }
+    var DONE = { status: 'complete', gaps: [], history: 'full' };
+    function panel(key, title, entries) {
+      return { panel: key, title: title, status: 'hydrated', source: 'sample', hydrated: true, coverage: clone(DONE), entries: entries };
+    }
+    var people = [
+      { id: 'p1', title: 'Sample Ada North', summary: 'Sample identity across 9 claims.', mentions: 9, updated_at: ago(40) },
+      { id: 'p2', title: 'Sample Ben Okafor', summary: 'Sample identity across 6 claims.', mentions: 6, updated_at: ago(300) },
+      { id: 'p3', label: 'Sample Chiara Russo', summary: 'Named through label, not title.', mentions: 3, updated_at: ago(2000) },
+      { id: 'p4', title: 'Sample Dev Patel', summary: 'Mentions not reported for this sample.', updated_at: ago(9000) }
+    ];
+    var complete = {
+      status: 'ok',
+      panels: [
+        panel('resume', 'Resume my work', [
+          item('a', 'Sample: finish the onboarding copy', 'Sample summary updated 12 minutes ago.', 12, 'situation'),
+          item('b', 'Sample: review the export flow', 'Sample summary updated 5 hours ago.', 300, 'situation'),
+          item('c', 'Sample: archive old drafts', 'Sample summary updated 3 days ago.', 4400, 'situation'),
+          item('d', 'Sample: reconcile receipts', 'Sample summary updated 12 days ago.', 17000, 'situation')
+        ]),
+        panel('changed', 'What changed', [
+          item('a', 'Sample: finish the onboarding copy', 'Also on resume, so it carries an "Also in" note.', 12, 'change'),
+          item('e', 'Sample: new deploy check', 'Sample change.', 90, 'change')
+        ]),
+        panel('people', 'People', people),
+        panel('commitments', 'Commitments', [
+          { id: 'f', title: 'Sample commitment with no timestamp', summary: 'No updated_at, so its tile says Undated.', kind: 'commitment' }
+        ]),
+        panel('questions', 'Questions & Blockers', [
+          item('b', 'Sample: review the export flow', 'Blocked on a sample decision.', 300, 'blocker')
+        ]),
+        panel('stale', 'Stale evidence', []),
+        panel('corrections', 'Corrections and impact', [
+          item('g', 'Sample: corrected a wrong owner', 'An extra API panel app.js does not render; this layer adds it.', 200, 'correction')
+        ])
+      ],
+      consolidated_highlights: [
+        { id: 'h1', label: 'Sample review queue', kind: 'situation', summary: 'Two objects share this name, so both carry a duplicate count.', claim_count: 9, completed_at: ago(600) },
+        { id: 'h2', label: 'Sample review queue', kind: 'situation', summary: 'The claim meter is scaled to the largest claim count shown.', claim_count: 4, completed_at: ago(900) },
+        { id: 'h3', label: 'Sample concept', kind: 'concept', summary: 'Kind chips stay neutral.', claim_count: 2, completed_at: ago(3000) }
+      ]
+    };
+    var partial = clone(complete);
+    partial.panels.forEach(function (p) {
+      p.coverage = { status: 'partial', gaps: ['coverage', 'pending_consolidation'], history: 'baseline_only' };
+      if (p.panel === 'stale' || p.panel === 'commitments') {
+        p.status = 'partial'; p.hydrated = false; p.source = 'sample-snapshot';
+        p.coverage.gaps.push('traversal_limit');
+      }
+      if (p.panel === 'changed') p.reason = 'baseline_required';
+    });
+    partial.panels.filter(function (p) { return p.panel === 'stale'; })[0].entries = [
+      { id: 's1', title: 'Sample stale claim from the snapshot', summary: 'Snapshot entries carry no timestamp.' }
+    ];
+    var degraded = clone(partial);
+    degraded.status = 'degraded';
+    degraded.error = 'error: daemon read unavailable; retry';
+    var missing = { status: 'ok', panels: [], consolidated_highlights: [] };
+
+    function rowHtml(e) {
+      var meta = e.updated_at ? '<span class="atlas-row-meta">sample</span>' : '';
+      return '<button type="button" class="atlas-row is-clickable"><div class="atlas-row-top"><span class="atlas-row-title">' + K.esc(e.title || e.label) + '</span>' + meta + '</div>' +
+        (e.summary ? '<p class="atlas-row-desc">' + K.esc(e.summary) + '</p>' : '') + '</button>';
+    }
+    function panelHtml(p, label) {
+      var items = p.entries || [];
+      var body = items.length ? items.map(rowHtml).join('') : '<p class="empty-state">Quiet: no active items in ' + K.esc(label.toLowerCase()) + '.</p>';
+      return '<section class="atlas-panel"><header class="atlas-panel-head"><h2 class="atlas-panel-title"><span>' + K.esc(p.title || label) + '</span></h2>' +
+        '<div class="atlas-panel-head-right"><span class="badge badge-neutral">sample</span><span class="section-count tabular">' + items.length + '</span></div></header>' +
+        '<div class="atlas-panel-body">' + body + '</div></section>';
+    }
+
+    var html = '';
+    html += spec('Overview',
+      'Header line plus one stat tile per panel the API returned, including panels app.js does not render. The chip says Complete coverage only when status is ok and every panel is hydrated with complete coverage; otherwise Partial or Degraded, with a note naming snapshot panels, gaps and missing baselines. Counts cut off by a slice or traversal limit show as N+. Tiles open their panel tab.',
+      cell('Complete coverage', SAMPLE, top(complete)) +
+      cell('Partial: snapshot panels, gaps, a traversal limit', SAMPLE, top(partial)) +
+      cell('Degraded daemon', SAMPLE, top(degraded)) +
+      cell('No panels returned', SAMPLE, top(missing)) +
+      '<div id="w10sb-live-top">' + cell('Live', LIVE, '<p class="w10sb-note">Loading /api/atlas</p>') + '</div>');
+
+    html += spec('Activity and people',
+      'Activity is a per-hour sparkline of item updates over 24 hours, the busiest hour, active hours and items in two or more panels, beside a freshness ramp (one cobalt hue, darker is newer) overall and per panel. On phones it folds into a closed disclosure. People in play ranks people by mentions and opens the graph node; its subtitle names the source.',
+      cell('Sample data', SAMPLE, A.pulse(partial)) +
+      cell('No timestamps or people', SAMPLE, A.pulse(missing)) +
+      '<div id="w10sb-live-pulse">' + cell('Live', LIVE, '<p class="w10sb-note">Loading /api/atlas</p>') + '</div>');
+
+    var defs = [['resume', 'Resume'], ['changed', 'Changed'], ['stale', 'Stale'], ['commitments', 'Commitments'], ['questions', 'Questions'], ['people', 'People']];
+    var gridHtml = defs.map(function (d) {
+      var p = partial.panels.filter(function (x) { return x.panel === d[0]; })[0];
+      return panelHtml(p, d[1]);
+    }).join('');
+    html += spec('Atlas panels',
+      'Applied to the panels app.js renders. Heads use one sentence-case name per panel and a neutral icon tile (orange only for Needs attention). The row age pill carries a cobalt ramp swatch, and a muted "Also in" note marks items shared with other panels. People rows get an initials avatar (a real photo only when avatar_url exists) and a mentions bar. Long lists span the full width; short ones pair up.',
+      cell('Panel set with fresh, aged, undated, snapshot and empty cases', SAMPLE, '<div class="atlas-panels" id="w10sb-panels" data-w10-tab="all">' + gridHtml + '</div>'));
+
+    var hlHtml = complete.consolidated_highlights.map(function (h) {
+      return '<button type="button" class="highlight-item"><div class="highlight-top"><span class="highlight-title">' + K.esc(h.label) + '</span><span class="badge badge-amber">' + K.esc(h.kind) + '</span></div>' +
+        '<p class="highlight-summary">' + K.esc(h.summary) + '</p><div class="highlight-foot"><span>' + K.esc(h.claim_count + ' claims') + '</span><span>sample</span></div></button>';
+    }).join('');
+    html += spec('World objects',
+      'Consolidated highlights get a neutral kind chip, a duplicate count when several objects share a label, and a claim meter scaled to the largest claim count.',
+      cell('Duplicates, situation and concept', SAMPLE, '<div class="highlights-grid" id="w10sb-hl">' + hlHtml + '</div>'));
+
+    html += spec('Unavailable state',
+      'Shown in place of the overview when /api/atlas fails, with the request error.',
+      cell('Request failed', SAMPLE, K.emptyState({ title: 'World state unavailable', body: 'The atlas request failed: HTTP 503.', icon: 'globe', compact: true })));
+
+    out.innerHTML = html;
+    A.enhancePanels(partial, document.getElementById('w10sb-panels'), 'all');
+    A.enhanceHighlights(complete, document.getElementById('w10sb-hl'));
+
+    fetch('/api/atlas', { headers: { Accept: 'application/json' } })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (d) {
+        document.getElementById('w10sb-live-top').innerHTML = cell('Live', LIVE, top(d));
+        document.getElementById('w10sb-live-pulse').innerHTML = cell('Live', LIVE, A.pulse(d));
+      })
+      .catch(function (err) {
+        var msg = K.unavailable('Live atlas unavailable: ' + (err && err.message ? err.message : 'request failed'));
+        document.getElementById('w10sb-live-top').innerHTML = cell('Live', LIVE, msg);
+        document.getElementById('w10sb-live-pulse').innerHTML = '';
+      });
+  }
+  if (window.KizukiAtlasW10 && window.KizukiAtlasW10.overview) { start(); return; }
+  var s = document.createElement('script');
+  s.src = '/ext/97b-w10-atlas.js';
+  s.onload = start;
+  s.onerror = start;
+  document.head.appendChild(s);
+})();
+</script>

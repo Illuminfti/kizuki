@@ -1,0 +1,161 @@
+<style>
+  .kb { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .kb-title { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.02em; color: var(--ink-primary); }
+  .kb-lede { margin: 2px 0 8px; max-width: 70ch; font-size: 13px; line-height: 1.55; color: var(--ink-secondary); }
+  .kb-spec {
+    display: grid;
+    grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+    gap: 20px;
+    padding: 18px 0;
+    border-top: 1px solid var(--ts-plate-border);
+    min-width: 0;
+  }
+  .kb-spec-name { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--ink-primary); }
+  .kb-sig { display: block; margin: 0 0 8px; font-family: var(--font-code); font-size: 11.5px; line-height: 1.5; color: var(--ink-secondary); word-break: break-word; }
+  .kb-note { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink-muted); }
+  .kb-demo { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+  .kb-row { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; min-width: 0; }
+  .kb-cap { font-size: 11.5px; color: var(--ink-muted); margin-bottom: 6px; }
+  .kb-cell { min-width: 0; }
+  .kb-sample { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--ink-muted); }
+  .kb-sample::before { content: ""; width: 6px; height: 6px; border-radius: 2px; background: var(--ts-orange); }
+  .kb-plate { padding: 12px 14px; border-radius: 12px; background: var(--ts-plate-bg); border: 1px solid var(--ts-plate-border); min-width: 0; }
+  @media (max-width: 760px) {
+    .kb-spec { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  }
+</style>
+<div class="kb" id="kb-root">
+  <div>
+    <h2 class="kb-title">Wave 10 kit</h2>
+    <p class="kb-lede">window.KizukiKit returns HTML strings. Every value comes from the caller; anything missing renders as two dashes or an explicit unavailable state. Inputs on this page are samples, marked with <span class="kb-sample">Sample</span>, because the storyboard is a catalog.</p>
+  </div>
+  <div id="kb-specs"></div>
+</div>
+<script>
+(function () {
+  var K = window.KizukiKit;
+  var out = document.getElementById('kb-specs');
+  if (!K || !out) return;
+  var S = '<span class="kb-sample">Sample</span>';
+  var people = ['Sample Ada North', 'Sample Ben Okafor', 'Sample Chiara Russo', 'Sample Dev Patel', 'Sample Emi Sato', 'Sample Felix Brandt', 'Sample Grace Lin', 'Sample Hugo Moreau'].map(function (n) { return { name: n, key: n.toLowerCase().replace(/\s+/g, '-') }; });
+
+  function spec(name, sig, note, demo) {
+    return '<section class="kb-spec" id="kb-' + K.esc(name) + '"><div><h3 class="kb-spec-name">' + K.esc(name) + '</h3><code class="kb-sig">' + K.esc(sig) + '</code><p class="kb-note">' + K.esc(note) + '</p></div><div class="kb-demo">' + demo + '</div></section>';
+  }
+  function cell(cap, html) { return '<div class="kb-cell"><div class="kb-cap">' + K.esc(cap) + '</div>' + html + '</div>'; }
+
+  var html = '';
+
+  html += spec('avatar', 'avatar(person, { size, ring, mode })',
+    'Uses person.avatar_url or person.photo when it is a same-origin, blob or data image; otherwise a monogram on a gradient from the name hash, so no face is ever invented for a real person. mode: 'portrait' is opt-in for abstract agents. ring: true or a tone.',
+    '<div class="kb-row">' + S + '</div>' +
+    '<div class="kb-row">' + [96, 64, 48, 40, 32, 28, 24, 20].map(function (s, i) { return K.avatar(people[i], { size: s }); }).join('') + '</div>' +
+    '<div class="kb-row">' + people.map(function (p) { return K.avatar(p, { size: 40 }); }).join('') + '</div>' +
+    '<div class="kb-row">' + people.slice(0, 6).map(function (p) { return K.avatar(p, { size: 32, mode: 'initials' }); }).join('') + '</div>' +
+    '<div class="kb-row">' + ['cobalt', 'emerald', 'orange', 'violet', 'rose'].map(function (t, i) { return K.avatar(people[i + 2], { size: 40, ring: t }); }).join('') +
+      cell('Broken photo falls back', K.avatar({ name: 'Sample Broken Photo', avatar_url: 'data:image/png;base64,AAAA' }, { size: 40 })) +
+      cell('External URL refused', K.avatar({ name: 'Sample External', avatar_url: 'https://example.com/a.png' }, { size: 40 })) +
+      cell('No name', K.avatar({}, { size: 40 })) + '</div>');
+
+  html += spec('avatarStack', 'avatarStack(people, { max, size, mode })',
+    'Overlapping avatars with a +N counter computed from the array length. Empty array returns an empty string.',
+    '<div class="kb-row">' + S + '</div><div class="kb-row">' +
+    cell('max 3, size 22', K.avatarStack(people, { max: 3, size: 22 })) +
+    cell('max 5, size 32', K.avatarStack(people, { max: 5, size: 32 })) +
+    cell('two people', K.avatarStack(people.slice(0, 2), { size: 28 })) +
+    cell('empty', K.avatarStack([]) || K.unavailable('No people')) + '</div>');
+
+  html += spec('banner', 'banner({ title, subtitle, eyebrow, eyebrowIcon, seed, tone, art, stats: [{ label, value }], avatar, right, compact })',
+    'Hero with generated art from the seed. art: contour, orbit, grid, aurora (default picks from seed). stats render passed values only; a missing value shows two dashes. right is trusted HTML (kit output).',
+    '<div class="kb-row">' + S + '</div>' +
+    K.banner({ eyebrow: 'People', eyebrowIcon: 'people', title: 'Sample relationship map', subtitle: 'Banner with stats, contour art and a cobalt tone.', seed: 'people', tone: 'cobalt', art: 'contour', stats: [{ label: 'Sample people', value: 248 }, { label: 'Sample active 7d', value: 31 }, { label: 'Sample threads', value: 1204 }, { label: 'Missing value', value: null }], right: K.chip('Sample', 'orange') }) +
+    K.banner({ title: 'Sample Ada North', subtitle: 'With avatar lead and orbit art.', seed: 'ada', tone: 'violet', art: 'orbit', avatar: people[0], stats: [{ label: 'Sample messages', value: 412 }, { label: 'Sample last seen', value: '2d ago' }] }) +
+    '<div class="k10-grid-2">' +
+      K.banner({ title: 'Grid art, compact', subtitle: 'Emerald tone.', seed: 'vault', tone: 'emerald', art: 'grid', compact: true }) +
+      K.banner({ title: 'Aurora art, compact', subtitle: 'Orange tone.', seed: 'taste', tone: 'orange', art: 'aurora', compact: true }) +
+    '</div>');
+
+  html += spec('statTile', 'statTile({ label, value, unit, sub, icon, tone, spark, action })',
+    'KPI plate like Today. Numbers are formatted (en-GB). Missing value shows two dashes and Unavailable. icon is a KizukiKit.icons name. action renders a button with data-k10-action. spark is trusted HTML (sparkline output).',
+    '<div class="kb-row">' + S + '</div><div class="k10-grid-4">' +
+    K.statTile({ label: 'Sample events', value: 18342, sub: 'Sample sub line', icon: 'doc', tone: 'cobalt', action: 'sample' }) +
+    K.statTile({ label: 'Sample inbox', value: 27, sub: 'Orange tone', icon: 'inbox', tone: 'orange' }) +
+    K.statTile({ label: 'Sample sleep', value: 7.4, unit: 'h', icon: 'clock', tone: 'violet', spark: K.sparkline([6.1, 7.2, 6.8, 7.9, 7.4], { tone: 'violet', height: 24 }) }) +
+    K.statTile({ label: 'No data', value: null, icon: 'pulse', tone: 'emerald' }) + '</div>');
+
+  html += spec('sectionHead', 'sectionHead(title, right, { sub, level })',
+    'Section title row. right is trusted HTML; pass kit output or KizukiKit.esc(text). level 3 renders h3.',
+    '<div class="kb-plate">' + K.sectionHead('Recent people', K.chip('Sample', 'orange') + K.chip('Last 7d'), { sub: 'Sample subtitle' }) + '</div>' +
+    '<div class="kb-plate">' + K.sectionHead('Title only') + '</div>');
+
+  html += spec('card', 'card({ title, sub, right, body, cover, tone, flush })',
+    'Plate container. body, right and cover are trusted HTML. tone adds a hairline accent at the top edge.',
+    '<div class="kb-row">' + S + '</div><div class="k10-grid-3">' +
+    K.card({ title: 'Sample card', sub: 'With cover art', cover: K.coverArt('sample-card', 'cobalt', { height: 80 }), body: '<p class="kb-note">Body is any HTML.</p>' }) +
+    K.card({ title: 'Toned card', sub: 'Violet hairline', tone: 'violet', right: K.chip('3', 'violet'), body: K.meter(64, { label: 'Sample progress', tone: 'violet' }) }) +
+    K.card({ title: 'Flush list', flush: true, body: K.personRow(people[0], { sub: 'Sample sub' }) + K.personRow(people[1], { sub: 'Sample sub' }) }) + '</div>');
+
+  html += spec('ring', 'ring(pct, color, { size, stroke, label, aria })',
+    'Progress ring. color is a tone name or a CSS colour/var. pct null renders a dashed unavailable ring with two dashes.',
+    '<div class="kb-row">' + S + '</div><div class="kb-row">' +
+    K.ring(72, 'cobalt') + K.ring(45, 'orange', { size: 48 }) + K.ring(100, 'emerald', { size: 56, label: '12' }) + K.ring(8, 'violet', { size: 30 }) +
+    cell('null', K.ring(null, 'cobalt', { size: 48 })) + '</div>');
+
+  html += spec('bars', 'bars(items: [{ label, value, tone, detail, display, icon, person, action, id }], { max, tone, empty })',
+    'Horizontal bars relative to the largest value (or max). An item with no value keeps its row and shows two dashes. Empty list renders unavailable(empty).',
+    '<div class="kb-row">' + S + '</div><div class="k10-grid-2"><div class="kb-plate">' +
+    K.bars([{ label: 'Sample WhatsApp', value: 182, tone: 'emerald', icon: 'chat' }, { label: 'Sample Telegram', value: 96, tone: 'orange', icon: 'chat' }, { label: 'Sample Gmail', value: 41, icon: 'inbox' }, { label: 'Missing source', value: null }]) +
+    '</div><div class="kb-plate">' +
+    K.bars(people.slice(0, 4).map(function (p, i) { return { label: p.name, person: p, value: [64, 40, 22, 9][i], detail: 'msgs', tone: 'cobalt', action: 'sample' }; })) +
+    '</div><div class="kb-plate">' + K.bars([], { empty: 'No sources connected' }) + '</div></div>');
+
+  html += spec('sparkline', 'sparkline(values, { width, height, tone, area, min, aria, empty })',
+    'Trend line with last-point dot. Non-numeric entries are gaps. Fewer than two numbers renders unavailable(empty).',
+    '<div class="kb-row">' + S + '</div><div class="kb-row">' +
+    cell('cobalt', K.sparkline([3, 5, 4, 8, 6, 9, 12, 10], { tone: 'cobalt' })) +
+    cell('emerald, no area', K.sparkline([12, 9, 11, 7, 8, 5], { tone: 'emerald', area: false, width: 160 })) +
+    cell('with gaps', K.sparkline([4, null, 6, 7, null, 9], { tone: 'orange' })) +
+    cell('one value', K.sparkline([4])) + '</div>');
+
+  html += spec('meter', 'meter(pct, { label, tone })',
+    'Vernier progress bar like the Today canon sync. pct null shows two dashes and an empty track.',
+    '<div class="kb-row">' + S + '</div><div class="k10-grid-3">' +
+    '<div class="kb-plate">' + K.meter(68, { label: 'Sample sync', tone: 'cobalt' }) + '</div>' +
+    '<div class="kb-plate">' + K.meter(22, { label: 'Sample budget', tone: 'orange' }) + '</div>' +
+    '<div class="kb-plate">' + K.meter(null, { label: 'Unknown' }) + '</div></div>');
+
+  html += spec('chip', 'chip(text, tone, { dot, icon })',
+    'Small label. Untoned is neutral; toned gets a dot unless dot is false. Blank text returns an empty string.',
+    '<div class="kb-row">' + K.chip('Neutral') + ['cobalt', 'orange', 'emerald', 'violet', 'rose', 'slate'].map(function (t) { return K.chip(t, t); }).join('') + K.chip('With icon', 'cobalt', { dot: false, icon: 'clock' }) + '</div>');
+
+  html += spec('personRow', 'personRow(person, { sub, right, rightSub, chip, tone, spark, ring, size, action, selected })',
+    'List row with avatar. action makes it a button with data-k10-action and data-k10-person (person.key or id). spark is trusted HTML.',
+    '<div class="kb-row">' + S + '</div><div class="kb-plate">' +
+    K.personRow(people[2], { sub: 'Sample, WhatsApp, 2h ago', right: '128', rightSub: 'msgs', chip: 'Close', tone: 'emerald', spark: K.sparkline([2, 4, 3, 6, 8, 7], { tone: 'emerald', width: 64, height: 20 }), action: 'sample' }) +
+    K.personRow(people[3], { sub: 'Selected state', right: '42', rightSub: 'msgs', selected: true, action: 'sample', ring: 'cobalt' }) +
+    K.personRow(people[4], { sub: 'Static row, no action' }) +
+    K.personRow({ name: 'Sample With Photo Missing', photo: 'data:image/jpeg;base64,AAAA' }, { sub: 'Undecodable photo falls back to portrait' }) + '</div>');
+
+  html += spec('coverArt', 'coverArt(seed, tone, { height, art, label })',
+    'Small generated cover for cards and tiles. Same seed, same art.',
+    '<div class="kb-row">' + S + '</div><div class="k10-grid-4">' +
+    ['contour', 'orbit', 'grid', 'aurora'].map(function (a, i) { return K.coverArt('cover-' + a, ['cobalt', 'violet', 'emerald', 'orange'][i], { art: a, label: a }); }).join('') + '</div>');
+
+  html += spec('emptyState', 'emptyState({ title, body, icon, action: { label, action, icon }, compact })',
+    'Explicit empty state. The action renders a button with data-k10-action for the view to handle.',
+    '<div class="k10-grid-2">' +
+    K.emptyState({ title: 'No people yet', body: 'Connect a source to see relationships here.', icon: 'people', action: { label: 'Open sources', action: 'sample', icon: 'plus' } }) +
+    K.emptyState({ title: 'Compact empty', body: 'For use inside cards.', icon: 'search', compact: true }) + '</div>');
+
+  html += spec('unavailable', 'unavailable(label)',
+    'Inline marker for data that does not exist. Renders the label verbatim.',
+    '<div class="kb-row">' + K.unavailable() + K.unavailable('Whoop unavailable') + K.unavailable('No location data') + '</div>');
+
+  html += spec('icon, esc, hash, fmt, initials', 'icon(name, size) / esc(str) / hash(str) / fmt(value) / initials(name)',
+    'Helpers. icons lists the names; tones lists tone names. fmt returns two dashes for null, empty or non-finite.',
+    '<div class="kb-row">' + K.icons.map(function (n) { return '<span title="' + K.esc(n) + '" style="color:var(--ink-secondary)">' + K.icon(n, 16) + '</span>'; }).join('') + '</div>' +
+    '<div class="kb-row">' + cell('fmt(1234567)', K.esc(K.fmt(1234567))) + cell('fmt(null)', K.esc(K.fmt(null))) + cell('fmt(3.14159)', K.esc(K.fmt(3.14159))) + cell('hash("kizuki")', K.esc(K.hash('kizuki'))) + cell('initials("Sample Ada North")', K.esc(K.initials('Sample Ada North'))) + '</div>');
+
+  out.innerHTML = html;
+})();
+</script>

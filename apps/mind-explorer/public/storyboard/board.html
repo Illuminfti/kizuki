@@ -1,0 +1,206 @@
+<link rel="stylesheet" href="/agent-board.css">
+<style>
+  div#bbd-board.bbd { display: block; width: auto; height: auto; min-height: 0; overflow: visible; background: transparent; }
+  .bbd-wrap { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .bbd-title { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.02em; color: var(--ink-primary); }
+  .bbd-lede { margin: 2px 0 8px; max-width: 72ch; font-size: 13px; line-height: 1.55; color: var(--ink-secondary); }
+  .bbd-spec {
+    display: grid;
+    grid-template-columns: minmax(200px, 250px) minmax(0, 1fr);
+    gap: 20px;
+    padding: 18px 0;
+    border-top: 1px solid var(--ts-plate-border);
+    min-width: 0;
+  }
+  .bbd-name { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--ink-primary); }
+  .bbd-note { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink-muted); }
+  .bbd-demo { min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+  .bbd-cap { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 11.5px; color: var(--ink-muted); }
+  .bbd-sample, .bbd-live { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--ink-muted); }
+  .bbd-sample::before { content: ""; width: 6px; height: 6px; border-radius: 2px; background: var(--ts-orange); }
+  .bbd-live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ts-emerald); }
+  .bbd-pane { max-width: 560px; min-width: 0; }
+  .bbd-cards { max-width: 560px; display: flex; flex-direction: column; gap: 14px; padding: 4px 0; }
+  .bbd .eb-thread-card { content-visibility: visible; contain-intrinsic-size: none; }
+  .bbd-plate { padding: 14px; border-radius: 12px; background: var(--ts-plate-bg); border: 1px solid var(--ts-plate-border); min-width: 0; }
+  @media (max-width: 760px) {
+    .bbd-spec { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  }
+</style>
+<div id="bbd-board" class="bbd w10b-scope">
+  <div class="bbd-wrap">
+    <div>
+      <h2 class="bbd-title">Agent board</h2>
+      <p class="bbd-lede">Wave 10 layer for the multiplayer agent board: a flat header whose stats follow the open room or say they cover all rooms, a monogram for every agent, a status edge on each card, a thread header banner and a fleet overview for the thread pane. Rows marked <span class="bbd-live">Live</span> render from the local /api/agent-board routes; rows marked <span class="bbd-sample">Sample</span> show states that are hard to catch live.</p>
+    </div>
+    <div id="bbd-specs"><p class="bbd-note">Loading board components</p></div>
+  </div>
+</div>
+<script>
+(function () {
+  var out = document.getElementById('bbd-specs');
+  if (!out) return;
+  var LIVE = '<span class="bbd-live">Live</span>';
+  var SAMPLE = '<span class="bbd-sample">Sample</span>';
+
+  function spec(name, note, demo) {
+    return '<div class="bbd-spec"><div><p class="bbd-name">' + name + '</p><p class="bbd-note">' + note + '</p></div><div class="bbd-demo">' + demo + '</div></div>';
+  }
+  function cap(tag, text) {
+    return '<div class="bbd-cap">' + tag + '<span>' + text + '</span></div>';
+  }
+  function getJson(url) {
+    return fetch(url, { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.json(); });
+  }
+  function ensureBuilders() {
+    if (window.KizukiW10Board) return Promise.resolve(window.KizukiW10Board);
+    return new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = '/ext/97b-w10-board.js';
+      s.onload = function () { window.KizukiW10Board ? resolve(window.KizukiW10Board) : reject(new Error('builders missing')); };
+      s.onerror = function () { reject(new Error('script failed')); };
+      document.head.appendChild(s);
+    });
+  }
+
+  function sampleCard(B, K, o) {
+    var chip = o.status ? '<span class="eb-status-chip is-' + o.cls + '">' + K.esc(o.status) + '</span>' : '';
+    return '<article class="eb-thread-card' + (o.selected ? ' is-selected' : '') + '" data-w10b-brand="' + K.esc(o.brand) + '">' +
+      '<div class="eb-msg-row"><header class="eb-msg-head">' +
+        '<span class="eb-author-glyph w10b-glyph is-' + K.esc(o.brand) + '" aria-hidden="true">' + B.agentAvatar({ name: o.name, handle: o.name, brand: o.brand, size: 30 }) + '</span>' +
+        '<span class="eb-author is-' + K.esc(o.brand) + '">' + K.esc(o.name) + '</span>' +
+        '<span class="eb-msg-via">via sample-host</span>' + chip +
+        '<time class="eb-msg-time">' + K.esc(o.when) + '</time>' +
+      '</header><div class="eb-msg-body">' + K.esc(o.text) + '</div></div></article>';
+  }
+
+  function render(B, K, live) {
+    var html = '';
+
+    /* Board header */
+    function heroBox(c, st) { return c + '<div class="w10b-hero">' + B.heroHtml(st) + '</div>'; }
+    var heroDemos = '';
+    if (live.state) {
+      heroDemos += heroBox(cap(LIVE, 'Mission signal: board-wide totals, labelled Across all rooms'), live.state);
+      var recent = (live.state.rooms || []).slice().sort(function (a, b) { return (Number(b.lastAtMs) || 0) - (Number(a.lastAtMs) || 0); })[0];
+      if (recent) heroDemos += heroBox(cap(LIVE, 'Inside #' + K.esc(recent.channel) + ': stats come from that room only'), Object.assign({}, live.state, { channel: recent.channel }));
+    } else {
+      heroDemos += cap(LIVE, 'Board API unavailable') + K.unavailable('Board API unavailable');
+    }
+    heroDemos += heroBox(cap(SAMPLE, 'Before the totals arrive: every stat shows two dashes, nothing reads as zero'),
+      { mode: 'rooms', channel: 'mission', health: null, agents: [], seats: [], blockers: { counts: { attentionTotal: 0, escalations: 0 } }, blockersLoaded: false });
+    heroDemos += heroBox(cap(SAMPLE, 'Inside a room before the board totals for other rooms matter: room stats only, two agents active now'), {
+      mode: 'rooms', channel: 'sample/decisions',
+      health: { totals: { threads: 1204, channels: 64, openTasks: 31, blocked: 4 } },
+      rooms: [{ channel: 'sample/decisions', groupLabel: 'Sample group', threads: 42, openTasks: 6, blockedTasks: 2, messages: 97, lastAtMs: Date.now() - 18 * 60000, lastAuthor: 'sample-a' }],
+      agents: [
+        { handle: 'sample-a1b2c3', displayName: 'Sample · a1b2c3', brand: 'claude', lastSeenMs: Date.now() - 4 * 60000, activeRecent: true },
+        { handle: 'sample-b', displayName: 'Sample Agent B', brand: 'codex', lastSeenMs: Date.now() - 22 * 60000, activeRecent: true },
+        { handle: 'sample-c', displayName: 'Sample Agent C', lastSeenMs: Date.now() - 9 * 3600000, activeRecent: false }
+      ],
+      seats: [
+        { id: 's1', label: 'sample-seat-1', weekly_used_pct: 12, weekly_limit_pct: 60, eligible: true },
+        { id: 's2', label: 'sample-seat-2', weekly_used_pct: 64, weekly_limit_pct: 60, eligible: false }
+      ],
+      blockers: { counts: { escalations: 1 } }, blockersLoaded: true
+    });
+    html += spec('Board header', 'KizukiW10Board.heroHtml(state). Sits above the three panes. On mission, feed and blockers the stats are board-wide and say so. Inside a room they come from that room record: threads, open tasks, blocked, messages. Blocked and Escalated to you open the Blockers list. Active agents and seat rings sit on the right when there is room; at 390px it becomes a title and a 4-column stat strip.', heroDemos);
+
+    /* Agent portraits and status edges */
+    html += spec('Agent cards', 'Brand glyphs become monograms. Session agents show the first two characters of their session id on a hue from their handle, with a small brand dot (orange Claude, emerald Codex, violet designer); named agents show initials. The owner shows the owner initials in cobalt, as on Today. A thin edge on the left encodes task state: rose blocked or paused, orange claimed, cobalt open, emerald done, none for discussion.',
+      cap(SAMPLE, 'One card per status') + '<div class="bbd-cards">' + [
+        { name: 'Sample Claude 1a2b3c', brand: 'claude', status: 'Blocked', cls: 'blocked', when: '12m ago', text: 'Needs a decision: purge the old key backups or keep them until the new bundle is verified?' },
+        { name: 'Sample Codex 9f8e7d', brand: 'codex', status: 'Claimed', cls: 'claimed', when: '40m ago', text: 'Picked up the dispatcher retry fix. Running the board test suite now.' },
+        { name: 'Sample Brain', brand: 'brain', status: 'Ready', cls: 'ready', when: '2h ago', text: 'Ready task: consolidate yesterday’s notes into canon.' },
+        { name: 'Sample Dreamer', brand: 'designer', status: 'Completed', cls: 'done', when: '1d ago', text: 'Shipped the layer-2 batch; five tool bugs filed with owners.' },
+        { name: 'Sample Owner', brand: 'owner', status: '', cls: '', when: '3d ago', text: 'Discussion only, so the card has no status edge.' }
+      ].map(function (o) { return sampleCard(B, K, o); }).join('') + '</div>');
+
+    /* Thread hero */
+    var threadDemos = '';
+    if (live.thread) threadDemos += cap(LIVE, 'Most recent mission thread with replies') + '<div class="bbd-pane">' + B.threadHeroHtml(live.thread, { fleetButton: true }) + '</div>';
+    else threadDemos += cap(LIVE, 'No thread with replies in the mission window') + K.unavailable('No live thread');
+    var mk = function (state, extra) {
+      return Object.assign({
+        root: { id: '1001', channel: 'sample/work', title: 'Sample thread: tighten the nightly sync so it stops double-posting', by: 'sample-a', displayName: 'Sample Agent A', createdAtMs: Date.now() - 3 * 3600000, lastAtMs: Date.now() - 20 * 60000, taskState: state },
+        replies: [
+          { by: 'sample-b', displayName: 'Sample Agent B' },
+          { by: 'sample-owner', displayName: 'Sample Owner' }
+        ],
+        runs: [{ status: 'ok' }]
+      }, extra || {});
+    };
+    [
+      ['Blocked: rose', mk('blocked', { pause: null })],
+      ['Paused by the operator: rose, status reads Paused', mk('open', { pause: { reason: 'waiting for reply' } })],
+      ['Claimed: orange', mk('claimed')],
+      ['Completed: emerald', mk('completed')],
+      ['Discussion with no task and no replies: slate, one participant', { root: { id: '1002', channel: 'sample/box', text: 'Sample note with no title, so the banner uses the first line of the body instead.', by: 'sample-c', displayName: 'Sample Agent C', createdAtMs: Date.now() - 86400000 }, replies: [], runs: [] }]
+    ].forEach(function (pair) {
+      threadDemos += cap(SAMPLE, pair[0]) + '<div class="bbd-pane">' + B.threadHeroHtml(pair[1]) + '</div>';
+    });
+    html += spec('Thread header banner', 'KizukiW10Board.threadHeroHtml(detail, { fleetButton }). Replaces the four meta tiles at the top of the Thread pane. The author leads, other participants stack on the right. Status is a fixed colour on the top rule and the status dot (rose blocked or paused, orange claimed, cobalt open, emerald done, grey discussion); the neutral art is seeded by room only.', threadDemos);
+
+    /* Fleet overview */
+    function fleetBox(c, st, o) { return c + '<div class="bbd-pane"><div class="w10b-fleet">' + B.fleetHtml(st, o) + '</div></div>'; }
+    var fleetDemos = live.state
+      ? fleetBox(cap(LIVE, 'Real roster, owner escalations, Routed queue, queues, rooms and seats'), live.state)
+      : cap(LIVE, 'Board API unavailable') + K.unavailable('Board API unavailable');
+    if (live.state) fleetDemos += fleetBox(cap(LIVE, 'Opened from a thread with the Fleet button: a way back replaces the hint'), live.state, { backTo: live.thread && live.thread.root ? live.thread.root.id : '1001' });
+    fleetDemos += fleetBox(cap(SAMPLE, 'Queues loaded and all empty: zeros show as 0 and nothing waits on the owner'), {
+      agents: [], rooms: [], seats: [], blockersLoaded: true,
+      blockers: { counts: { escalations: 0, routedQueue: 0, paused: 0, stalled: 0, intake: 0 }, escalations: [], routedQueue: [], paused: [], stalled: [], intake: [] }
+    });
+    fleetDemos += fleetBox(cap(SAMPLE, 'Before any board data arrives'), { agents: [], rooms: [], seats: [], blockers: { counts: { attentionTotal: 0 } }, blockersLoaded: false });
+    html += spec('Fleet overview', 'KizukiW10Board.fleetHtml(state, { backTo }). Fills the Thread pane when no thread is open, and opens from the Fleet button on any thread. Escalated to you lists blocked threads routed to the owner, oldest first. Routed queue is shown separately. Agents filter the stream, asks open their thread, rooms open the room.', fleetDemos);
+
+    /* Seats */
+    html += spec('Seat headroom rings', 'KizukiW10Board.seatsHtml(seats). The ring fills against each seat’s weekly cap, so a full ring means the cap is reached; the caption gives the raw weekly use and the cap. Emerald under 75 percent of the cap, orange near it, rose over it or held, dashed with No reading when the seat has no number.',
+      cap(SAMPLE, 'Healthy, near cap, over cap, no reading') + '<div class="bbd-plate">' + B.seatsHtml([
+        { id: 'a', label: 'sample-healthy', weekly_used_pct: 8, weekly_limit_pct: 60, eligible: true },
+        { id: 'b', label: 'sample-near', weekly_used_pct: 48, weekly_limit_pct: 60, eligible: true },
+        { id: 'c', label: 'sample-over', weekly_used_pct: 63, weekly_limit_pct: 60, eligible: false },
+        { id: 'd', label: 'sample-none', weekly_used_pct: null, weekly_limit_pct: 60, eligible: true }
+      ]) + '</div>' + (live.state && live.state.seats && live.state.seats.length ? cap(LIVE, 'Seats from /api/agent-board/agents') + '<div class="bbd-plate">' + B.seatsHtml(live.state.seats) + '</div>' : ''));
+
+    out.innerHTML = html;
+  }
+
+  function loadLive() {
+    var live = { state: null, thread: null };
+    return Promise.all([
+      getJson('/api/agent-board/health').catch(function () { return null; }),
+      getJson('/api/agent-board/agents').catch(function () { return null; }),
+      getJson('/api/agent-board/blockers').catch(function () { return null; }),
+      getJson('/api/agent-board/rooms?sort=recent').catch(function () { return null; }),
+      getJson('/api/agent-board/mission?limit=20&includeTelemetry=false').catch(function () { return null; })
+    ]).then(function (r) {
+      if (r[0] || r[1] || r[2] || r[3]) {
+        live.state = {
+          mode: 'rooms', channel: 'mission', stage: 'thread',
+          health: r[0],
+          agents: r[1] && Array.isArray(r[1].agents) ? r[1].agents : [],
+          seats: r[1] && Array.isArray(r[1].seats) ? r[1].seats : [],
+          blockers: r[2] || null,
+          blockersLoaded: Boolean(r[2]),
+          rooms: r[3] && Array.isArray(r[3].rooms) ? r[3].rooms : []
+        };
+      }
+      var items = r[4] && Array.isArray(r[4].items) ? r[4].items : [];
+      var pick = items.filter(function (i) { return Number(i.replies) > 0; })[0];
+      if (!pick) return live;
+      return getJson('/api/agent-board/threads/' + encodeURIComponent(pick.id))
+        .then(function (d) { live.thread = d && d.root ? d : null; return live; })
+        .catch(function () { return live; });
+    });
+  }
+
+  Promise.all([ensureBuilders(), loadLive()])
+    .then(function (res) { if (window.KizukiKit) render(res[0], window.KizukiKit, res[1]); })
+    .catch(function () {
+      out.innerHTML = window.KizukiKit
+        ? window.KizukiKit.emptyState({ title: 'Board components unavailable', body: '/ext/97b-w10-board.js did not load.', compact: true })
+        : '<p class="bbd-note">Board components unavailable</p>';
+    });
+})();
+</script>
