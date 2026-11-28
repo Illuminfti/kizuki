@@ -129,11 +129,13 @@
     if (!src || typeof src !== 'string') return null;
     const s = src.trim();
     if (/^data:image\/(png|jpe?g|webp|gif|avif);base64,[a-z0-9+/=\s]+$/i.test(s)) return s;
-    if (/^blob:/i.test(s)) return s;
-    if (/^\/(?!\/)/.test(s)) return s;
+    // Everything else is judged after URL normalisation, so "/\\host/x" or "\\\\host" cannot slip through as a path.
+    if (/[\\\u0000-\u001f]/.test(s)) return null;
     try {
-      const u = new URL(s, root.location ? root.location.href : 'http://localhost/');
-      if (root.location && u.origin === root.location.origin) return u.href;
+      const here = root.location ? root.location.href : 'http://localhost/';
+      const u = new URL(s, here);
+      if (u.protocol === 'blob:') return new URL(u.pathname).origin === new URL(here).origin ? u.href : null;
+      if (u.origin === new URL(here).origin) return u.href;
     } catch (_) { /* invalid */ }
     return null;
   }

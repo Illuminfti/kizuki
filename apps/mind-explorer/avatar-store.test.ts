@@ -86,3 +86,26 @@ describe("AvatarStore one-word and annotated names", () => {
     expect(solo.has({ key: "m", names: ["Mladen Kostov"] })).toBe(true);
   });
 });
+
+describe("AvatarStore cross-source safety", () => {
+  test("a full name with different photos in two sources is skipped unless channels settle it", () => {
+    const t = source("tg3", [{ user_id: 301, display_name: "Pat Smith", has_photo: true, file: "301.jpg" }], ["301.jpg"]);
+    const w = source("wa3", [{ jid: "p@s.whatsapp.net", push_name: "Pat Smith", has_photo: true, file: "7.jpg" }], ["7.jpg"]);
+    const s = new AvatarStore(parseAvatarSources(`telegram:${t},whatsapp:${w}`), 0);
+    expect(s.has({ key: "p", names: ["Pat Smith"] })).toBe(false);
+    expect(s.has({ key: "p", names: ["Pat Smith"], channels: ["telegram", "whatsapp"] })).toBe(false);
+    expect(s.filePath({ key: "p", names: ["Pat Smith"], channels: ["whatsapp"] })).toBe(join(root, "wa3", "7.jpg"));
+  });
+
+  test("a symlinked photo pointing outside its directory is refused", () => {
+    const { symlinkSync } = require("node:fs");
+    const outside = join(root, "outside.jpg");
+    writeFileSync(outside, "secret");
+    const dir = join(root, "tg4");
+    mkdirSync(dir, { recursive: true });
+    symlinkSync(outside, join(dir, "401.jpg"));
+    writeFileSync(join(dir, "index.json"), JSON.stringify([{ user_id: 401, display_name: "Link Person", has_photo: true, file: "401.jpg" }]));
+    const s = new AvatarStore(parseAvatarSources(`telegram:${join(dir, "index.json")}`), 0);
+    expect(s.filePath({ key: "l", names: [], telegramUserId: "401" })).toBeNull();
+  });
+});

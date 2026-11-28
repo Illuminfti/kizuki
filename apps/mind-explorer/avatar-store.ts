@@ -1,7 +1,7 @@
 // Local profile photos from messaging ingests, matched to people without guessing.
 // Sources come from KIZUKI_AVATAR_SOURCES="telegram:/abs/index.json,whatsapp:/abs/index.json".
 // Each index.json is written by the owner's own ingest service; photos sit next to it.
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, resolve, sep } from "node:path";
 
 export type AvatarSourceKind = "telegram" | "whatsapp";
@@ -166,14 +166,17 @@ export class AvatarStore {
         if (handle && src.byHandle.has(handle)) return { src, entry: src.byHandle.get(handle)! };
       }
     }
+    // A name counts only if every source that knows it agrees on one photo; when sources disagree,
+    // the person's own channels may settle it, otherwise the name is skipped.
     const names = [...person.names].map(normalizeAvatarName).filter(Boolean);
     for (const map of ["byName", "byPrefix"] as const) {
-      for (const src of ordered) {
-        for (const n of names) {
-          if (!isSpecificName(n)) continue;
-          const hit = src[map].get(n);
-          if (hit) return { src, entry: hit };
-        }
+      for (const n of names) {
+        if (!isSpecificName(n)) continue;
+        const known = ordered.map((src) => ({ src, entry: src[map].get(n) })).filter((h) => h.entry !== undefined);
+        if (!known.length || known.some((h) => h.entry === null)) continue;
+        if (known.length === 1) return { src: known[0].src, entry: known[0].entry! };
+        const onChannel = known.filter((h) => channels.has(h.src.kind));
+        if (onChannel.length === 1) return { src: onChannel[0].src, entry: onChannel[0].entry! };
       }
     }
     // A one-word name attaches only when it is the person's own name, they use that channel,
@@ -199,9 +202,13 @@ export class AvatarStore {
     if (!this.enabled) return null;
     const hit = this.find(person);
     if (!hit) return null;
-    const base = resolve(hit.src.dir);
-    const abs = resolve(base, hit.entry.file);
-    if (!abs.startsWith(base + sep) || !existsSync(abs)) return null;
-    return abs;
+    // Confine by real paths so a symlinked photo cannot point outside its source directory.
+    try {
+      const base = realpathSync(resolve(hit.src.dir));
+      const abs = realpathSync(resolve(base, hit.entry.file));
+      return abs.startsWith(base + sep) && statSync(abs).isFile() ? abs : null;
+    } catch {
+      return null;
+    }
   }
 }
