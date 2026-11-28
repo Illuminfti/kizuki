@@ -144,15 +144,15 @@
     /* Fleet overview */
     function fleetBox(c, st, o) { return c + '<div class="bbd-pane"><div class="w10b-fleet">' + B.fleetHtml(st, o) + '</div></div>'; }
     var fleetDemos = live.state
-      ? fleetBox(cap(LIVE, 'Real roster, owner escalations, Albedo queue, queues, rooms and seats'), live.state)
+      ? fleetBox(cap(LIVE, 'Real roster, owner escalations, Routed queue, queues, rooms and seats'), live.state)
       : cap(LIVE, 'Board API unavailable') + K.unavailable('Board API unavailable');
     if (live.state) fleetDemos += fleetBox(cap(LIVE, 'Opened from a thread with the Fleet button: a way back replaces the hint'), live.state, { backTo: live.thread && live.thread.root ? live.thread.root.id : '1001' });
     fleetDemos += fleetBox(cap(SAMPLE, 'Queues loaded and all empty: zeros show as 0 and nothing waits on the owner'), {
       agents: [], rooms: [], seats: [], blockersLoaded: true,
-      blockers: { counts: { escalations: 0, albedoQueue: 0, paused: 0, stalled: 0, intake: 0 }, escalations: [], albedoQueue: [], paused: [], stalled: [], intake: [] }
+      blockers: { counts: { escalations: 0, routedQueue: 0, paused: 0, stalled: 0, intake: 0 }, escalations: [], routedQueue: [], paused: [], stalled: [], intake: [] }
     });
     fleetDemos += fleetBox(cap(SAMPLE, 'Before any board data arrives'), { agents: [], rooms: [], seats: [], blockers: { counts: { attentionTotal: 0 } }, blockersLoaded: false });
-    html += spec('Fleet overview', 'KizukiW10Board.fleetHtml(state, { backTo }). Fills the Thread pane when no thread is open, and opens from the Fleet button on any thread. Escalated to you lists blocked threads routed to the owner, oldest first. Albedo queue is shown separately. Agents filter the stream, asks open their thread, rooms open the room.', fleetDemos);
+    html += spec('Fleet overview', 'KizukiW10Board.fleetHtml(state, { backTo }). Fills the Thread pane when no thread is open, and opens from the Fleet button on any thread. Escalated to you lists blocked threads routed to the owner, oldest first. Routed queue is shown separately. Agents filter the stream, asks open their thread, rooms open the room.', fleetDemos);
 
     /* Seats */
     html += spec('Seat headroom rings', 'KizukiW10Board.seatsHtml(seats). The ring fills against each seat’s weekly cap, so a full ring means the cap is reached; the caption gives the raw weekly use and the cap. Emerald under 75 percent of the cap, orange near it, rose over it or held, dashed with No reading when the seat has no number.',

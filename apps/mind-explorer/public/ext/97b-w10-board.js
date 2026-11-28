@@ -3,7 +3,7 @@
    - board header: room-scoped or board-wide stats (labelled as such), active agents, seat headroom
    - agent monograms in place of brand glyphs (stream, thread, replies, dock)
    - thread header banner with author, participants, replies, status and runs, plus a way back to the fleet
-   - fleet overview in the thread pane: owner escalations, active agents, Albedo queue, queues, rooms, seats
+   - fleet overview in the thread pane: owner escalations, active agents, Routed queue, queues, rooms, seats
    Board numbers come from the controller's state (getState). Blockers are fetched here once per 30s so the
    layer knows when the queues really loaded: the controller seeds them with zeros before its own request lands. */
 (function () {
@@ -484,14 +484,14 @@
         : `<div class="w10b-clear">${K.icon('check', 15)}<span class="w10b-clear-text"><span class="w10b-clear-title">Nothing is escalated to you</span><span class="w10b-clear-body">No blocked thread is routed to the owner right now.</span></span></div>`;
     const escCount = ready ? countOf('escalations') : null;
 
-    const albedo = ready ? byOldest(bl.albedoQueue) : [];
-    const albedoCount = ready ? countOf('albedoQueue') : null;
+    const routed = ready ? byOldest(bl.routedQueue) : [];
+    const routedCount = ready ? countOf('routedQueue') : null;
 
     const queueHtml = ready
       ? K.bars(
           [
             { label: 'Escalated to you', value: countOf('escalations'), tone: 'orange', icon: 'inbox' },
-            { label: 'Albedo queue', value: countOf('albedoQueue'), tone: 'violet', icon: 'brain' },
+            { label: 'Routed queue', value: countOf('routedQueue'), tone: 'violet', icon: 'brain' },
             { label: 'Paused', value: countOf('paused'), tone: 'rose', icon: 'clock' },
             { label: 'Stalled', value: countOf('stalled'), tone: 'rose', icon: 'pulse' },
             { label: 'Intake', value: countOf('intake'), tone: 'slate', icon: 'inbox' },
@@ -526,7 +526,7 @@
     return `<div class="w10b-fleet-top"><div class="w10b-fleet-titles"><h2 class="w10b-fleet-title">Fleet overview</h2><span class="w10b-fleet-sub">Who is working, what is waiting, where the activity is.</span></div>${back}</div>
       <section class="w10b-fleet-sec is-asks">${K.sectionHead('Escalated to you', escCount != null ? K.chip(K.fmt(escCount), escCount > 0 ? 'orange' : 'emerald') : '', { level: 3, sub: 'Blocked threads routed to the owner, oldest first.' })}${escHtml}</section>
       <section class="w10b-fleet-sec">${K.sectionHead('Who is active', live.length ? K.chip(`${liveCount} live`, 'emerald') : '', { level: 3, sub: 'Most recent first. Select one to filter the stream.' })}${agentsHtml}</section>
-      ${albedo.length ? `<section class="w10b-fleet-sec">${K.sectionHead('Albedo queue', albedoCount != null ? K.chip(K.fmt(albedoCount), 'violet') : '', { level: 3, sub: 'Blocked threads routed to Albedo, oldest first.' })}${askRows(K, albedo.slice(0, 4))}</section>` : ''}
+      ${routed.length ? `<section class="w10b-fleet-sec">${K.sectionHead('Routed queue', routedCount != null ? K.chip(K.fmt(routedCount), 'violet') : '', { level: 3, sub: 'Blocked threads routed to a triage agent, oldest first.' })}${askRows(K, routed.slice(0, 4))}</section>` : ''}
       <div class="w10b-fleet-split">
         <section class="w10b-fleet-sec">${K.sectionHead('Queues', '', { level: 3, sub: 'Items per queue, board-wide' })}${queueHtml}</section>
         <section class="w10b-fleet-sec">${K.sectionHead('Recent rooms', '', { level: 3, sub: 'Threads per room. Select to open.' })}${roomsHtml}</section>
@@ -545,7 +545,7 @@
       .then((data) => {
         own.data = {
           counts: (data && data.counts) || {},
-          albedoQueue: Array.isArray(data && data.albedoQueue) ? data.albedoQueue : [],
+          routedQueue: Array.isArray(data && data.routedQueue) ? data.routedQueue : [],
           escalations: Array.isArray(data && data.escalations) ? data.escalations : [],
           paused: Array.isArray(data && data.paused) ? data.paused : [],
           stalled: Array.isArray(data && data.stalled) ? data.stalled : [],
