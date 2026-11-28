@@ -7,6 +7,18 @@
   'use strict';
 
   const EM_DASH_RE = /\s*\u2014\s*/g;
+
+  // The radar's stylesheet travels with the code that renders it, so deep links that inline this chunk still get styled.
+  (function attachStyles() {
+    if (typeof document === 'undefined' || document.querySelector('link[data-kizuki-people-css]')) return;
+    const m = window.__KIZUKI_CHUNKS__ && window.__KIZUKI_CHUNKS__.lazyExt && window.__KIZUKI_CHUNKS__.lazyExt.people;
+    if (!m || !m.css) return;
+    const ln = document.createElement('link');
+    ln.rel = 'stylesheet';
+    ln.href = m.css;
+    ln.setAttribute('data-kizuki-people-css', '1');
+    (document.head || document.documentElement).appendChild(ln);
+  })();
   const state = {
     radar: null,
     radarLoadedAt: 0,

@@ -58,7 +58,7 @@ export const VIEW_CHUNK_FILES: Record<ViewChunkName, readonly string[]> = {
   replay: ["geo-atlas.js", "replay-map.js", "replay-scrubber.js"],
   codex: ["codex-constellation.js", "codex-view.js"],
   taste: ["taste-deck-fx.js", "taste-view.js"],
-  people: ["person-visuals.js"],
+  people: ["person-visuals.js", "ext/people-radar.js"],
   graph: ["graph.js"],
 };
 
@@ -167,8 +167,12 @@ export function ifNoneMatchMatches(ifNoneMatch: string | null, etag: string): bo
 }
 
 const LAZY_EXT_ASSETS = new Set<string>([
+  "94-ui-studio-drawer.css",
+  "94-ui-studio-drawer.js",
   "97-auto-ontology.css",
   "97-auto-ontology.js",
+  "people-radar.css",
+  "people-radar.js",
 ]);
 
 export function listExtAssets(publicDir: string): { css: string[]; js: string[] } {
@@ -552,6 +556,9 @@ export class AssetStore {
       tokensCssEntry,
       ontoCssEntry,
       ontoJsEntry,
+      studioCssEntry,
+      studioJsEntry,
+      peopleCssEntry,
       ...chunkEntries
     ] = await Promise.all([
       this.getCssBundle(true),
@@ -563,6 +570,9 @@ export class AssetStore {
       this.getPublicFileEntry("tokens.css"),
       this.getPublicFileEntry("ext/97-auto-ontology.css"),
       this.getPublicFileEntry("ext/97-auto-ontology.js"),
+      this.getPublicFileEntry("ext/94-ui-studio-drawer.css"),
+      this.getPublicFileEntry("ext/94-ui-studio-drawer.js"),
+      this.getPublicFileEntry("ext/people-radar.css"),
       ...VIEW_CHUNK_NAMES.map((name) => this.getJsBundle(name)),
     ]);
     const lazyExtMap: Record<string, { css?: string; js?: string }> = {};
@@ -570,6 +580,17 @@ export class AssetStore {
       lazyExtMap.ontology = {
         ...(ontoCssEntry ? { css: `/ext/97-auto-ontology.css?v=${ontoCssEntry.sha256Short}` } : {}),
         ...(ontoJsEntry ? { js: `/ext/97-auto-ontology.js?v=${ontoJsEntry.sha256Short}` } : {}),
+      };
+    }
+    if (studioCssEntry || studioJsEntry) {
+      lazyExtMap.studio = {
+        ...(studioCssEntry ? { css: `/ext/94-ui-studio-drawer.css?v=${studioCssEntry.sha256Short}` } : {}),
+        ...(studioJsEntry ? { js: `/ext/94-ui-studio-drawer.js?v=${studioJsEntry.sha256Short}` } : {}),
+      };
+    }
+    if (peopleCssEntry) {
+      lazyExtMap.people = {
+        css: `/ext/people-radar.css?v=${peopleCssEntry.sha256Short}`,
       };
     }
     const bundleExts = ext.css.length + ext.js.length > 4;
@@ -628,6 +649,9 @@ export class AssetStore {
       tokensCssEntry?.sha256Short || "-",
       ontoCssEntry?.sha256Short || "-",
       ontoJsEntry?.sha256Short || "-",
+      studioCssEntry?.sha256Short || "-",
+      studioJsEntry?.sha256Short || "-",
+      peopleCssEntry?.sha256Short || "-",
       extCssStamped.join(","),
       extJsStamped.join(","),
       chunkSigParts.join(","),
@@ -638,6 +662,13 @@ export class AssetStore {
     let htmlEntry = this.htmlCache.get(cacheKey);
     if (!htmlEntry || htmlEntry.signature !== htmlSig) {
       let html = new TextDecoder("utf-8").decode(rawHtmlEntry.raw);
+
+      // Owner display name comes from the environment, never from shipped code
+      const ownerName = (process.env.KIZUKI_OWNER_NAME || "").trim();
+      if (ownerName) {
+        const attr = ownerName.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        html = html.replace(/<body(\s|>)/, `<body data-owner-name="${attr}"$1`);
+      }
 
       // Stamp self-hosted font URLs (preload + @font-face)
       for (const [plainPath, stampedPath] of fontStamps.entries()) {
@@ -746,8 +777,12 @@ export class AssetStore {
         }
       }
 
-      const htmlBytes = new TextEncoder().encode(html);
-      htmlEntry = buildEntry(cacheKey, htmlSig, htmlBytes, "text/html; charset=utf-8", 6, 6);
+      const compactHtml = html
+        .replace(/<!--[\s\S]*?-->/g, "")
+        .replace(/^[ \t]+/gm, "")
+        .replace(/\n{2,}/g, "\n");
+      const htmlBytes = new TextEncoder().encode(compactHtml);
+      htmlEntry = buildEntry(cacheKey, htmlSig, htmlBytes, "text/html; charset=utf-8", 9, 6);
       this.htmlCache.set(cacheKey, htmlEntry);
     }
 

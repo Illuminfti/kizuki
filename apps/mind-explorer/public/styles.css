@@ -496,8 +496,6 @@ html[data-theme="light"] .icon-sun {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -779,8 +777,6 @@ html[data-detail="on"] .detail-indicator {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
   color: var(--ink-muted);
   padding: 6px 8px 4px;
 }
@@ -908,8 +904,6 @@ html[data-detail="on"] .detail-indicator {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
   color: var(--ink-muted);
 }
 
@@ -1018,8 +1012,6 @@ html[data-detail="on"] .detail-indicator {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
   color: var(--ink-muted);
   display: inline-flex;
   align-items: center;
@@ -1136,8 +1128,6 @@ html[data-theme="light"] .rail-whoop.is-stale .rail-whoop-metrics {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   line-height: 1;
 }
 
@@ -1596,8 +1586,6 @@ html[data-theme="light"] .rail-whoop-stale-tag {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
   color: var(--ink-muted);
 }
 
@@ -2233,8 +2221,6 @@ html[data-detail="on"] .brief-hero::before {
   flex-wrap: wrap;
   font-family: var(--font-mono);
   font-size: var(--t-xs);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -2291,8 +2277,6 @@ html[data-detail="on"] .brief-hero::before {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   color: var(--ink-muted);
 }
 
@@ -2746,8 +2730,6 @@ button.handle-chip:hover {
 .handle-chip-kind {
   color: var(--ink-muted);
   font-size: var(--t-xs);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   flex-shrink: 0;
 }
 
@@ -2771,8 +2753,6 @@ button.handle-chip:hover {
 .dossier-stat-label {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   color: var(--ink-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -2938,8 +2918,6 @@ button.handle-chip:hover {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   color: var(--ink-muted);
 }
 
@@ -4563,8 +4541,6 @@ html[data-theme="light"] .leverage-card.is-theirs .wm-card-kicker:not(:has(.leve
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -4768,8 +4744,6 @@ html[data-theme="light"] .leverage-card.is-theirs .wm-card-kicker:not(:has(.leve
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -4877,8 +4851,6 @@ html[data-theme="light"] .leverage-card.is-theirs .wm-card-kicker:not(:has(.leve
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   color: var(--ink-muted);
   padding: 8px 11px;
   border-bottom: 1px solid var(--border-hairline);
@@ -4945,8 +4917,6 @@ html[data-theme="light"] .leverage-card.is-theirs .wm-card-kicker:not(:has(.leve
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
 }
 
 .md-callout-body > p:last-child,
@@ -5051,8 +5021,6 @@ html[data-theme="light"] .leverage-card.is-theirs .wm-card-kicker:not(:has(.leve
 .dir-metric-label {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -5457,7 +5425,6 @@ html[data-theme="light"] .leverage-card.is-theirs .wm-card-kicker:not(:has(.leve
 .graph-tooltip-kind {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -5593,8 +5560,6 @@ html[data-theme="light"] .leverage-card.is-theirs .wm-card-kicker:not(:has(.leve
 .metric-cell-label {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
   color: var(--ink-muted);
 }
 
@@ -5620,7 +5585,7 @@ html[data-theme="light"] .leverage-card.is-theirs .wm-card-kicker:not(:has(.leve
 }
 
 .memt-kv { display: flex; flex-direction: column; gap: 2px; }
-.memt-kv-label { font-family: var(--font-mono); font-size: var(--t-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent-cyan); }
+.memt-kv-label { font-family: var(--font-mono); font-size: var(--t-xs); color: var(--accent-cyan); }
 .memt-kv-val { font-size: var(--t-base); line-height: 1.45; color: var(--ink-primary); }
 
 .neighbor-chips { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -6065,8 +6030,6 @@ button.atlas-row:hover, .atlas-row.is-clickable:hover { background-color: var(--
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
   color: var(--ink-secondary);
 }
 
@@ -6290,8 +6253,6 @@ button.atlas-row:hover, .atlas-row.is-clickable:hover { background-color: var(--
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -6522,8 +6483,6 @@ button.atlas-row:hover, .atlas-row.is-clickable:hover { background-color: var(--
 .citations-label {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   color: var(--ink-muted);
   line-height: 22px;
   flex-shrink: 0;
@@ -6621,7 +6580,6 @@ button.atlas-row:hover, .atlas-row.is-clickable:hover { background-color: var(--
 }
 
 .chip-prefix {
-  text-transform: uppercase;
   font-size: var(--t-xs);
   opacity: 0.78;
   flex-shrink: 0;
@@ -6665,7 +6623,6 @@ button.atlas-row:hover, .atlas-row.is-clickable:hover { background-color: var(--
 .dock-mini-field label {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -7521,8 +7478,6 @@ body.view-today .toast-stack {
     font-family: var(--font-mono);
     font-size: var(--t-xs);
     font-weight: 500;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
     color: var(--ink-muted);
   }
 
@@ -7532,8 +7487,6 @@ body.view-today .toast-stack {
     font-family: var(--font-mono);
     font-size: var(--t-xs);
     font-weight: 500;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
     color: var(--ink-muted);
   }
 
@@ -7605,8 +7558,6 @@ body.view-today .toast-stack {
     color: var(--ink-secondary);
     font-family: var(--font-mono);
     font-size: var(--t-xs);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
   }
 
   .mobile-composer-toggle {
@@ -7904,8 +7855,6 @@ body.view-today .toast-stack {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   color: var(--ink-muted);
 }
 
@@ -8287,8 +8236,6 @@ html[data-theme="light"] .heatmap-legend-gps-dot {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
   color: var(--ink-muted);
 }
 
@@ -8816,8 +8763,6 @@ html[data-theme="light"] .heatmap-legend-gps-dot {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   color: var(--ink-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -8918,8 +8863,6 @@ html[data-theme="light"] .heatmap-legend-gps-dot {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   color: var(--ink-muted);
 }
 
@@ -9260,8 +9203,6 @@ html[data-theme="light"] .heatmap-legend-gps-dot {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   padding: 1px 6px;
   border-radius: var(--radius-xs);
   border: 1px solid var(--border-hairline);
@@ -9466,8 +9407,6 @@ button.replay-place-card:hover,
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   color: var(--ink-muted);
 }
 
@@ -9807,8 +9746,6 @@ button.replay-work-row:hover {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   color: var(--ink-muted);
 }
 
@@ -10244,8 +10181,6 @@ html[data-theme="light"] .profile-avatar-xl.is-core {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   line-height: 1;
   white-space: nowrap;
   flex-shrink: 0;
@@ -10377,8 +10312,6 @@ html[data-theme="light"] .profile-avatar-xl.is-core {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
   color: var(--ink-faint);
   flex-shrink: 0;
   transition: color var(--dur-fast) var(--ease-out);
@@ -10519,8 +10452,6 @@ html[data-theme="light"] .profile-avatar-xl.is-core {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   line-height: 1.25;
   color: var(--ink-muted);
 }
@@ -10983,8 +10914,6 @@ html[data-theme="light"] .profile-avatar-xl.is-core {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -11166,8 +11095,6 @@ html[data-theme="light"] .profile-avatar-xl.is-core {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -11546,8 +11473,6 @@ html[data-theme="light"] .profile-avatar-xl.is-core {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -11709,8 +11634,6 @@ html[data-theme="light"] .profile-avatar-xl.is-core {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   white-space: nowrap;
 }
 
@@ -11746,8 +11669,6 @@ html[data-theme="light"] .profile-avatar-xl.is-core {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   white-space: nowrap;
   cursor: pointer;
 }
@@ -11850,8 +11771,6 @@ html[data-theme="light"] .profile-avatar-xl.is-core {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--ink-muted);
   white-space: nowrap;
 }
@@ -11917,8 +11836,6 @@ html[data-theme="light"] .profile-avatar-xl.is-core {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 600;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
   color: var(--accent-amber);
 }
 
@@ -11974,8 +11891,6 @@ html[data-theme="light"] .profile-avatar-xl.is-core {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -12365,8 +12280,6 @@ html[data-theme="light"] .profile-avatar-xl.is-core {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   color: var(--ink-primary);
   min-width: 0;
   overflow: hidden;
@@ -12524,8 +12437,6 @@ html[data-theme="light"] .profile-avatar-xl.is-core {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   color: var(--ink-primary);
 }
 
@@ -12923,8 +12834,6 @@ html[data-theme="light"] .profile-avatar-xl.is-core {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   color: var(--ink-secondary);
 }
 

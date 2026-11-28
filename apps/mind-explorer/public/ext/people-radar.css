@@ -78,8 +78,6 @@
   font-family: var(--font-mono, monospace);
   font-size: var(--t-xs, 11px);
   font-weight: 600;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
   color: var(--ink-primary, #ededed);
   white-space: nowrap;
 }
@@ -193,8 +191,6 @@
   font-family: var(--font-mono, monospace);
   font-size: var(--t-xs, 11px);
   font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   color: var(--ink-secondary, #a1a1aa);
 }
 
@@ -514,8 +510,6 @@ html[data-detail="off"] .pr-lane-dot {
 }
 
 .pv-ledger-kpi-k {
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   color: var(--ink-muted, #888888);
   font-size: var(--t-xs, 11px);
   white-space: nowrap;
@@ -667,8 +661,6 @@ html[data-detail="off"] .pr-lane-dot {
   font-family: var(--font-mono, monospace);
   font-size: var(--t-xs, 11px);
   font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   color: var(--ink-secondary, #a1a1aa);
 }
 

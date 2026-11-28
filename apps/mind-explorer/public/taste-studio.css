@@ -157,8 +157,6 @@
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -259,8 +257,6 @@
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 500;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -327,8 +323,6 @@
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 500;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   color: var(--ink-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -344,8 +338,6 @@
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 500;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
   color: var(--ink-muted);
   flex-shrink: 0;
 }
@@ -1009,8 +1001,6 @@ html[data-detail="on"] .taste-question-card {
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 500;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
   white-space: nowrap;
 }
 
@@ -1044,8 +1034,6 @@ html[data-detail="on"] .taste-question-card {
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 500;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
   white-space: nowrap;
 }
 
@@ -1417,8 +1405,6 @@ html[data-detail="on"] .taste-question-card {
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 500;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -1877,8 +1863,6 @@ html[data-detail="on"] .taste-question-card {
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 600;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -2138,8 +2122,6 @@ html[data-theme="light"] .taste-fp-key-item.is-tier-gap .taste-fp-key-dot { back
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   color: var(--ink-muted);
   white-space: nowrap;
 }
@@ -2319,8 +2301,6 @@ html[data-theme="light"] .taste-rule-col.is-avoid {
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--ink-primary);
 }
 
@@ -2393,8 +2373,6 @@ html[data-theme="light"] .taste-rule-col.is-avoid {
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 500;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
   white-space: nowrap;
 }
 
@@ -2648,8 +2626,6 @@ html[data-theme="light"] .taste-crosslink-chip.is-conflicts {
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -2865,8 +2841,6 @@ html[data-theme="light"] .taste-crosslink-chip.is-conflicts {
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 500;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .taste-vault-card.is-exemplar .taste-vault-badge {
@@ -2885,8 +2859,6 @@ html[data-theme="light"] .taste-crosslink-chip.is-conflicts {
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 500;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -3647,8 +3619,6 @@ html[data-detail="off"] .taste-crosslink-chip {
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
   color: var(--ink-muted);
   line-height: 1.2;
 }
@@ -3737,8 +3707,6 @@ html[data-detail="off"] .taste-crosslink-chip {
   font-size: var(--t-xs, 11px);
   font-weight: 400;
   line-height: 1.2;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
   color: var(--ink-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -3886,8 +3854,6 @@ html[data-detail="off"] .taste-crosslink-chip {
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -3950,8 +3916,6 @@ html[data-detail="off"] .taste-crosslink-chip {
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   color: var(--ink-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -4191,8 +4155,6 @@ html[data-detail="off"] .taste-crosslink-chip {
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -4295,8 +4257,6 @@ button.gardener-domain-pill:hover {
   font-size: var(--t-xs, 11px);
   font-weight: 400;
   line-height: 1.2;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
   color: var(--ink-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -4479,8 +4439,6 @@ button.gardener-domain-pill:hover {
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 500;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -4525,8 +4483,6 @@ button.gardener-domain-pill:hover {
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 500;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   font-variant-numeric: tabular-nums;
   color: var(--ink-secondary);
 }
@@ -4676,8 +4632,6 @@ button.gardener-domain-pill:hover {
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 500;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   font-variant-numeric: tabular-nums;
   color: var(--ink-muted);
 }
@@ -4694,8 +4648,6 @@ button.gardener-domain-pill:hover {
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 500;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .gardener-stage-card.is-complete .gardener-stage-badge {
@@ -4783,8 +4735,6 @@ button.gardener-domain-pill:hover {
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 500;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -4834,8 +4784,6 @@ button.gardener-domain-pill:hover {
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--ink-primary);
 }
 
@@ -4911,8 +4859,6 @@ button.gardener-domain-pill:hover {
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 500;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
 }
 
 .gardener-framework-desc {
@@ -5062,8 +5008,6 @@ button.gardener-domain-pill:hover {
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   white-space: nowrap;
 }
 
@@ -5194,8 +5138,6 @@ button.gardener-domain-pill:hover {
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 500;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .gardener-practice-text {
@@ -5269,8 +5211,6 @@ button.gardener-domain-pill:hover {
   font-family: var(--font-mono);
   font-size: var(--t-xs, 11px);
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--ink-primary);
 }
 

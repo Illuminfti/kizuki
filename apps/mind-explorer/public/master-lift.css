@@ -809,8 +809,6 @@ html[data-detail="on"] .vernier-needle-blade {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -1235,8 +1233,6 @@ html[data-detail="on"] .codex-constellation-wrap {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -2483,8 +2479,6 @@ body.view-today .rail-nextup,
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   color: var(--ink-muted);
 }
 

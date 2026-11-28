@@ -1,0 +1,36 @@
+/* Kizuki Wave 9: shell and type rhythm. Tokens live in tokens.css; this file holds layout only. */
+
+kbd, code, pre, samp { font-family: var(--font-code); }
+body { font-feature-settings: "tnum" 1, "cv11" 1; -webkit-font-smoothing: antialiased; }
+
+/* Inspector is Today's context, not global chrome */
+body:not(.view-today) #ts-inspector { display: none; }
+
+#app-shell.ts-shell-ready .ts-topbar {
+  background: var(--ts-canvas-bg);
+  border-bottom: 1px solid var(--ts-plate-border);
+  box-shadow: none;
+}
+.ts-icon-btn {
+  width: 30px; height: 30px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 8px; background: transparent;
+  color: var(--ink-muted); cursor: pointer;
+  transition: background-color 140ms ease-out, color 140ms ease-out;
+}
+.ts-icon-btn:hover { background: var(--ts-plate-elev); color: var(--ink-primary); }
+.ts-icon-btn:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+html[data-theme="dark"] .ts-icon-btn .icon-moon,
+html[data-theme="light"] .ts-icon-btn .icon-sun { display: none; }
+
+/* Box AI status: one calm line in the sidebar, detail lives in the Alt+I observatory */
+#bai-live-pill.bai-pill {
+  height: 30px; min-height: 30px; padding: 0 10px;
+  background: transparent; border: 0; box-shadow: none; border-radius: 8px;
+  display: flex; align-items: center;
+}
+#bai-live-pill.bai-pill:hover { background: var(--ts-plate-bg); }
+#bai-live-pill .br1 { width: 100%; font-size: 13px; color: var(--ink-secondary); }
+#bai-live-pill .bcp { color: var(--ink-faint); font-size: 11.5px; }
+#bai-live-pill .br2,
+#bai-live-pill .bkb { display: none; }

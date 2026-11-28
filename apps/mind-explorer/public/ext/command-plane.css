@@ -386,8 +386,6 @@
   padding: 8px 16px 4px;
   font-family: var(--font-mono);
   font-size: var(--t-xs);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -697,7 +695,6 @@
 .cmdp-entity-kind {
   font-family: var(--font-mono);
   color: var(--accent-cyan);
-  text-transform: uppercase;
 }
 
 .cmdp-footer {

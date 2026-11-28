@@ -188,3 +188,7 @@ apps/mind-explorer/vault-api.ts:synthesizeWithDualEngine.fetch#1:optional operat
 apps/mind-explorer/vault-api.ts:synthesizeWithDualEngine.fetch#2:optional operator-configured local LLM fallback endpoint for vault synthesis
 apps/mind-explorer/public/ext/97-auto-ontology.js:apiJson.fetch#1:same-origin browser fetch for local auto-ontology compiler and answerability API
 apps/mind-explorer/public/ext/97-auto-ontology.js:exportYaml.fetch#1:same-origin browser fetch for local Ossie YAML ontology export
+apps/mind-explorer/public/ext/98-tessera-depth.js:generateRecap.fetch#1:same-origin browser GET of the saved daily brief from the local mind-explorer API
+apps/mind-explorer/public/ext/98-tessera-depth.js:refreshTelemetry.fetch#1:same-origin browser GET of Today telemetry from the local mind-explorer API
+apps/mind-explorer/public/ext/98-tessera-depth.js:refreshTelemetry.fetch#2:same-origin browser GET of Today telemetry from the local mind-explorer API
+apps/mind-explorer/public/ext/98-tessera-depth.js:refreshTelemetry.fetch#3:same-origin browser GET of Today telemetry from the local mind-explorer API
